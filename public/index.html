@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#15396b" />
+    <title>Production Manager</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="sample-banner" class="banner" hidden>
+      Showing <strong>sample data</strong> — no live Builder Prime connection.
+    </div>
+
+    <header class="app-header">
+      <h1 id="screen-title">Weekly Report</h1>
+      <p id="week-label" class="week-label"></p>
+    </header>
+
+    <main id="main">
+      <!-- ───────────────────────── Weekly Report ───────────────────────── -->
+      <section id="screen-report" class="screen">
+        <div id="report-status" class="status-pill" hidden></div>
+
+        <form id="report-form" novalidate>
+          <!-- Pulled from Builder Prime -->
+          <fieldset class="card">
+            <legend>From Builder Prime</legend>
+            <p class="card-help">
+              We pulled these for you. Tap a number to correct it if needed.
+            </p>
+
+            <div class="field" data-auto="projectedJobSchedule">
+              <label for="projectedJobSchedule">Projected job schedule</label>
+              <p class="hint">Total sold work scheduled to start this week.</p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input
+                  id="projectedJobSchedule"
+                  inputmode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                />
+                <span class="auto-badge">auto</span>
+              </div>
+            </div>
+
+            <div class="field" data-auto="completedJobsRevenue">
+              <label for="completedJobsRevenue">Completed jobs revenue</label>
+              <p class="hint">Value of jobs marked complete this week.</p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input
+                  id="completedJobsRevenue"
+                  inputmode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                />
+                <span class="auto-badge">auto</span>
+              </div>
+            </div>
+
+            <div class="field" data-auto="projectedLabor">
+              <label for="projectedLabor">Projected labor</label>
+              <p class="hint">Estimated labor cost for this week's jobs.</p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input
+                  id="projectedLabor"
+                  inputmode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                />
+                <span class="auto-badge">auto</span>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- Labor -->
+          <fieldset class="card">
+            <legend>Labor you enter</legend>
+            <div class="field">
+              <label for="actualLaborRaw">Actual labor (raw payroll)</label>
+              <p class="hint">
+                Total labor from the payroll sheet plus your own salary. Enter
+                the raw amount — we add the 20% automatically.
+              </p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input
+                  id="actualLaborRaw"
+                  inputmode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+            </div>
+            <div class="derived-row">
+              <span>Actual labor (with <span id="mult-label">1.2×</span>)</span>
+              <strong id="out-actualLabor">$0.00</strong>
+            </div>
+          </fieldset>
+
+          <!-- Warranties & leads -->
+          <fieldset class="card">
+            <legend>Warranties &amp; leads</legend>
+            <div class="field">
+              <label for="warrantiesOpenedThisWeek">Warranties opened this week</label>
+              <p class="hint">Count of new warranty work orders started this week.</p>
+              <input
+                id="warrantiesOpenedThisWeek"
+                inputmode="numeric"
+                type="number"
+                min="0"
+                step="1"
+              />
+            </div>
+            <div class="field">
+              <label for="materialsGivenForWarranties">Materials given for warranties</label>
+              <p class="hint">Dollar value of materials handed out for warranty work.</p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input
+                  id="materialsGivenForWarranties"
+                  inputmode="decimal"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+            </div>
+            <div class="field">
+              <label for="leadsThisWeek">New leads this week</label>
+              <p class="hint">Leads you tracked this week (rolls up to the quarter).</p>
+              <input
+                id="leadsThisWeek"
+                inputmode="numeric"
+                type="number"
+                min="0"
+                step="1"
+              />
+            </div>
+            <div class="derived-row">
+              <span>Total warranties (quarter to date)</span>
+              <strong id="out-totalWarrantiesQTD">0</strong>
+            </div>
+            <div class="derived-row">
+              <span>Total leads (quarter to date)</span>
+              <strong id="out-totalLeadsQTD">0</strong>
+            </div>
+          </fieldset>
+
+          <!-- Materials & sundries -->
+          <fieldset class="card">
+            <legend>Materials &amp; sundries</legend>
+            <div class="field">
+              <label for="projectedMaterials">Projected materials</label>
+              <p class="hint">Estimated material cost for upcoming jobs.</p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input id="projectedMaterials" inputmode="decimal" type="number" min="0" step="0.01" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="actualMaterials">Actual materials</label>
+              <p class="hint">From your inventory count.</p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input id="actualMaterials" inputmode="decimal" type="number" min="0" step="0.01" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="totalSundriesCost">Total sundries cost</label>
+              <p class="hint">Total from your purchase-order list.</p>
+              <div class="money-input">
+                <span class="prefix">$</span>
+                <input id="totalSundriesCost" inputmode="decimal" type="number" min="0" step="0.01" />
+              </div>
+            </div>
+            <div class="derived-row">
+              <span>Installed revenue (= completed jobs)</span>
+              <strong id="out-installedRevenue">$0.00</strong>
+            </div>
+            <div class="derived-row">
+              <span>Sundries ratio (sundries ÷ completed)</span>
+              <strong id="out-sundriesRatio">0%</strong>
+            </div>
+          </fieldset>
+        </form>
+      </section>
+
+      <!-- ───────────────────────── Projects ───────────────────────── -->
+      <section id="screen-projects" class="screen" hidden>
+        <div class="filter-bar">
+          <input
+            id="project-search"
+            type="search"
+            placeholder="Search projects…"
+            aria-label="Search projects"
+          />
+          <label class="checkbox">
+            <input id="include-cancelled" type="checkbox" />
+            Show cancelled
+          </label>
+        </div>
+        <div id="projects-list" class="projects-list"></div>
+      </section>
+    </main>
+
+    <!-- Save bar (report screen only) -->
+    <div id="save-bar" class="save-bar">
+      <button id="btn-save" class="btn btn-secondary" type="button">Save draft</button>
+      <button id="btn-submit" class="btn btn-primary" type="button">Submit report</button>
+    </div>
+
+    <!-- Bottom tabs -->
+    <nav class="tabbar">
+      <button class="tab active" data-screen="report" type="button">
+        <span class="tab-icon">📋</span><span>Report</span>
+      </button>
+      <button class="tab" data-screen="projects" type="button">
+        <span class="tab-icon">🏗️</span><span>Projects</span>
+      </button>
+    </nav>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
