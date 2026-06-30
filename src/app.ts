@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { BuilderPrimeClient } from "./builderPrime/client.js";
 import type { ProjectProvider } from "./builderPrime/provider.js";
@@ -16,8 +17,31 @@ import type { ReportRepository } from "./storage/repository.js";
 import { JsonReportRepository } from "./storage/jsonStore.js";
 import { JsonScheduleStore, type ScheduleStore } from "./storage/scheduleStore.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = path.resolve(__dirname, "../public");
+/**
+ * Resolve the static `public/` directory. Works both when running from source
+ * (tsx) and when bundled into a serverless function on Vercel, where the cwd is
+ * the project root and `import.meta.url` may point elsewhere.
+ */
+function resolvePublicDir(): string {
+  const candidates = [
+    process.env.PUBLIC_DIR,
+    path.join(process.cwd(), "public"),
+    (() => {
+      try {
+        return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../public");
+      } catch {
+        return undefined;
+      }
+    })(),
+  ].filter((p): p is string => Boolean(p));
+
+  for (const dir of candidates) {
+    if (existsSync(path.join(dir, "index.html"))) return dir;
+  }
+  return candidates[0] ?? path.join(process.cwd(), "public");
+}
+
+const PUBLIC_DIR = resolvePublicDir();
 
 export interface BuildAppOptions {
   config: AppConfig;

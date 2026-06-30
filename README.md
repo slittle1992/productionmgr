@@ -116,6 +116,42 @@ original Builder Prime value is preserved (shown as `auto · edited`).
 
 ---
 
+## Deploy to Vercel
+
+The app ships ready for Vercel — `api/index.ts` exports the Express app as a
+serverless function and `vercel.json` routes `/api/*` to it while Vercel serves
+the `public/` UI from its CDN.
+
+```bash
+npm i -g vercel      # if needed
+vercel               # preview deploy
+vercel --prod        # production
+```
+
+…or import the repo in the Vercel dashboard (no build settings needed).
+
+**Set these environment variables in Vercel** (Project → Settings → Environment
+Variables) for live data — leave them unset to deploy with sample data so you
+can click through the UI immediately:
+
+| Variable | Needed | Notes |
+|---|---|---|
+| `BUILDER_PRIME_SUBDOMAIN` | live data | e.g. `johnsfloors` |
+| `BUILDER_PRIME_API_KEY` | live data | `projects.read` scope |
+| `BP_FIELD_*`, `COVERAGE_*` | optional | match your BP fields / coverage rates |
+| `PRODUCTION_MANAGER_ID` | optional | scope to one PM |
+
+> ⚠️ **Storage caveat.** Vercel's filesystem is read-only except `/tmp`, which is
+> ephemeral and per-instance. Viewing the schedule, materials, and report
+> pre-fill all work fully, but **saved crew assignments and submitted reports
+> won't persist durably** there. For production, back the two repository
+> interfaces (`ReportRepository`, `ScheduleStore`) with a durable store —
+> Vercel KV/Postgres or any DB. This is a drop-in swap; say the word and I'll
+> wire it up. A platform with a persistent disk (Railway, Render, Fly) also
+> works with the existing JSON store and no code changes.
+
+---
+
 ## Architecture
 
 ```

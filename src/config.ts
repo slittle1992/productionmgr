@@ -61,9 +61,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const apiKey = env.BUILDER_PRIME_API_KEY?.trim() || null;
   const pmId = env.PRODUCTION_MANAGER_ID?.trim() || null;
 
+  // On serverless platforms (Vercel) the project filesystem is read-only; only
+  // /tmp is writable. Fall back there so saves don't crash. NOTE: /tmp is
+  // ephemeral and per-instance — see README for durable-storage options.
+  const defaultDataDir = env.VERCEL ? "/tmp/productionmgr-data" : "./data";
+
   return {
     port: num(env.PORT, 3000),
-    dataDir: env.DATA_DIR?.trim() || "./data",
+    dataDir: env.DATA_DIR?.trim() || defaultDataDir,
     laborMultiplier: num(env.LABOR_MULTIPLIER, 1.2),
     weekStartDay: Math.min(6, Math.max(0, num(env.REPORTING_WEEK_START_DAY, 0))),
     productionManagerId: pmId,
