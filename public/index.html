@@ -21,8 +21,23 @@
     </header>
 
     <main id="main">
+      <!-- ───────────────────────── Weekly Schedule ───────────────────────── -->
+      <section id="screen-schedule" class="screen">
+        <div class="filter-bar">
+          <input
+            id="schedule-search"
+            type="search"
+            placeholder="Search customer, job #, crew…"
+            aria-label="Search schedule"
+          />
+        </div>
+        <div id="schedule-list" class="schedule-list">
+          <div class="loading">Loading schedule…</div>
+        </div>
+      </section>
+
       <!-- ───────────────────────── Weekly Report ───────────────────────── -->
-      <section id="screen-report" class="screen">
+      <section id="screen-report" class="screen" hidden>
         <div id="report-status" class="status-pill" hidden></div>
 
         <form id="report-form" novalidate>
@@ -222,13 +237,18 @@
 
     <!-- Bottom tabs -->
     <nav class="tabbar">
-      <button class="tab active" data-screen="report" type="button">
+      <button class="tab active" data-screen="schedule" type="button">
+        <span class="tab-icon">📅</span><span>Schedule</span>
+      </button>
+      <button class="tab" data-screen="report" type="button">
         <span class="tab-icon">📋</span><span>Report</span>
       </button>
       <button class="tab" data-screen="projects" type="button">
         <span class="tab-icon">🏗️</span><span>Projects</span>
       </button>
     </nav>
+
+    <datalist id="color-list"></datalist>
 
     <div id="toast" class="toast" hidden></div>
 

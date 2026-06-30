@@ -360,6 +360,151 @@ input:focus {
   padding: 32px 16px;
 }
 
+/* Schedule */
+.schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.class-group > h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--brand);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.class-group > h2 .count {
+  background: var(--brand-light);
+  color: var(--brand);
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.job {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.06);
+  padding: 14px 14px 12px;
+  margin-bottom: 10px;
+}
+.job-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+.job-head h3 {
+  margin: 0;
+  font-size: 17px;
+}
+.job-head .job-no {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.job-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.chip {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: #4a5568;
+}
+.chip.type-flake { background: #e4eefb; color: #1b4f8a; }
+.chip.type-rubber { background: #eee7fb; color: #5b3a9b; }
+.chip.type-warranty { background: #fbe9d6; color: #8a4b00; }
+
+.job-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+.job-grid .full { grid-column: 1 / -1; }
+.job-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.job-field input {
+  width: 100%;
+  min-height: 44px;
+  border: 1.5px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 16px;
+}
+.job-field input.edited {
+  border-color: #d8a200;
+  background: #fffdf5;
+}
+.color-warn {
+  font-size: 12px;
+  color: #8a5d00;
+  margin-top: 3px;
+}
+
+.material {
+  margin-top: 12px;
+  background: #f7f9fc;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.material h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.material .flake-name {
+  font-weight: 700;
+  color: var(--ink);
+}
+.material .mat-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 14px;
+  margin-top: 6px;
+  font-size: 14px;
+}
+.material .mat-rows span {
+  display: flex;
+  justify-content: space-between;
+}
+.material .mat-rows b {
+  color: var(--brand);
+}
+.material.none {
+  color: var(--muted);
+  font-size: 13px;
+}
+.save-tick {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.save-tick.show { opacity: 1; }
+
 /* Toast */
 .toast {
   position: fixed;

@@ -16,6 +16,23 @@ function bool(value: string | undefined, fallback: boolean): boolean {
   return !["false", "0", "no", "off"].includes(value.trim().toLowerCase());
 }
 
+/** SQFT-driven material coverage rates (gallons = sqft / divisor; flake = sqft * lbsPerSqft). */
+export interface CoverageRates {
+  basecoatADivisor: number;
+  basecoatBDivisor: number;
+  topcoatADivisor: number;
+  topcoatBDivisor: number;
+  flakeLbsPerSqft: number;
+}
+
+/** Names of the Builder Prime custom fields the schedule reads from. */
+export interface CustomFieldNames {
+  sqft: string[];
+  color: string[];
+  projectType: string[];
+  jobNumber: string[];
+}
+
 export interface AppConfig {
   port: number;
   dataDir: string;
@@ -27,6 +44,16 @@ export interface AppConfig {
     apiKey: string | null;
   };
   allowSampleData: boolean;
+  coverage: CoverageRates;
+  customFields: CustomFieldNames;
+}
+
+function list(value: string | undefined, fallback: string[]): string[] {
+  if (!value || value.trim() === "") return fallback;
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -42,6 +69,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     productionManagerId: pmId,
     builderPrime: { subdomain, apiKey },
     allowSampleData: bool(env.ALLOW_SAMPLE_DATA, true),
+    coverage: {
+      basecoatADivisor: num(env.COVERAGE_BASECOAT_A_DIVISOR, 315),
+      basecoatBDivisor: num(env.COVERAGE_BASECOAT_B_DIVISOR, 630),
+      topcoatADivisor: num(env.COVERAGE_TOPCOAT_A_DIVISOR, 330),
+      topcoatBDivisor: num(env.COVERAGE_TOPCOAT_B_DIVISOR, 330),
+      flakeLbsPerSqft: num(env.COVERAGE_FLAKE_LBS_PER_SQFT, 0.125),
+    },
+    customFields: {
+      sqft: list(env.BP_FIELD_SQFT, ["SQFT", "Square Footage", "Sq Ft"]),
+      color: list(env.BP_FIELD_COLOR, ["Flake Color", "Flake/Rubber Color", "Color"]),
+      projectType: list(env.BP_FIELD_PROJECT_TYPE, ["Project Type", "Job Type", "Type"]),
+      jobNumber: list(env.BP_FIELD_JOB_NUMBER, ["Job Number", "Job #", "Job No"]),
+    },
   };
 }
 

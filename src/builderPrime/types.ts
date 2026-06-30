@@ -24,6 +24,9 @@ export interface BuilderPrimeProject {
   completionDateTime?: number;
   lastModifiedDateTime?: number;
 
+  /** Builder Prime "class" — used to group the schedule (e.g. region). */
+  className?: string;
+
   projectStatusDescription?: string;
   projectStatusCategoryDescription?: string;
   projectStatusIsComplete?: boolean;
@@ -56,6 +59,40 @@ export interface BuilderPrimeProject {
   salesPersonFirstName?: string;
   salesPersonLastName?: string;
   salesPersonEmailAddress?: string;
+
+  /** A native job number, if Builder Prime exposes one. */
+  jobNumber?: number | string;
+
+  /**
+   * Custom fields. Builder Prime may return these as an object map or as an
+   * array of { name/label, value } entries; the reader handles both.
+   */
+  customFields?:
+    | Record<string, unknown>
+    | Array<{ name?: string; label?: string; value?: unknown }>;
+}
+
+/** Read a custom field by trying several possible names (case-insensitive). */
+export function readCustomField(
+  project: BuilderPrimeProject,
+  names: string[]
+): unknown {
+  const cf = project.customFields;
+  if (!cf) return undefined;
+  const wanted = names.map((n) => n.toLowerCase().trim());
+
+  if (Array.isArray(cf)) {
+    for (const item of cf) {
+      const label = (item.name ?? item.label ?? "").toLowerCase().trim();
+      if (label && wanted.includes(label)) return item.value;
+    }
+    return undefined;
+  }
+
+  for (const [k, v] of Object.entries(cf)) {
+    if (wanted.includes(k.toLowerCase().trim())) return v;
+  }
+  return undefined;
 }
 
 export interface ListProjectsParams {

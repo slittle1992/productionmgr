@@ -231,18 +231,236 @@ async function loadProjects() {
   }
 }
 
+// ─────────────────────────── Schedule ───────────────────────────
+const schedule = { coverage: null, colorMap: new Map(), weekLabel: "", classes: [] };
+
+const NO_MATERIAL = ["warranty", "inspection", "sand & clear", "sand and clear"];
+function appliesMaterial(type) {
+  if (!type) return true;
+  return !NO_MATERIAL.includes(String(type).toLowerCase().replace(/\*+$/, "").trim());
+}
+function r2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function computeMaterialClient(sqft, type, flake) {
+  const cov = schedule.coverage;
+  const applies = appliesMaterial(type);
+  const area = applies && sqft > 0 ? sqft : 0;
+  const div = (d) => (cov && d > 0 ? r2(area / d) : 0);
+  return {
+    applies,
+    flake: applies ? flake : null,
+    basecoatAGallons: div(cov?.basecoatADivisor),
+    basecoatBGallons: div(cov?.basecoatBDivisor),
+    topcoatAGallons: div(cov?.topcoatADivisor),
+    topcoatBGallons: div(cov?.topcoatBDivisor),
+    flakePounds: r2(area * (cov?.flakeLbsPerSqft ?? 0)),
+  };
+}
+
+async function loadColors() {
+  try {
+    const { colors } = await (await fetch("/api/colors")).json();
+    const dl = $("color-list");
+    dl.innerHTML = colors
+      .map((c) => `<option value="${escapeHtml(c.name)}"></option>`)
+      .join("");
+    schedule.colorMap = new Map(colors.map((c) => [c.name.toLowerCase(), c.flakeProduct]));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function flakeFor(colorName) {
+  if (!colorName) return null;
+  return schedule.colorMap.get(colorName.toLowerCase()) || colorName;
+}
+
+function materialHtml(mat) {
+  if (!mat.applies) {
+    return `<div class="material none">No material needed (warranty / inspection).</div>`;
+  }
+  return `
+    <div class="material">
+      <h4>Material to use</h4>
+      <div class="flake-name">Flake: ${escapeHtml(mat.flake || "—")} · <b>${mat.flakePounds} lbs</b></div>
+      <div class="mat-rows">
+        <span>Basecoat A <b>${mat.basecoatAGallons} gal</b></span>
+        <span>Basecoat B <b>${mat.basecoatBGallons} gal</b></span>
+        <span>Topcoat A <b>${mat.topcoatAGallons} gal</b></span>
+        <span>Topcoat B <b>${mat.topcoatBGallons} gal</b></span>
+      </div>
+    </div>`;
+}
+
+function jobHtml(job) {
+  const t = (job.projectType || "").toLowerCase();
+  const typeClass = t.includes("rubber")
+    ? "type-rubber"
+    : t.includes("warranty") || t.includes("inspection")
+    ? "type-warranty"
+    : "type-flake";
+  return `
+    <article class="job" data-id="${escapeHtml(job.id)}">
+      <div class="job-head">
+        <h3>${escapeHtml(job.customer)}</h3>
+        <span class="job-no">#${escapeHtml(job.jobNumber)}</span>
+      </div>
+      <div class="job-sub">
+        <span class="chip ${typeClass}">${escapeHtml(job.projectType)}</span>
+        ${job.scheduledDay ? `<span>${escapeHtml(job.scheduledDay)}</span>` : ""}
+        ${job.city ? `<span>${escapeHtml(job.city)}</span>` : ""}
+      </div>
+      <div class="job-grid">
+        <div class="job-field">
+          <label>Crew</label>
+          <input class="js-crew" type="text" placeholder="Assign crew…" value="${escapeHtml(job.crew || "")}" />
+        </div>
+        <div class="job-field">
+          <label>SQFT</label>
+          <input class="js-sqft ${job.edited.sqft ? "edited" : ""}" type="number" inputmode="numeric" min="0" value="${job.sqft ?? ""}" />
+        </div>
+        <div class="job-field full">
+          <label>Color ${job.edited.color ? "· edited" : ""}</label>
+          <input class="js-color ${job.edited.color ? "edited" : ""}" list="color-list" type="text" value="${escapeHtml(job.color || "")}" />
+          ${job.color && !job.colorRecognized ? `<div class="color-warn">Not in catalog — pick a standard color.</div>` : ""}
+        </div>
+      </div>
+      <div class="js-material">${materialHtml(job.material)}</div>
+      <span class="save-tick js-tick">saved ✓</span>
+    </article>`;
+}
+
+function renderSchedule() {
+  const term = $("schedule-search").value.trim().toLowerCase();
+  const list = $("schedule-list");
+  const groups = schedule.classes
+    .map((g) => ({
+      className: g.className,
+      jobs: g.jobs.filter(
+        (j) =>
+          !term ||
+          j.customer.toLowerCase().includes(term) ||
+          String(j.jobNumber).includes(term) ||
+          (j.crew || "").toLowerCase().includes(term)
+      ),
+    }))
+    .filter((g) => g.jobs.length);
+
+  if (!groups.length) {
+    list.innerHTML = `<div class="empty">No jobs scheduled this week.</div>`;
+    return;
+  }
+  list.innerHTML = groups
+    .map(
+      (g) => `
+      <section class="class-group">
+        <h2>${escapeHtml(g.className)} <span class="count">${g.jobs.length}</span></h2>
+        ${g.jobs.map(jobHtml).join("")}
+      </section>`
+    )
+    .join("");
+
+  list.querySelectorAll(".job").forEach(wireJob);
+}
+
+const debouncers = new Map();
+function debounce(key, fn, ms = 600) {
+  clearTimeout(debouncers.get(key));
+  debouncers.set(key, setTimeout(fn, ms));
+}
+
+function wireJob(el) {
+  const id = el.dataset.id;
+  const crew = el.querySelector(".js-crew");
+  const sqft = el.querySelector(".js-sqft");
+  const color = el.querySelector(".js-color");
+  const matBox = el.querySelector(".js-material");
+  const tick = el.querySelector(".js-tick");
+
+  const refreshMaterial = () => {
+    const job = findJob(id);
+    if (!job) return;
+    const type = job.projectType;
+    const mat = computeMaterialClient(
+      Number(sqft.value) || 0,
+      type,
+      flakeFor(color.value.trim())
+    );
+    matBox.innerHTML = materialHtml(mat);
+  };
+
+  const save = (payload) => {
+    debounce(id, async () => {
+      try {
+        const res = await fetch("/api/schedule/assign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId: id, ...payload }),
+        });
+        if (!res.ok) throw new Error("save failed");
+        tick.classList.add("show");
+        setTimeout(() => tick.classList.remove("show"), 1400);
+      } catch {
+        toast("Couldn't save that change.", "error");
+      }
+    });
+  };
+
+  crew.addEventListener("input", () => save({ crew: crew.value.trim() }));
+  sqft.addEventListener("input", () => {
+    refreshMaterial();
+    const v = Number(sqft.value);
+    save({ sqftOverride: Number.isFinite(v) && v >= 0 ? v : undefined });
+  });
+  color.addEventListener("input", () => {
+    refreshMaterial();
+    save({ colorOverride: color.value.trim() || undefined });
+  });
+}
+
+function findJob(id) {
+  for (const g of schedule.classes) {
+    const j = g.jobs.find((x) => x.id === id);
+    if (j) return j;
+  }
+  return null;
+}
+
+async function loadSchedule() {
+  const list = $("schedule-list");
+  list.innerHTML = `<div class="loading">Loading schedule…</div>`;
+  try {
+    const data = await (await fetch("/api/schedule")).json();
+    schedule.classes = data.classes;
+    $("week-label").textContent = `Week of ${data.weekStart} – ${data.weekEnd} · ${data.jobCount} jobs`;
+    renderSchedule();
+  } catch (err) {
+    list.innerHTML = `<div class="empty">Couldn't load the schedule.</div>`;
+  }
+}
+
 // ─────────────────────────── Navigation ───────────────────────────
+const TITLES = { schedule: "Weekly Schedule", report: "Weekly Report", projects: "Projects" };
+let reportLoaded = false;
+
 function showScreen(name) {
-  const isReport = name === "report";
-  $("screen-report").hidden = !isReport;
-  $("screen-projects").hidden = isReport;
-  $("screen-title").textContent = isReport ? "Weekly Report" : "Projects";
-  $("save-bar").classList.toggle("hidden", !isReport);
-  $("week-label").hidden = !isReport;
+  for (const s of ["schedule", "report", "projects"]) {
+    $(`screen-${s}`).hidden = s !== name;
+  }
+  $("screen-title").textContent = TITLES[name];
+  $("save-bar").classList.toggle("hidden", name !== "report");
+  $("week-label").hidden = name === "projects";
   document.querySelectorAll(".tab").forEach((t) =>
     t.classList.toggle("active", t.dataset.screen === name)
   );
   if (name === "projects" && !allProjects.length) loadProjects();
+  if (name === "report" && !reportLoaded) {
+    reportLoaded = true;
+    loadReport();
+  }
+  if (name === "schedule") loadSchedule();
 }
 
 // ─────────────────────────── Init ───────────────────────────
@@ -250,16 +468,15 @@ async function init() {
   try {
     const cfg = await (await fetch("/api/config")).json();
     state.laborMultiplier = cfg.laborMultiplier ?? 1.2;
+    schedule.coverage = cfg.coverage ?? null;
     $("mult-label").textContent = state.laborMultiplier + "×";
     if (cfg.usingSampleData) $("sample-banner").hidden = false;
   } catch {
     /* non-fatal */
   }
 
-  // Live recalc on every input.
-  document
-    .getElementById("report-form")
-    .addEventListener("input", recalc);
+  // Live recalc on every report input.
+  document.getElementById("report-form").addEventListener("input", recalc);
 
   $("btn-save").addEventListener("click", () => saveReport(false));
   $("btn-submit").addEventListener("click", () => saveReport(true));
@@ -269,8 +486,11 @@ async function init() {
   );
   $("project-search").addEventListener("input", renderProjects);
   $("include-cancelled").addEventListener("change", loadProjects);
+  $("schedule-search").addEventListener("input", renderSchedule);
 
-  await loadReport();
+  // Schedule is the default screen.
+  await loadColors();
+  showScreen("schedule");
 }
 
 init();

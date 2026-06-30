@@ -14,7 +14,7 @@ view-only project list.
 
 ```bash
 npm install
-npm test          # 31 tests
+npm test          # 48 tests
 npm start         # http://localhost:3000
 ```
 
@@ -33,8 +33,13 @@ Then `npm start` again — the banner disappears and real projects load.
 
 ## What the manager sees
 
-Two tabs, both built for a thumb:
+Three tabs, all built for a thumb:
 
+- **Schedule** *(default)* — the weekly production schedule that replaces the
+  spreadsheet. Jobs are pulled from Builder Prime, grouped by **class**, each
+  showing Customer, Job #, project type, scheduled day, SQFT, and Color — and
+  the **material to use auto-populates from SQFT and color**. Assign a crew and
+  fix any color/sqft inline; it saves as you type.
 - **Report** — the weekly report. Builder Prime fields arrive pre-filled and
   badged `auto`; every derived value (×1.2 labor, sundries ratio, installed
   revenue, QTD rollups) updates live as you type. Save a draft or submit.
@@ -42,6 +47,49 @@ Two tabs, both built for a thumb:
   assigned (PM / foreman / salesperson). Search and a "show cancelled" toggle.
 
 No report names, no formulas, no Builder Prime login — the app does that work.
+
+---
+
+## Weekly Schedule (replaces the spreadsheet)
+
+The old workbook was 359 sheets of week-by-week snapshots, grouped by
+day → region, with material columns computed by hand. The Schedule tab
+reproduces the useful part and drops the manual work.
+
+**Where each column comes from**
+
+| Column | Source |
+|---|---|
+| Customer Name | Builder Prime (client name / company) |
+| Job Number | Builder Prime (`Job Number` custom field, else project id) |
+| Class (grouping) | Builder Prime `className` |
+| Project Type | Builder Prime (`Project Type` custom field) |
+| SQFT | Builder Prime (`SQFT` custom field) — correctable inline |
+| Color | Builder Prime (`Flake Color` custom field) — canonical dropdown |
+| Crew | **Assigned on the schedule** (not in Builder Prime), saved per week |
+| Material to use | **Computed** from SQFT × coverage rates; color names the flake |
+
+**Material math** (from the spreadsheet's Job-Costing sheet; all configurable):
+
+```
+Basecoat A = SQFT ÷ 315 gal     Topcoat A = SQFT ÷ 330 gal
+Basecoat B = SQFT ÷ 630 gal     Topcoat B = SQFT ÷ 330 gal
+Flake      = SQFT × 0.125 lbs   Flake blend = the job's color
+```
+
+Warranty / inspection / sand-&-clear jobs show **no material**, matching how
+those rows were left blank in the sheet.
+
+**Colors** are a fixed dropdown (`src/data/colors.ts`) seeded from the Flake
+Inventory and the colors used on recent schedules. Builder Prime's stored value
+is normalised against the catalog and its aliases, so historical typos
+("Caspian/Caspain", "Tidal wave/Tidal Wave", "Galcier") all resolve to one
+canonical name. Unknown colors are flagged so the manager can pick a standard one.
+
+**Builder Prime custom-field names** are configurable — set `BP_FIELD_SQFT`,
+`BP_FIELD_COLOR`, `BP_FIELD_PROJECT_TYPE`, `BP_FIELD_JOB_NUMBER` (comma-separated
+alternates) to match how your BP instance labels them. Coverage rates are
+configurable via `COVERAGE_*` vars.
 
 ---
 
@@ -145,7 +193,9 @@ npm run typecheck
 
 Coverage spans the reporting-week math, the pure calculation engine, auto-field
 derivation from Builder Prime records, the report service (QTD rollups,
-override persistence, submit snapshotting), and the HTTP API end-to-end.
+override persistence, submit snapshotting), the schedule service (class
+grouping, custom-field reads, crew/color/sqft overrides), the material
+calculator, color normalisation, and the HTTP API end-to-end.
 
 ---
 

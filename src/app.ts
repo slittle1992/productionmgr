@@ -8,10 +8,13 @@ import { hasLiveCredentials, type AppConfig } from "./config.js";
 import { errorMiddleware } from "./routes/errorMiddleware.js";
 import { projectsRouter } from "./routes/projects.js";
 import { reportsRouter } from "./routes/reports.js";
+import { scheduleRouter } from "./routes/schedule.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
+import { ScheduleService } from "./services/scheduleService.js";
 import type { ReportRepository } from "./storage/repository.js";
 import { JsonReportRepository } from "./storage/jsonStore.js";
+import { JsonScheduleStore, type ScheduleStore } from "./storage/scheduleStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.resolve(__dirname, "../public");
@@ -21,6 +24,7 @@ export interface BuildAppOptions {
   /** Override the project source (used by tests). */
   provider?: ProjectProvider;
   repository?: ReportRepository;
+  scheduleStore?: ScheduleStore;
   now?: () => number;
 }
 
@@ -55,12 +59,21 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const now = options.now ?? (() => Date.now());
   const provider = options.provider ?? resolveProvider(config, now);
   const repository = options.repository ?? new JsonReportRepository(config.dataDir);
+  const scheduleStore = options.scheduleStore ?? new JsonScheduleStore(config.dataDir);
 
   const projectsService = new ProjectsService(provider, config.productionManagerId);
   const reportService = new ReportService(
     projectsService,
     repository,
     config.laborMultiplier,
+    config.weekStartDay,
+    now
+  );
+  const scheduleService = new ScheduleService(
+    provider,
+    scheduleStore,
+    config.coverage,
+    config.customFields,
     config.weekStartDay,
     now
   );
@@ -75,11 +88,13 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
       laborMultiplier: config.laborMultiplier,
       weekStartDay: config.weekStartDay,
       scopedToManager: Boolean(config.productionManagerId),
+      coverage: config.coverage,
     });
   });
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+  app.use("/api", scheduleRouter(scheduleService));
   app.use("/api", reportsRouter(reportService));
   app.use("/api", projectsRouter(projectsService));
 
