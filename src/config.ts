@@ -46,6 +46,10 @@ export interface AppConfig {
   allowSampleData: boolean;
   coverage: CoverageRates;
   customFields: CustomFieldNames;
+  kv: {
+    url: string | null;
+    token: string | null;
+  };
 }
 
 function list(value: string | undefined, fallback: string[]): string[] {
@@ -87,7 +91,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       projectType: list(env.BP_FIELD_PROJECT_TYPE, ["Project Type", "Job Type", "Type"]),
       jobNumber: list(env.BP_FIELD_JOB_NUMBER, ["Job Number", "Job #", "Job No"]),
     },
+    kv: {
+      // Accept Vercel KV's env names or Upstash's directly.
+      url: env.KV_REST_API_URL?.trim() || env.UPSTASH_REDIS_REST_URL?.trim() || null,
+      token: env.KV_REST_API_TOKEN?.trim() || env.UPSTASH_REDIS_REST_TOKEN?.trim() || null,
+    },
   };
+}
+
+/** True when a durable KV store (Vercel KV / Upstash) is configured. */
+export function hasDurableStorage(config: AppConfig): boolean {
+  return Boolean(config.kv.url && config.kv.token);
 }
 
 /** True when we have real Builder Prime credentials to talk to the live API. */

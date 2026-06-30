@@ -15,6 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@upstash/redis": "^1.38.0",
     "express": "^4.21.2",
     "zod": "^3.24.1"
   },

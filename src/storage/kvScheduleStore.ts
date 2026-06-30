@@ -1,0 +1,43 @@
+import type { JobAssignment, ScheduleStore, WeekAssignments } from "./scheduleStore.js";
+import type { KvClient } from "./kv/kvClient.js";
+
+/**
+ * Durable schedule-assignment store backed by a KvClient (Redis / Vercel KV).
+ * Each week is a Redis hash `schedule:<weekStart>` whose fields are job ids.
+ * Using a hash means setting one job's crew/color/sqft is an atomic per-field
+ * write — no read-modify-write race across concurrent serverless invocations.
+ */
+export class KvScheduleStore implements ScheduleStore {
+  constructor(private readonly kv: KvClient) {}
+
+  private key(weekStart: string): string {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+      throw new Error(`Invalid week id: ${weekStart}`);
+    }
+    return `schedule:${weekStart}`;
+  }
+
+  async getWeek(weekStart: string): Promise<WeekAssignments> {
+    return this.kv.hgetall<JobAssignment>(this.key(weekStart));
+  }
+
+  async setJob(
+    weekStart: string,
+    jobId: string,
+    assignment: JobAssignment
+  ): Promise<JobAssignment> {
+    const key = this.key(weekStart);
+    const existing = (await this.kv.hgetall<JobAssignment>(key))[jobId] ?? {};
+    const next: JobAssignment = { ...existing, ...assignment };
+
+    // Drop empty values so the stored record stays clean.
+    if (!next.crew) delete next.crew;
+    if (!next.colorOverride) delete next.colorOverride;
+    if (next.sqftOverride === undefined || next.sqftOverride === null) {
+      delete next.sqftOverride;
+    }
+
+    await this.kv.hset(key, jobId, next);
+    return next;
+  }
+}

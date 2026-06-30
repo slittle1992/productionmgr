@@ -4,9 +4,10 @@ A phone-first web app that replaces the weekly production-report spreadsheet.
 It pulls everything Builder Prime can supply, does all the math, and leaves the
 manager with only the handful of fields a human actually has to enter.
 
-This repo implements **Phase 1** of the requirements: a read-only weekly report
-(auto-pull + manual entry + automated math + save/submit + QTD rollups) and a
-view-only project list.
+It has three screens: a **Weekly Schedule** (the primary screen — pulls jobs
+from Builder Prime, groups them by class, and auto-populates the material to
+use), the **Weekly Report** (auto-pull + manual entry + automated math +
+save/submit + QTD rollups), and a view-only **Projects** list.
 
 ---
 
@@ -14,7 +15,7 @@ view-only project list.
 
 ```bash
 npm install
-npm test          # 48 tests
+npm test          # 54 tests
 npm start         # http://localhost:3000
 ```
 
@@ -141,14 +142,27 @@ can click through the UI immediately:
 | `BP_FIELD_*`, `COVERAGE_*` | optional | match your BP fields / coverage rates |
 | `PRODUCTION_MANAGER_ID` | optional | scope to one PM |
 
-> ⚠️ **Storage caveat.** Vercel's filesystem is read-only except `/tmp`, which is
-> ephemeral and per-instance. Viewing the schedule, materials, and report
-> pre-fill all work fully, but **saved crew assignments and submitted reports
-> won't persist durably** there. For production, back the two repository
-> interfaces (`ReportRepository`, `ScheduleStore`) with a durable store —
-> Vercel KV/Postgres or any DB. This is a drop-in swap; say the word and I'll
-> wire it up. A platform with a persistent disk (Railway, Render, Fly) also
-> works with the existing JSON store and no code changes.
+### Durable storage on Vercel (recommended)
+
+Vercel's filesystem is read-only except `/tmp`, which is ephemeral and
+per-instance — so the default JSON-file store won't persist saved crew
+assignments or submitted reports there. The app ships with a **durable
+KV-backed store** (Redis, via Vercel KV / Upstash) that turns on automatically
+when its env vars are present:
+
+1. In the Vercel dashboard: **Storage → Create → KV** (Upstash Redis) and
+   connect it to the project. Vercel injects `KV_REST_API_URL` and
+   `KV_REST_API_TOKEN` for you.
+2. Redeploy. The app detects them and switches from JSON files to KV — no code
+   change. `GET /api/config` reports `"durableStorage": true`, and the startup
+   log says `Storage: durable KV`.
+
+It also accepts Upstash's native names (`UPSTASH_REDIS_REST_URL` /
+`UPSTASH_REDIS_REST_TOKEN`) if you provision Upstash directly. With neither set,
+storage falls back to JSON files (durable locally, ephemeral on Vercel).
+
+> A platform with a persistent disk (Railway, Render, Fly) also works with the
+> JSON store and no extra setup.
 
 ---
 
@@ -160,16 +174,18 @@ Browser (public/)  ──fetch──►  Express API (src/routes)
                                   ├─ services/   report + projects logic
                                   ├─ domain/     week math + pure calculations
                                   ├─ builderPrime/  API client + sample provider
-                                  └─ storage/    JSON-file report store (swappable)
+                                  └─ storage/    JSON files or durable KV (swappable)
 ```
 
 - **The Builder Prime key never leaves the server** (§10). The browser only ever
   talks to this app's own API; `/api/config` deliberately omits the key.
 - **Calculations are pure** (`src/domain/calculations.ts`) and unit-tested, so
   "the app does the math" is verifiable, not incidental.
-- **Storage is behind an interface** (`ReportRepository`). The default
-  `JsonReportRepository` writes one file per week under `DATA_DIR`; swap in a
-  real database by implementing the same interface.
+- **Storage is behind interfaces** (`ReportRepository`, `ScheduleStore`). Two
+  implementations ship: JSON files (`JsonReportRepository`/`JsonScheduleStore`,
+  the local default) and durable KV (`KvReportRepository`/`KvScheduleStore` over
+  Redis / Vercel KV, auto-selected when configured). Any other database is just
+  another implementation of the same interfaces.
 - **Errors are sanitised** (`errorMiddleware`): validation → 400 with field
   detail; Builder Prime failures → a friendly message, never the raw error (§7.5).
 
@@ -231,7 +247,7 @@ Coverage spans the reporting-week math, the pure calculation engine, auto-field
 derivation from Builder Prime records, the report service (QTD rollups,
 override persistence, submit snapshotting), the schedule service (class
 grouping, custom-field reads, crew/color/sqft overrides), the material
-calculator, color normalisation, and the HTTP API end-to-end.
+calculator, color normalisation, the durable KV repositories, and the HTTP API end-to-end.
 
 ---
 

@@ -2,7 +2,7 @@ import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 
 const config = loadConfig();
-const { app, usingSampleData } = buildApp({ config });
+const { app, usingSampleData, usingDurableStorage } = buildApp({ config });
 
 app.listen(config.port, () => {
   console.log(
@@ -18,4 +18,9 @@ app.listen(config.port, () => {
       `Connected to Builder Prime (${config.builderPrime.subdomain}.builderprime.com).`
     );
   }
+  console.log(
+    usingDurableStorage
+      ? "Storage: durable KV (Vercel KV / Upstash)."
+      : `Storage: JSON files in ${config.dataDir} (set KV_REST_API_URL/TOKEN for durable storage).`
+  );
 });

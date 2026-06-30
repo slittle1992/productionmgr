@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { BuilderPrimeClient } from "./builderPrime/client.js";
 import type { ProjectProvider } from "./builderPrime/provider.js";
 import { SampleProjectProvider } from "./builderPrime/sampleData.js";
-import { hasLiveCredentials, type AppConfig } from "./config.js";
+import { hasDurableStorage, hasLiveCredentials, type AppConfig } from "./config.js";
 import { errorMiddleware } from "./routes/errorMiddleware.js";
 import { projectsRouter } from "./routes/projects.js";
 import { reportsRouter } from "./routes/reports.js";
@@ -16,6 +16,9 @@ import { ScheduleService } from "./services/scheduleService.js";
 import type { ReportRepository } from "./storage/repository.js";
 import { JsonReportRepository } from "./storage/jsonStore.js";
 import { JsonScheduleStore, type ScheduleStore } from "./storage/scheduleStore.js";
+import { KvReportRepository } from "./storage/kvReportRepository.js";
+import { KvScheduleStore } from "./storage/kvScheduleStore.js";
+import { UpstashKvClient } from "./storage/kv/upstashKvClient.js";
 
 /**
  * Resolve the static `public/` directory. Works both when running from source
@@ -55,6 +58,7 @@ export interface BuildAppOptions {
 export interface BuiltApp {
   app: Express;
   usingSampleData: boolean;
+  usingDurableStorage: boolean;
 }
 
 /** Choose the live Builder Prime client or the sample provider. */
@@ -82,8 +86,19 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const { config } = options;
   const now = options.now ?? (() => Date.now());
   const provider = options.provider ?? resolveProvider(config, now);
-  const repository = options.repository ?? new JsonReportRepository(config.dataDir);
-  const scheduleStore = options.scheduleStore ?? new JsonScheduleStore(config.dataDir);
+
+  // Durable KV store when configured (Vercel KV / Upstash); otherwise the
+  // JSON-file store. Both satisfy the same repository interfaces.
+  const durable = hasDurableStorage(config);
+  const kv = durable
+    ? new UpstashKvClient(config.kv.url!, config.kv.token!)
+    : null;
+  const repository =
+    options.repository ??
+    (kv ? new KvReportRepository(kv) : new JsonReportRepository(config.dataDir));
+  const scheduleStore =
+    options.scheduleStore ??
+    (kv ? new KvScheduleStore(kv) : new JsonScheduleStore(config.dataDir));
 
   const projectsService = new ProjectsService(provider, config.productionManagerId);
   const reportService = new ReportService(
@@ -113,6 +128,7 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
       weekStartDay: config.weekStartDay,
       scopedToManager: Boolean(config.productionManagerId),
       coverage: config.coverage,
+      durableStorage: durable,
     });
   });
 
@@ -130,5 +146,5 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
 
   app.use(errorMiddleware);
 
-  return { app, usingSampleData: provider.isSample };
+  return { app, usingSampleData: provider.isSample, usingDurableStorage: durable };
 }
