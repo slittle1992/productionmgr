@@ -51,6 +51,30 @@ export function normalizeColor(raw: string | null | undefined): NormalizedColor 
   return { name: cleaned, flakeProduct: cleaned, recognized: false };
 }
 
+// Catalog names sorted longest-first so multi-word colors match before substrings.
+const COLOR_NAMES_BY_LENGTH = [...COLOR_CATALOG]
+  .map((c) => c.name)
+  .sort((a, b) => b.length - a.length);
+
+/**
+ * Find the first catalog color mentioned in free text (e.g. a pipeline
+ * description like "Garage - 390 - Stonewash"). Word-boundary matched so
+ * "Tan" doesn't match inside "Stonewash". Returns the canonical name or null.
+ */
+export function extractColorFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const haystack = String(text);
+  for (const name of COLOR_NAMES_BY_LENGTH) {
+    const re = new RegExp(`(^|[^A-Za-z])${escapeRegExp(name)}([^A-Za-z]|$)`, "i");
+    if (re.test(haystack)) return name;
+  }
+  return null;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** The dropdown options exposed to the UI. */
 export function colorOptions(): Array<{ name: string; flakeProduct: string }> {
   return COLOR_CATALOG.map((c) => ({

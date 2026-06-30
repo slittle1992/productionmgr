@@ -5,11 +5,14 @@ import { fileURLToPath } from "node:url";
 import { BuilderPrimeClient } from "./builderPrime/client.js";
 import type { ProjectProvider } from "./builderPrime/provider.js";
 import { SampleProjectProvider } from "./builderPrime/sampleData.js";
+import { PipelineProvider } from "./builderPrime/pipelineProvider.js";
 import { hasDurableStorage, hasLiveCredentials, type AppConfig } from "./config.js";
+import { asyncHandler } from "./routes/asyncHandler.js";
 import { errorMiddleware } from "./routes/errorMiddleware.js";
 import { projectsRouter } from "./routes/projects.js";
 import { reportsRouter } from "./routes/reports.js";
 import { scheduleRouter } from "./routes/schedule.js";
+import { pipelineRouter } from "./routes/pipeline.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
 import { ScheduleService } from "./services/scheduleService.js";
@@ -19,6 +22,11 @@ import { JsonScheduleStore, type ScheduleStore } from "./storage/scheduleStore.j
 import { KvReportRepository } from "./storage/kvReportRepository.js";
 import { KvScheduleStore } from "./storage/kvScheduleStore.js";
 import { UpstashKvClient } from "./storage/kv/upstashKvClient.js";
+import {
+  JsonPipelineStore,
+  KvPipelineStore,
+  type PipelineStore,
+} from "./storage/pipelineStore.js";
 
 /**
  * Resolve the static `public/` directory. Works both when running from source
@@ -52,6 +60,7 @@ export interface BuildAppOptions {
   provider?: ProjectProvider;
   repository?: ReportRepository;
   scheduleStore?: ScheduleStore;
+  pipelineStore?: PipelineStore;
   now?: () => number;
 }
 
@@ -61,8 +70,21 @@ export interface BuiltApp {
   usingDurableStorage: boolean;
 }
 
-/** Choose the live Builder Prime client or the sample provider. */
-function resolveProvider(config: AppConfig, now: () => number): ProjectProvider {
+const EMPTY_PROVIDER: ProjectProvider = {
+  isSample: false,
+  listAllProjects: async () => [],
+};
+
+/**
+ * Pick the project source: live Builder Prime when credentials exist; otherwise
+ * an uploaded pipeline (falling back to sample data, or nothing if sample data
+ * is disabled).
+ */
+function resolveProvider(
+  config: AppConfig,
+  now: () => number,
+  pipelineStore: PipelineStore
+): ProjectProvider {
   if (hasLiveCredentials(config)) {
     const client = new BuilderPrimeClient({
       subdomain: config.builderPrime.subdomain!,
@@ -73,19 +95,15 @@ function resolveProvider(config: AppConfig, now: () => number): ProjectProvider 
       listAllProjects: (params) => client.listAllProjects(params),
     };
   }
-  if (!config.allowSampleData) {
-    throw new Error(
-      "No Builder Prime credentials configured and sample data is disabled. " +
-        "Set BUILDER_PRIME_SUBDOMAIN and BUILDER_PRIME_API_KEY."
-    );
-  }
-  return new SampleProjectProvider(now());
+  const fallback = config.allowSampleData
+    ? new SampleProjectProvider(now())
+    : EMPTY_PROVIDER;
+  return new PipelineProvider(pipelineStore, fallback);
 }
 
 export function buildApp(options: BuildAppOptions): BuiltApp {
   const { config } = options;
   const now = options.now ?? (() => Date.now());
-  const provider = options.provider ?? resolveProvider(config, now);
 
   // Durable KV store when configured (Vercel KV / Upstash); otherwise the
   // JSON-file store. Both satisfy the same repository interfaces.
@@ -99,6 +117,11 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const scheduleStore =
     options.scheduleStore ??
     (kv ? new KvScheduleStore(kv) : new JsonScheduleStore(config.dataDir));
+  const pipelineStore =
+    options.pipelineStore ??
+    (kv ? new KvPipelineStore(kv) : new JsonPipelineStore(config.dataDir));
+
+  const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
   const projectsService = new ProjectsService(provider, config.productionManagerId);
   const reportService = new ReportService(
@@ -118,22 +141,32 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   );
 
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
+  // Pipeline uploads post the raw spreadsheet grid as JSON, so allow some room.
+  app.use(express.json({ limit: "16mb" }));
+
+  const live = hasLiveCredentials(config);
 
   // Non-sensitive runtime info for the UI (never includes the API key).
-  app.get("/api/config", (_req, res) => {
-    res.json({
-      usingSampleData: provider.isSample,
-      laborMultiplier: config.laborMultiplier,
-      weekStartDay: config.weekStartDay,
-      scopedToManager: Boolean(config.productionManagerId),
-      coverage: config.coverage,
-      durableStorage: durable,
-    });
-  });
+  app.get(
+    "/api/config",
+    asyncHandler(async (_req, res) => {
+      const pipeline = live ? null : await pipelineStore.get();
+      const source = live ? "live" : pipeline ? "pipeline" : "sample";
+      res.json({
+        source,
+        usingSampleData: source === "sample",
+        laborMultiplier: config.laborMultiplier,
+        weekStartDay: config.weekStartDay,
+        scopedToManager: Boolean(config.productionManagerId),
+        coverage: config.coverage,
+        durableStorage: durable,
+      });
+    })
+  );
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+  app.use("/api", pipelineRouter(pipelineStore, now));
   app.use("/api", scheduleRouter(scheduleService));
   app.use("/api", reportsRouter(reportService));
   app.use("/api", projectsRouter(projectsService));

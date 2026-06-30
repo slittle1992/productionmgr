@@ -360,6 +360,58 @@ input:focus {
   padding: 32px 16px;
 }
 
+/* Pipeline upload bar */
+.pipeline-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.06);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.pipeline-status {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+.pipeline-status strong {
+  color: var(--ink);
+}
+.pipeline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.btn-upload {
+  display: inline-flex;
+  align-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 9px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-upload.busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.btn-clear {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 /* Schedule */
 .schedule-list {
   display: flex;
@@ -425,6 +477,17 @@ input:focus {
 .chip.type-flake { background: #e4eefb; color: #1b4f8a; }
 .chip.type-rubber { background: #eee7fb; color: #5b3a9b; }
 .chip.type-warranty { background: #fbe9d6; color: #8a4b00; }
+
+.job-desc {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 .job-grid {
   display: grid;

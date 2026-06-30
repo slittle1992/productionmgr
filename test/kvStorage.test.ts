@@ -102,6 +102,7 @@ describe("services on KV storage", () => {
       color: ["Flake Color"],
       projectType: ["Project Type"],
       jobNumber: ["Job Number"],
+      crew: ["Crew"],
     };
     const job: BuilderPrimeProject = {
       jobNumber: 100,

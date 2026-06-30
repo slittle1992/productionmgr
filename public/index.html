@@ -23,6 +23,16 @@
     <main id="main">
       <!-- ───────────────────────── Weekly Schedule ───────────────────────── -->
       <section id="screen-schedule" class="screen">
+        <div class="pipeline-bar">
+          <div id="pipeline-status" class="pipeline-status">Loading…</div>
+          <div class="pipeline-actions">
+            <label class="btn-upload">
+              <span id="upload-label">Upload pipeline</span>
+              <input id="pipeline-file" type="file" accept=".xlsx,.xls" hidden />
+            </label>
+            <button id="pipeline-clear" class="btn-clear" type="button" hidden>Clear</button>
+          </div>
+        </div>
         <div class="filter-bar">
           <input
             id="schedule-search"
@@ -252,6 +262,7 @@
 
     <div id="toast" class="toast" hidden></div>
 
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

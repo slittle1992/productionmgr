@@ -31,6 +31,7 @@ export interface CustomFieldNames {
   color: string[];
   projectType: string[];
   jobNumber: string[];
+  crew: string[];
 }
 
 export interface AppConfig {
@@ -90,6 +91,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       color: list(env.BP_FIELD_COLOR, ["Flake Color", "Flake/Rubber Color", "Color"]),
       projectType: list(env.BP_FIELD_PROJECT_TYPE, ["Project Type", "Job Type", "Type"]),
       jobNumber: list(env.BP_FIELD_JOB_NUMBER, ["Job Number", "Job #", "Job No"]),
+      crew: list(env.BP_FIELD_CREW, ["Crew", "Team", "Trailer"]),
     },
     kv: {
       // Accept Vercel KV's env names or Upstash's directly.

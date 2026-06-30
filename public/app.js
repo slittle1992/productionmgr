@@ -301,10 +301,12 @@ function jobHtml(job) {
     : t.includes("warranty") || t.includes("inspection")
     ? "type-warranty"
     : "type-flake";
+  const hasCustomer = job.customer && job.customer !== "—";
+  const title = hasCustomer ? job.customer : `Job #${job.jobNumber}`;
   return `
     <article class="job" data-id="${escapeHtml(job.id)}">
       <div class="job-head">
-        <h3>${escapeHtml(job.customer)}</h3>
+        <h3>${escapeHtml(title)}</h3>
         <span class="job-no">#${escapeHtml(job.jobNumber)}</span>
       </div>
       <div class="job-sub">
@@ -312,6 +314,7 @@ function jobHtml(job) {
         ${job.scheduledDay ? `<span>${escapeHtml(job.scheduledDay)}</span>` : ""}
         ${job.city ? `<span>${escapeHtml(job.city)}</span>` : ""}
       </div>
+      ${job.description ? `<p class="job-desc">${escapeHtml(job.description)}</p>` : ""}
       <div class="job-grid">
         <div class="job-field">
           <label>Crew</label>
@@ -441,6 +444,90 @@ async function loadSchedule() {
   }
 }
 
+// ─────────────────────────── Pipeline upload ───────────────────────────
+let dataSource = "sample";
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+async function refreshPipelineStatus() {
+  const statusEl = $("pipeline-status");
+  const clearBtn = $("pipeline-clear");
+  try {
+    const { pipeline } = await (await fetch("/api/pipeline")).json();
+    if (pipeline) {
+      dataSource = "pipeline";
+      statusEl.innerHTML = `<strong>${pipeline.rowCount} jobs</strong> from uploaded pipeline${
+        pipeline.uploadedAt ? " · " + fmtDate(pipeline.uploadedAt) : ""
+      }`;
+      clearBtn.hidden = false;
+      $("upload-label").textContent = "Replace";
+      $("sample-banner").hidden = true;
+    } else {
+      clearBtn.hidden = true;
+      $("upload-label").textContent = "Upload pipeline";
+      if (dataSource === "live") {
+        statusEl.textContent = "Connected to Builder Prime.";
+      } else {
+        statusEl.innerHTML = "No pipeline uploaded — showing sample jobs.";
+      }
+    }
+  } catch {
+    statusEl.textContent = "";
+  }
+}
+
+async function handlePipelineFile(file) {
+  if (!file) return;
+  const label = document.querySelector(".btn-upload");
+  if (typeof XLSX === "undefined") {
+    toast("Spreadsheet reader didn't load — check your connection.", "error");
+    return;
+  }
+  label.classList.add("busy");
+  $("upload-label").textContent = "Reading…";
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+
+    const res = await fetch("/api/pipeline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, rows }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Upload failed.");
+
+    toast(`Loaded ${data.pipeline.rowCount} jobs ✓`, "success");
+    await refreshPipelineStatus();
+    await loadSchedule();
+  } catch (err) {
+    toast(err.message || "Couldn't read that file.", "error");
+  } finally {
+    label.classList.remove("busy");
+    $("pipeline-file").value = "";
+    await refreshPipelineStatus();
+  }
+}
+
+async function clearPipeline() {
+  if (!confirm("Remove the uploaded pipeline and go back to sample data?")) return;
+  try {
+    await fetch("/api/pipeline", { method: "DELETE" });
+    dataSource = "sample";
+    toast("Pipeline cleared.", "success");
+    await refreshPipelineStatus();
+    await loadSchedule();
+  } catch {
+    toast("Couldn't clear the pipeline.", "error");
+  }
+}
+
 // ─────────────────────────── Navigation ───────────────────────────
 const TITLES = { schedule: "Weekly Schedule", report: "Weekly Report", projects: "Projects" };
 let reportLoaded = false;
@@ -469,11 +556,18 @@ async function init() {
     const cfg = await (await fetch("/api/config")).json();
     state.laborMultiplier = cfg.laborMultiplier ?? 1.2;
     schedule.coverage = cfg.coverage ?? null;
+    dataSource = cfg.source ?? "sample";
     $("mult-label").textContent = state.laborMultiplier + "×";
     if (cfg.usingSampleData) $("sample-banner").hidden = false;
   } catch {
     /* non-fatal */
   }
+
+  $("pipeline-file").addEventListener("change", (e) =>
+    handlePipelineFile(e.target.files[0])
+  );
+  $("pipeline-clear").addEventListener("click", clearPipeline);
+  await refreshPipelineStatus();
 
   // Live recalc on every report input.
   document.getElementById("report-form").addEventListener("input", recalc);

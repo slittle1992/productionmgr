@@ -19,11 +19,13 @@ export interface ScheduleJob {
   projectType: string;
   className: string;
   city: string;
+  /** Free-text job description from the pipeline (area, notes, etc.). */
+  description: string | null;
   sqft: number | null;
   color: string | null;
   /** True when the color matched the canonical catalog. */
   colorRecognized: boolean;
-  /** Manager-assigned crew (not in Builder Prime). */
+  /** Crew/trailer — defaults from the pipeline, overridable on the schedule. */
   crew: string;
   /** Scheduled day (ms) and weekday label. */
   scheduledDate: number | null;
@@ -107,6 +109,9 @@ export class ScheduleService {
       str(p.projectStatusDescription) ??
       "—";
 
+    // Crew defaults from the pipeline (trailer/PM column); a manual assignment wins.
+    const defaultCrew = str(readCustomField(p, this.fields.crew));
+
     const scheduledDate = p.estimatedStartDate ?? null;
     const material = computeMaterials(
       sqft,
@@ -126,10 +131,11 @@ export class ScheduleService {
       projectType,
       className: str(p.className) ?? "Unassigned",
       city: [p.city, p.state].filter(Boolean).join(", "),
+      description: str(p.description),
       sqft,
       color: normalized?.name ?? null,
       colorRecognized: normalized?.recognized ?? false,
-      crew: assignment.crew ?? "",
+      crew: assignment.crew ?? defaultCrew ?? "",
       scheduledDate,
       scheduledDay:
         scheduledDate !== null ? WEEKDAYS[new Date(scheduledDate).getUTCDay()]! : null,

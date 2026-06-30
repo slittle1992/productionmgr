@@ -15,13 +15,26 @@ save/submit + QTD rollups), and a view-only **Projects** list.
 
 ```bash
 npm install
-npm test          # 54 tests
+npm test          # 68 tests
 npm start         # http://localhost:3000
 ```
 
 With **no Builder Prime credentials**, the app boots in **sample-data mode** so
-you can click through the whole UI and see the math work. To connect live data,
-copy `.env.example` to `.env` and fill in:
+you can click through the whole UI and see the math work.
+
+### Easiest: upload the Production Pipeline export
+
+Instead of wiring up the API, export the **Production Pipeline Report** from
+Builder Prime (the .xlsx) and tap **Upload pipeline** on the Schedule screen.
+The app reads the file in the browser, parses it server-side, and drives the
+whole schedule from it — grouped by class, with crew (the trailer/PM column),
+SqFt, color (pulled from the job description), and material all populated. Tap
+**Replace** to upload a newer export or **Clear** to go back. The uploaded
+pipeline is stored, so it persists (durably when KV is configured — see below).
+
+### Or connect the live API
+
+Copy `.env.example` to `.env` and fill in:
 
 ```bash
 BUILDER_PRIME_SUBDOMAIN=johnsfloors      # from johnsfloors.builderprime.com
@@ -57,18 +70,26 @@ The old workbook was 359 sheets of week-by-week snapshots, grouped by
 day → region, with material columns computed by hand. The Schedule tab
 reproduces the useful part and drops the manual work.
 
+Jobs come from one of two sources — an **uploaded Production Pipeline export**
+(easiest) or the **live Builder Prime API**. Either way they flow through the
+same schedule engine.
+
 **Where each column comes from**
 
-| Column | Source |
-|---|---|
-| Customer Name | Builder Prime (client name / company) |
-| Job Number | Builder Prime (`Job Number` custom field, else project id) |
-| Class (grouping) | Builder Prime `className` |
-| Project Type | Builder Prime (`Project Type` custom field) |
-| SQFT | Builder Prime (`SQFT` custom field) — correctable inline |
-| Color | Builder Prime (`Flake Color` custom field) — canonical dropdown |
-| Crew | **Assigned on the schedule** (not in Builder Prime), saved per week |
-| Material to use | **Computed** from SQFT × coverage rates; color names the flake |
+| Column | Pipeline upload | Builder Prime API |
+|---|---|---|
+| Job Number | `Job #` column | `Job Number` custom field, else project id |
+| Class (grouping) | `Class` column (region cleaned) | `className` |
+| Project Type | `Type` column | `Project Type` custom field |
+| SQFT | `Project Sq Ft` column | `SQFT` custom field |
+| Color | parsed from `Description` | `Flake Color` custom field |
+| Crew | `Project Manager` (trailer) column | manual on the schedule |
+| Scheduled day | `Start` column | `estimatedStartDate` |
+| Material to use | **Computed** from SQFT × coverage rates; color names the flake | same |
+
+Crew, color, and sqft are all correctable inline and saved per week; for API
+jobs the customer name is shown as the title, for pipeline jobs (which have no
+customer column) the card is titled by Job # with the description beneath.
 
 **Material math** (from the spreadsheet's Job-Costing sheet; all configurable):
 
@@ -119,9 +140,9 @@ original Builder Prime value is preserved (shown as `auto · edited`).
 
 ## Deploy to Vercel
 
-The app ships ready for Vercel — `api/index.ts` exports the Express app as a
-serverless function and `vercel.json` routes `/api/*` to it while Vercel serves
-the `public/` UI from its CDN.
+The app ships ready for Vercel. `npm run build` bundles the Express app into a
+single self-contained serverless function (`api/index.js`, via esbuild) so there
+is no runtime module resolution, and `vercel.json` routes all requests to it.
 
 ```bash
 npm i -g vercel      # if needed
@@ -247,7 +268,7 @@ Coverage spans the reporting-week math, the pure calculation engine, auto-field
 derivation from Builder Prime records, the report service (QTD rollups,
 override persistence, submit snapshotting), the schedule service (class
 grouping, custom-field reads, crew/color/sqft overrides), the material
-calculator, color normalisation, the durable KV repositories, and the HTTP API end-to-end.
+calculator, color normalisation, the durable KV repositories, the pipeline parser, and the HTTP API (incl. upload) end-to-end.
 
 ---
 

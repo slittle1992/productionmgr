@@ -17,6 +17,7 @@ const fields: CustomFieldNames = {
   color: ["Flake Color", "Color"],
   projectType: ["Project Type", "Job Type"],
   jobNumber: ["Job Number"],
+  crew: ["Crew"],
 };
 
 const now = () => Date.parse("2026-06-30T12:00:00Z"); // week of 2026-06-28
