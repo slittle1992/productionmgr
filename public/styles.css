@@ -412,6 +412,186 @@ input:focus {
   text-decoration: underline;
 }
 
+/* Class filter chips */
+.class-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.chip-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1.5px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  min-height: 40px;
+  white-space: nowrap;
+}
+.chip-btn .chip-count {
+  background: #eef1f6;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.chip-btn.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+.chip-btn.active .chip-count {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+/* Excel-style schedule table (desktop) */
+.table-wrap {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: auto;
+  max-height: calc(100vh - 320px);
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.06);
+}
+table.sched {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  min-width: 1080px;
+  font-size: 13.5px;
+}
+table.sched th,
+table.sched td {
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid #edf0f5;
+  padding: 7px 10px;
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+table.sched th:last-child,
+table.sched td:last-child {
+  border-right: none;
+}
+table.sched thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f0f3f8;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #4a5568;
+  border-bottom: 2px solid #d5dbe6;
+}
+table.sched .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+table.sched .th-name {
+  min-width: 220px;
+}
+table.sched td.c-name {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+table.sched td.c-day,
+table.sched td.c-jobno {
+  color: var(--muted);
+}
+table.sched td.dim {
+  color: #c3cad6;
+}
+tr.jobrow:hover td {
+  background: #f6f9ff;
+}
+tr.saved-flash td {
+  background: #e9f7ee !important;
+  transition: background 0.4s;
+}
+
+/* Editable cells */
+table.sched td.cell-edit {
+  padding: 0;
+  background: #fffdf3;
+  min-width: 110px;
+}
+table.sched td.cell-edit input {
+  width: 100%;
+  min-height: 36px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 7px 10px;
+}
+table.sched td.cell-edit.num input,
+table.sched td.cell-edit input[type="number"] {
+  text-align: right;
+}
+table.sched td.cell-edit input:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+  background: #fff;
+}
+table.sched input.warn {
+  color: #a05a00;
+}
+
+/* Group + totals rows */
+tr.group-band td {
+  background: var(--brand-light);
+  color: var(--brand);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Card view: flag off-catalog colors */
+.job-field input.warn {
+  border-color: #d8a200;
+  background: #fffdf5;
+}
+tr.totals td {
+  background: #f7f9fc;
+  font-weight: 700;
+  border-top: 2px solid #d5dbe6;
+  color: var(--ink);
+}
+tr.totals[data-class="__all__"] td {
+  background: #eef3fb;
+  border-top: 2px solid var(--brand);
+}
+
+/* Wide screens: let the schedule breathe, keep other tabs narrow */
+@media (min-width: 760px) {
+  main {
+    max-width: 1280px;
+  }
+  #screen-report,
+  #screen-projects {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  body {
+    padding-bottom: 120px;
+  }
+}
+
 /* Schedule */
 .schedule-list {
   display: flex;

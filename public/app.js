@@ -277,6 +277,280 @@ function flakeFor(colorName) {
   return schedule.colorMap.get(colorName.toLowerCase()) || colorName;
 }
 
+const fmtN = (n, dp = 2) =>
+  (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: dp });
+
+function typeChipClass(projectType) {
+  const t = (projectType || "").toLowerCase();
+  if (t.includes("rubber")) return "type-rubber";
+  if (t.includes("warranty") || t.includes("inspection")) return "type-warranty";
+  return "type-flake";
+}
+
+// ── Class filter chips ──
+function renderClassChips() {
+  const bar = $("class-chips");
+  const total = schedule.classes.reduce((n, g) => n + g.jobs.length, 0);
+  const chips = [
+    { key: "all", label: "All", count: total },
+    ...schedule.classes.map((g) => ({ key: g.className, label: g.className, count: g.jobs.length })),
+  ];
+  if (!chips.find((c) => c.key === schedule.activeClass)) schedule.activeClass = "all";
+  bar.innerHTML = chips
+    .map(
+      (c) => `
+      <button type="button" class="chip-btn ${schedule.activeClass === c.key ? "active" : ""}" data-class="${escapeHtml(c.key)}">
+        ${escapeHtml(c.label)} <span class="chip-count">${c.count}</span>
+      </button>`
+    )
+    .join("");
+  bar.querySelectorAll(".chip-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      schedule.activeClass = b.dataset.class;
+      renderSchedule();
+    })
+  );
+}
+
+// Shared debounced save for a job's crew/color/sqft edits (used by both views).
+function saveAssignment(id, payload, onOk) {
+  debounce(id, async () => {
+    try {
+      const res = await fetch("/api/schedule/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: id, ...payload }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      if (onOk) onOk();
+    } catch {
+      toast("Couldn't save that change.", "error");
+    }
+  });
+}
+
+// Table on wide screens, cards on phones. Re-render when crossing the breakpoint.
+const desktopQuery = window.matchMedia("(min-width: 760px)");
+const isDesktop = () => desktopQuery.matches;
+desktopQuery.addEventListener("change", () => {
+  if (schedule.classes.length && !$("screen-schedule").hidden) renderSchedule();
+});
+
+// ── Excel-style table (desktop) ──
+function matCells(job) {
+  const m = job.material;
+  if (!m.applies) {
+    return `<td class="c-flake dim">—</td><td class="num c-lbs dim">—</td><td class="num c-bca dim">—</td><td class="num c-bcb dim">—</td><td class="num c-tca dim">—</td><td class="num c-tcb dim">—</td>`;
+  }
+  return `
+    <td class="c-flake">${escapeHtml(m.flake || "—")}</td>
+    <td class="num c-lbs">${fmtN(m.flakePounds)}</td>
+    <td class="num c-bca">${fmtN(m.basecoatAGallons)}</td>
+    <td class="num c-bcb">${fmtN(m.basecoatBGallons)}</td>
+    <td class="num c-tca">${fmtN(m.topcoatAGallons)}</td>
+    <td class="num c-tcb">${fmtN(m.topcoatBGallons)}</td>`;
+}
+
+function rowHtml(job) {
+  const hasCustomer = job.customer && job.customer !== "—";
+  const label = hasCustomer ? job.customer : job.description || `Job #${job.jobNumber}`;
+  const tooltip = job.description || label;
+  const colorWarn = job.color && !job.colorRecognized ? " warn" : "";
+  return `
+    <tr class="jobrow" data-id="${escapeHtml(job.id)}">
+      <td class="c-day">${escapeHtml((job.scheduledDay || "—").slice(0, 3))}</td>
+      <td class="c-jobno">${escapeHtml(job.jobNumber)}</td>
+      <td class="c-name" title="${escapeHtml(tooltip)}">${escapeHtml(label)}</td>
+      <td class="c-type"><span class="chip ${typeChipClass(job.projectType)}">${escapeHtml(job.projectType)}</span></td>
+      <td class="cell-edit"><input class="js-crew" type="text" placeholder="—" value="${escapeHtml(job.crew || "")}" /></td>
+      <td class="cell-edit num"><input class="js-sqft" type="number" inputmode="numeric" min="0" value="${job.sqft ?? ""}" placeholder="—" /></td>
+      <td class="cell-edit"><input class="js-color${colorWarn}" list="color-list" type="text" value="${escapeHtml(job.color || "")}" placeholder="—" /></td>
+      ${matCells(job)}
+    </tr>`;
+}
+
+function computeClassTotals(jobs) {
+  const t = { sqft: 0, lbs: 0, bca: 0, bcb: 0, tca: 0, tcb: 0 };
+  for (const j of jobs) {
+    t.sqft += j.sqft || 0;
+    if (j.material.applies) {
+      t.lbs += j.material.flakePounds;
+      t.bca += j.material.basecoatAGallons;
+      t.bcb += j.material.basecoatBGallons;
+      t.tca += j.material.topcoatAGallons;
+      t.tcb += j.material.topcoatBGallons;
+    }
+  }
+  return t;
+}
+
+function totalsRowHtml(label, jobs, className) {
+  const t = computeClassTotals(jobs);
+  return `
+    <tr class="totals" data-class="${escapeHtml(className)}">
+      <td colspan="5">${escapeHtml(label)}</td>
+      <td class="num c-sqft">${fmtN(t.sqft, 0)}</td>
+      <td></td>
+      <td class="num c-lbs">${fmtN(t.lbs)}</td>
+      <td class="num c-bca">${fmtN(t.bca)}</td>
+      <td class="num c-bcb">${fmtN(t.bcb)}</td>
+      <td class="num c-tca">${fmtN(t.tca)}</td>
+      <td class="num c-tcb">${fmtN(t.tcb)}</td>
+    </tr>`;
+}
+
+function visibleGroups() {
+  const term = $("schedule-search").value.trim().toLowerCase();
+  return schedule.classes
+    .filter((g) => schedule.activeClass === "all" || g.className === schedule.activeClass)
+    .map((g) => ({
+      className: g.className,
+      jobs: g.jobs.filter(
+        (j) =>
+          !term ||
+          (j.customer || "").toLowerCase().includes(term) ||
+          (j.description || "").toLowerCase().includes(term) ||
+          String(j.jobNumber).includes(term) ||
+          (j.crew || "").toLowerCase().includes(term) ||
+          (j.color || "").toLowerCase().includes(term)
+      ),
+    }))
+    .filter((g) => g.jobs.length);
+}
+
+function renderSchedule() {
+  renderClassChips();
+  const list = $("schedule-list");
+  const groups = visibleGroups();
+
+  if (!groups.length) {
+    list.innerHTML = `<div class="empty">No jobs match.</div>`;
+    return;
+  }
+
+  if (isDesktop()) renderTable(list, groups);
+  else renderCards(list, groups);
+}
+
+function renderTable(list, groups) {
+  const showBands = schedule.activeClass === "all" && groups.length > 1;
+  let body = "";
+  for (const g of groups) {
+    if (showBands) {
+      body += `<tr class="group-band"><td colspan="13">${escapeHtml(g.className)} · ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}</td></tr>`;
+    }
+    body += g.jobs.map(rowHtml).join("");
+    body += totalsRowHtml(`${g.className} totals`, g.jobs, g.className);
+  }
+  if (showBands) {
+    const all = groups.flatMap((g) => g.jobs);
+    body += totalsRowHtml("Week totals", all, "__all__");
+  }
+
+  list.innerHTML = `
+    <div class="table-wrap">
+      <table class="sched">
+        <thead>
+          <tr>
+            <th>Day</th><th>Job #</th><th class="th-name">Customer / Job</th><th>Type</th>
+            <th class="th-crew">Crew</th><th class="num">SQFT</th><th class="th-color">Color</th>
+            <th>Flake</th><th class="num">Lbs</th><th class="num">Base A</th><th class="num">Base B</th><th class="num">Top A</th><th class="num">Top B</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+
+  list.querySelectorAll("tr.jobrow").forEach(wireRow);
+}
+
+const debouncers = new Map();
+function debounce(key, fn, ms = 600) {
+  clearTimeout(debouncers.get(key));
+  debouncers.set(key, setTimeout(fn, ms));
+}
+
+function updateRowMaterial(row, job) {
+  const m = job.material;
+  const set = (cls, val, num = true) => {
+    const cell = row.querySelector(`.c-${cls}`);
+    if (!cell) return;
+    cell.classList.toggle("dim", !m.applies);
+    cell.textContent = m.applies ? (num ? fmtN(val) : val || "—") : "—";
+  };
+  set("flake", m.flake, false);
+  set("lbs", m.flakePounds);
+  set("bca", m.basecoatAGallons);
+  set("bcb", m.basecoatBGallons);
+  set("tca", m.topcoatAGallons);
+  set("tcb", m.topcoatBGallons);
+}
+
+function updateTotalsRows() {
+  const groups = visibleGroups();
+  for (const g of groups) {
+    const row = document.querySelector(`tr.totals[data-class="${CSS.escape(g.className)}"]`);
+    if (!row) continue;
+    const t = computeClassTotals(g.jobs);
+    row.querySelector(".c-sqft").textContent = fmtN(t.sqft, 0);
+    row.querySelector(".c-lbs").textContent = fmtN(t.lbs);
+    row.querySelector(".c-bca").textContent = fmtN(t.bca);
+    row.querySelector(".c-bcb").textContent = fmtN(t.bcb);
+    row.querySelector(".c-tca").textContent = fmtN(t.tca);
+    row.querySelector(".c-tcb").textContent = fmtN(t.tcb);
+  }
+  const grand = document.querySelector(`tr.totals[data-class="__all__"]`);
+  if (grand) {
+    const all = groups.flatMap((g) => g.jobs);
+    const t = computeClassTotals(all);
+    grand.querySelector(".c-sqft").textContent = fmtN(t.sqft, 0);
+    grand.querySelector(".c-lbs").textContent = fmtN(t.lbs);
+    grand.querySelector(".c-bca").textContent = fmtN(t.bca);
+    grand.querySelector(".c-bcb").textContent = fmtN(t.bcb);
+    grand.querySelector(".c-tca").textContent = fmtN(t.tca);
+    grand.querySelector(".c-tcb").textContent = fmtN(t.tcb);
+  }
+}
+
+function wireRow(row) {
+  const id = row.dataset.id;
+  const crew = row.querySelector(".js-crew");
+  const sqft = row.querySelector(".js-sqft");
+  const color = row.querySelector(".js-color");
+
+  const flash = () => {
+    row.classList.add("saved-flash");
+    setTimeout(() => row.classList.remove("saved-flash"), 900);
+  };
+
+  const recompute = () => {
+    const job = findJob(id);
+    if (!job) return;
+    job.sqft = sqft.value === "" ? null : Number(sqft.value) || 0;
+    job.color = color.value.trim() || null;
+    job.material = computeMaterialClient(job.sqft || 0, job.projectType, flakeFor(job.color));
+    color.classList.toggle("warn", Boolean(job.color) && !schedule.colorMap.has(job.color.toLowerCase()));
+    updateRowMaterial(row, job);
+    updateTotalsRows();
+  };
+
+  crew.addEventListener("input", () => {
+    const job = findJob(id);
+    if (job) job.crew = crew.value.trim();
+    saveAssignment(id, { crew: crew.value.trim() }, flash);
+  });
+  sqft.addEventListener("input", () => {
+    recompute();
+    const v = Number(sqft.value);
+    saveAssignment(id, { sqftOverride: Number.isFinite(v) && v >= 0 ? v : undefined }, flash);
+  });
+  color.addEventListener("input", () => {
+    recompute();
+    saveAssignment(id, { colorOverride: color.value.trim() || undefined }, flash);
+  });
+}
+
+// ── Card view (phone) ──
 function materialHtml(mat) {
   if (!mat.applies) {
     return `<div class="material none">No material needed (warranty / inspection).</div>`;
@@ -284,23 +558,17 @@ function materialHtml(mat) {
   return `
     <div class="material">
       <h4>Material to use</h4>
-      <div class="flake-name">Flake: ${escapeHtml(mat.flake || "—")} · <b>${mat.flakePounds} lbs</b></div>
+      <div class="flake-name">Flake: ${escapeHtml(mat.flake || "—")} · <b>${fmtN(mat.flakePounds)} lbs</b></div>
       <div class="mat-rows">
-        <span>Basecoat A <b>${mat.basecoatAGallons} gal</b></span>
-        <span>Basecoat B <b>${mat.basecoatBGallons} gal</b></span>
-        <span>Topcoat A <b>${mat.topcoatAGallons} gal</b></span>
-        <span>Topcoat B <b>${mat.topcoatBGallons} gal</b></span>
+        <span>Basecoat A <b>${fmtN(mat.basecoatAGallons)} gal</b></span>
+        <span>Basecoat B <b>${fmtN(mat.basecoatBGallons)} gal</b></span>
+        <span>Topcoat A <b>${fmtN(mat.topcoatAGallons)} gal</b></span>
+        <span>Topcoat B <b>${fmtN(mat.topcoatBGallons)} gal</b></span>
       </div>
     </div>`;
 }
 
-function jobHtml(job) {
-  const t = (job.projectType || "").toLowerCase();
-  const typeClass = t.includes("rubber")
-    ? "type-rubber"
-    : t.includes("warranty") || t.includes("inspection")
-    ? "type-warranty"
-    : "type-flake";
+function jobCardHtml(job) {
   const hasCustomer = job.customer && job.customer !== "—";
   const title = hasCustomer ? job.customer : `Job #${job.jobNumber}`;
   return `
@@ -310,7 +578,7 @@ function jobHtml(job) {
         <span class="job-no">#${escapeHtml(job.jobNumber)}</span>
       </div>
       <div class="job-sub">
-        <span class="chip ${typeClass}">${escapeHtml(job.projectType)}</span>
+        <span class="chip ${typeChipClass(job.projectType)}">${escapeHtml(job.projectType)}</span>
         ${job.scheduledDay ? `<span>${escapeHtml(job.scheduledDay)}</span>` : ""}
         ${job.city ? `<span>${escapeHtml(job.city)}</span>` : ""}
       </div>
@@ -322,12 +590,11 @@ function jobHtml(job) {
         </div>
         <div class="job-field">
           <label>SQFT</label>
-          <input class="js-sqft ${job.edited.sqft ? "edited" : ""}" type="number" inputmode="numeric" min="0" value="${job.sqft ?? ""}" />
+          <input class="js-sqft" type="number" inputmode="numeric" min="0" value="${job.sqft ?? ""}" />
         </div>
         <div class="job-field full">
-          <label>Color ${job.edited.color ? "· edited" : ""}</label>
-          <input class="js-color ${job.edited.color ? "edited" : ""}" list="color-list" type="text" value="${escapeHtml(job.color || "")}" />
-          ${job.color && !job.colorRecognized ? `<div class="color-warn">Not in catalog — pick a standard color.</div>` : ""}
+          <label>Color</label>
+          <input class="js-color${job.color && !job.colorRecognized ? " warn" : ""}" list="color-list" type="text" value="${escapeHtml(job.color || "")}" />
         </div>
       </div>
       <div class="js-material">${materialHtml(job.material)}</div>
@@ -335,46 +602,21 @@ function jobHtml(job) {
     </article>`;
 }
 
-function renderSchedule() {
-  const term = $("schedule-search").value.trim().toLowerCase();
-  const list = $("schedule-list");
-  const groups = schedule.classes
-    .map((g) => ({
-      className: g.className,
-      jobs: g.jobs.filter(
-        (j) =>
-          !term ||
-          j.customer.toLowerCase().includes(term) ||
-          String(j.jobNumber).includes(term) ||
-          (j.crew || "").toLowerCase().includes(term)
-      ),
-    }))
-    .filter((g) => g.jobs.length);
-
-  if (!groups.length) {
-    list.innerHTML = `<div class="empty">No jobs scheduled this week.</div>`;
-    return;
-  }
+function renderCards(list, groups) {
+  const showHeaders = schedule.activeClass === "all" && groups.length > 1;
   list.innerHTML = groups
     .map(
       (g) => `
       <section class="class-group">
-        <h2>${escapeHtml(g.className)} <span class="count">${g.jobs.length}</span></h2>
-        ${g.jobs.map(jobHtml).join("")}
+        ${showHeaders ? `<h2>${escapeHtml(g.className)} <span class="count">${g.jobs.length}</span></h2>` : ""}
+        ${g.jobs.map(jobCardHtml).join("")}
       </section>`
     )
     .join("");
-
-  list.querySelectorAll(".job").forEach(wireJob);
+  list.querySelectorAll(".job").forEach(wireCard);
 }
 
-const debouncers = new Map();
-function debounce(key, fn, ms = 600) {
-  clearTimeout(debouncers.get(key));
-  debouncers.set(key, setTimeout(fn, ms));
-}
-
-function wireJob(el) {
+function wireCard(el) {
   const id = el.dataset.id;
   const crew = el.querySelector(".js-crew");
   const sqft = el.querySelector(".js-sqft");
@@ -382,44 +624,34 @@ function wireJob(el) {
   const matBox = el.querySelector(".js-material");
   const tick = el.querySelector(".js-tick");
 
-  const refreshMaterial = () => {
+  const flash = () => {
+    tick.classList.add("show");
+    setTimeout(() => tick.classList.remove("show"), 1400);
+  };
+
+  const recompute = () => {
     const job = findJob(id);
     if (!job) return;
-    const type = job.projectType;
-    const mat = computeMaterialClient(
-      Number(sqft.value) || 0,
-      type,
-      flakeFor(color.value.trim())
-    );
-    matBox.innerHTML = materialHtml(mat);
+    job.sqft = sqft.value === "" ? null : Number(sqft.value) || 0;
+    job.color = color.value.trim() || null;
+    job.material = computeMaterialClient(job.sqft || 0, job.projectType, flakeFor(job.color));
+    color.classList.toggle("warn", Boolean(job.color) && !schedule.colorMap.has(job.color.toLowerCase()));
+    matBox.innerHTML = materialHtml(job.material);
   };
 
-  const save = (payload) => {
-    debounce(id, async () => {
-      try {
-        const res = await fetch("/api/schedule/assign", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jobId: id, ...payload }),
-        });
-        if (!res.ok) throw new Error("save failed");
-        tick.classList.add("show");
-        setTimeout(() => tick.classList.remove("show"), 1400);
-      } catch {
-        toast("Couldn't save that change.", "error");
-      }
-    });
-  };
-
-  crew.addEventListener("input", () => save({ crew: crew.value.trim() }));
+  crew.addEventListener("input", () => {
+    const job = findJob(id);
+    if (job) job.crew = crew.value.trim();
+    saveAssignment(id, { crew: crew.value.trim() }, flash);
+  });
   sqft.addEventListener("input", () => {
-    refreshMaterial();
+    recompute();
     const v = Number(sqft.value);
-    save({ sqftOverride: Number.isFinite(v) && v >= 0 ? v : undefined });
+    saveAssignment(id, { sqftOverride: Number.isFinite(v) && v >= 0 ? v : undefined }, flash);
   });
   color.addEventListener("input", () => {
-    refreshMaterial();
-    save({ colorOverride: color.value.trim() || undefined });
+    recompute();
+    saveAssignment(id, { colorOverride: color.value.trim() || undefined }, flash);
   });
 }
 
