@@ -232,7 +232,43 @@ async function loadProjects() {
 }
 
 // ─────────────────────────── Schedule ───────────────────────────
-const schedule = { coverage: null, colorMap: new Map(), weekLabel: "", classes: [] };
+const schedule = {
+  coverage: null,
+  colorMap: new Map(),
+  classes: [],
+  activeClass: "all",
+  /** ISO Sunday of the week being viewed (null until first load → current week). */
+  weekStart: null,
+};
+
+// ── Week navigation (weeks run Sunday–Saturday) ──
+function currentWeekStartIso() {
+  const now = new Date();
+  const sunday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+  const p = (n) => String(n).padStart(2, "0");
+  return `${sunday.getFullYear()}-${p(sunday.getMonth() + 1)}-${p(sunday.getDate())}`;
+}
+
+function shiftWeekIso(iso, weeks) {
+  const ms = Date.parse(`${iso}T00:00:00Z`) + weeks * 7 * 86400000;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function fmtWeekDay(iso) {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function updateWeekBar(weekStart, weekEnd) {
+  const isCurrent = weekStart === currentWeekStartIso();
+  $("week-range").textContent = `${fmtWeekDay(weekStart)} – ${fmtWeekDay(weekEnd)}`;
+  $("week-tag").hidden = !isCurrent;
+  $("week-today").hidden = isCurrent;
+  $("week-date").value = weekStart;
+}
 
 const NO_MATERIAL = ["warranty", "inspection", "sand & clear", "sand and clear"];
 function appliesMaterial(type) {
@@ -313,10 +349,12 @@ function renderClassChips() {
 }
 
 // Shared debounced save for a job's crew/color/sqft edits (used by both views).
+// Saves against the week being viewed, so assignments stick to the right week.
 function saveAssignment(id, payload, onOk) {
   debounce(id, async () => {
     try {
-      const res = await fetch("/api/schedule/assign", {
+      const q = schedule.weekStart ? `?week=${schedule.weekStart}` : "";
+      const res = await fetch(`/api/schedule/assign${q}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId: id, ...payload }),
@@ -667,13 +705,22 @@ async function loadSchedule() {
   const list = $("schedule-list");
   list.innerHTML = `<div class="loading">Loading schedule…</div>`;
   try {
-    const data = await (await fetch("/api/schedule")).json();
+    const q = schedule.weekStart ? `?week=${schedule.weekStart}` : "";
+    const data = await (await fetch(`/api/schedule${q}`)).json();
     schedule.classes = data.classes;
+    // The server snaps any date to its Sunday–Saturday week; keep the canonical start.
+    schedule.weekStart = data.weekStart;
+    updateWeekBar(data.weekStart, data.weekEnd);
     $("week-label").textContent = `Week of ${data.weekStart} – ${data.weekEnd} · ${data.jobCount} jobs`;
     renderSchedule();
   } catch (err) {
     list.innerHTML = `<div class="empty">Couldn't load the schedule.</div>`;
   }
+}
+
+function goToWeek(weekStart) {
+  schedule.weekStart = weekStart;
+  loadSchedule();
 }
 
 // ─────────────────────────── Pipeline upload ───────────────────────────
@@ -813,6 +860,18 @@ async function init() {
   $("project-search").addEventListener("input", renderProjects);
   $("include-cancelled").addEventListener("change", loadProjects);
   $("schedule-search").addEventListener("input", renderSchedule);
+
+  // Week navigation.
+  $("week-prev").addEventListener("click", () =>
+    goToWeek(shiftWeekIso(schedule.weekStart || currentWeekStartIso(), -1))
+  );
+  $("week-next").addEventListener("click", () =>
+    goToWeek(shiftWeekIso(schedule.weekStart || currentWeekStartIso(), 1))
+  );
+  $("week-today").addEventListener("click", () => goToWeek(currentWeekStartIso()));
+  $("week-date").addEventListener("change", (e) => {
+    if (e.target.value) goToWeek(e.target.value); // server snaps to that week's Sunday
+  });
 
   // Schedule is the default screen.
   await loadColors();

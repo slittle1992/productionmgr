@@ -23,6 +23,17 @@
     <main id="main">
       <!-- ───────────────────────── Weekly Schedule ───────────────────────── -->
       <section id="screen-schedule" class="screen">
+        <div class="week-bar">
+          <button id="week-prev" class="week-arrow" type="button" aria-label="Previous week">◀</button>
+          <div class="week-display">
+            <span id="week-range">Loading…</span>
+            <span id="week-tag" class="week-tag" hidden>This week</span>
+            <!-- Invisible native date input overlays the label: tapping opens the OS picker -->
+            <input id="week-date" type="date" aria-label="Jump to week" />
+          </div>
+          <button id="week-next" class="week-arrow" type="button" aria-label="Next week">▶</button>
+          <button id="week-today" class="week-today" type="button" hidden>This week</button>
+        </div>
         <div class="pipeline-bar">
           <div id="pipeline-status" class="pipeline-status">Loading…</div>
           <div class="pipeline-actions">
