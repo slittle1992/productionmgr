@@ -140,9 +140,13 @@ original Builder Prime value is preserved (shown as `auto · edited`).
 
 ## Deploy to Vercel
 
-The app ships ready for Vercel. `npm run build` bundles the Express app into a
-single self-contained serverless function (`api/index.js`, via esbuild) so there
-is no runtime module resolution, and `vercel.json` routes all requests to it.
+The app deploys via Vercel's **Build Output API**: `npm run build`
+(`scripts/build-vercel.mjs`) emits `.vercel/output/` containing a single
+self-contained CommonJS function (the whole Express app bundled by esbuild,
+with its own `{"type":"commonjs"}` package.json) plus the static UI on the CDN
+and explicit routes. Vercel runs the function exactly as built — no runtime
+module transformation, which is what previously caused
+`FUNCTION_INVOCATION_FAILED` crashes with an ESM entry in `api/`.
 
 ```bash
 npm i -g vercel      # if needed
