@@ -6,7 +6,12 @@ import { BuilderPrimeClient } from "./builderPrime/client.js";
 import type { ProjectProvider } from "./builderPrime/provider.js";
 import { SampleProjectProvider } from "./builderPrime/sampleData.js";
 import { PipelineProvider } from "./builderPrime/pipelineProvider.js";
-import { hasDurableStorage, hasLiveCredentials, type AppConfig } from "./config.js";
+import {
+  hasDurableStorage,
+  hasLiveCredentials,
+  loadConfig,
+  type AppConfig,
+} from "./config.js";
 import { asyncHandler } from "./routes/asyncHandler.js";
 import { errorMiddleware } from "./routes/errorMiddleware.js";
 import { projectsRouter } from "./routes/projects.js";
@@ -181,3 +186,16 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
 
   return { app, usingSampleData: provider.isSample, usingDurableStorage: durable };
 }
+
+/**
+ * Default export: the production app built from the environment.
+ *
+ * Vercel auto-detects Express projects and, unless the framework preset is
+ * disabled, compiles THIS file as the serverless entry and requires its default
+ * export to be the app ("Invalid export found in module … The default export
+ * must be a function or server" otherwise). vercel.json sets "framework": null
+ * to turn that off, but this export makes the repo deploy correctly under
+ * either behavior. Building it is side-effect-free (no listen, no I/O).
+ */
+const productionApp = buildApp({ config: loadConfig() }).app;
+export default productionApp;
