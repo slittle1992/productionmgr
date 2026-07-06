@@ -20,6 +20,14 @@ export function projectsRouter(service: ProjectsService): Router {
       .transform((v) => v === "true"),
   });
 
+  // Distinct class names (for the schedule/report class chips).
+  router.get(
+    "/classes",
+    asyncHandler(async (_req, res) => {
+      res.json({ classes: await service.listClasses() });
+    })
+  );
+
   router.get(
     "/projects",
     asyncHandler(async (req, res) => {

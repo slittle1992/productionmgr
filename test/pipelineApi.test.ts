@@ -11,11 +11,11 @@ import type { ReportRepository } from "../src/storage/repository.js";
 
 class MemoryRepo implements ReportRepository {
   store = new Map<string, StoredReport>();
-  async get(w: string) {
-    return this.store.get(w) ?? null;
+  async get(w: string, c: string) {
+    return this.store.get(`${w}|${c}`) ?? null;
   }
   async save(r: StoredReport) {
-    this.store.set(r.weekStart, structuredClone(r));
+    this.store.set(`${r.weekStart}|${r.className}`, structuredClone(r));
   }
   async listAll() {
     return [...this.store.values()];

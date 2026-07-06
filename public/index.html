@@ -14,6 +14,11 @@
     <div id="sample-banner" class="banner" hidden>
       Showing <strong>sample data</strong> — no live Builder Prime connection.
     </div>
+    <div id="storage-warning" class="banner warn" hidden>
+      ⚠ <strong>No shared database connected.</strong> Uploads and edits are not
+      shared between devices and can be lost. Connect Vercel KV (Storage → Redis)
+      so every PM sees the same data.
+    </div>
 
     <header class="app-header">
       <h1 id="screen-title">Weekly Report</h1>
@@ -63,6 +68,8 @@
 
       <!-- ───────────────────────── Weekly Report ───────────────────────── -->
       <section id="screen-report" class="screen" hidden>
+        <p class="report-class-label">Submitting report for:</p>
+        <div id="report-class-chips" class="class-chips"></div>
         <div id="report-status" class="status-pill" hidden></div>
 
         <form id="report-form" novalidate>
@@ -234,6 +241,17 @@
             </div>
           </fieldset>
         </form>
+
+        <div class="card history-card">
+          <h2 class="history-title">Submitted reports</h2>
+          <p class="card-help">
+            Reports are saved here (per class, per week) and feed the
+            quarter-to-date totals.
+          </p>
+          <div id="report-history" class="report-history">
+            <div class="loading">Loading…</div>
+          </div>
+        </div>
       </section>
 
       <!-- ───────────────────────── Projects ───────────────────────── -->

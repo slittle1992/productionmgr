@@ -14,6 +14,7 @@ import type { BuilderPrimeProject } from "../src/builderPrime/types.js";
 function storedReport(weekStart: string, quarter: string): StoredReport {
   return {
     weekStart,
+    className: "All",
     weekEnd: weekStart,
     quarter,
     status: "submitted",
@@ -32,8 +33,8 @@ describe("KvReportRepository", () => {
     await repo.save(storedReport("2026-06-28", "2026-Q2"));
     await repo.save(storedReport("2026-03-29", "2026-Q1"));
 
-    expect((await repo.get("2026-06-28"))?.quarter).toBe("2026-Q2");
-    expect(await repo.get("2026-01-04")).toBeNull();
+    expect((await repo.get("2026-06-28", "All"))?.quarter).toBe("2026-Q2");
+    expect(await repo.get("2026-01-04", "All")).toBeNull();
 
     const q2 = await repo.listByQuarter("2026-Q2");
     expect(q2.map((r) => r.weekStart)).toEqual(["2026-06-28"]);
@@ -42,7 +43,7 @@ describe("KvReportRepository", () => {
 
   it("rejects an invalid week id", async () => {
     const repo = new KvReportRepository(new MemoryKvClient());
-    await expect(repo.get("not-a-date")).rejects.toThrow();
+    await expect(repo.get("not-a-date", "All")).rejects.toThrow();
   });
 });
 
@@ -78,11 +79,13 @@ describe("services on KV storage", () => {
 
     await service.saveReport(
       "2026-06-21",
+      "All",
       { overrides: {}, manual: { ...emptyManualFields(), warrantiesOpenedThisWeek: 3 } },
       true
     );
     const current = await service.saveReport(
       "2026-06-28",
+      "All",
       { overrides: {}, manual: { ...emptyManualFields(), warrantiesOpenedThisWeek: 2 } },
       false
     );

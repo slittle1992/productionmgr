@@ -41,6 +41,63 @@ body {
   font-size: 14px;
   border-bottom: 1px solid #f0e2b0;
 }
+.banner.warn {
+  background: #fdeaea;
+  color: #8a1f1f;
+  border-bottom: 1px solid #f2c6c6;
+}
+
+/* Report class picker + history */
+.report-class-label {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.history-card {
+  margin-top: 4px;
+}
+.history-title {
+  margin: 0;
+  font-size: 15px;
+  color: var(--brand);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.report-history {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #f7f9fc;
+  border-radius: 9px;
+  font-size: 14px;
+}
+.history-row .history-week {
+  font-weight: 600;
+}
+.history-row .history-class {
+  color: var(--muted);
+  flex: 1;
+}
+.history-row .status-pill {
+  margin: 0;
+  font-size: 11px;
+  padding: 2px 9px;
+}
+.empty.small {
+  padding: 8px;
+  font-size: 13px;
+  text-align: left;
+}
 
 .app-header {
   position: sticky;

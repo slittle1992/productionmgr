@@ -20,6 +20,9 @@ const state = {
   autoSource: { projectedJobSchedule: 0, completedJobsRevenue: 0, projectedLabor: 0 },
   priorQtd: { warranties: 0, leads: 0 },
   weekStart: null,
+  // Class this PM is reporting for ("All" = company-wide rollup).
+  reportClass: localStorage.getItem("reportClass") || "All",
+  classes: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -91,7 +94,7 @@ function fillForm(report) {
     if (report.manual[f] !== undefined) $(f).value = report.manual[f];
   }
 
-  $("week-label").textContent = `Week of ${report.weekStart} – ${report.weekEnd} · ${report.quarter}`;
+  $("week-label").textContent = `Week of ${report.weekStart} – ${report.weekEnd} · ${report.quarter} · ${report.className}`;
 
   const pill = $("report-status");
   pill.hidden = false;
@@ -124,21 +127,79 @@ function collectPayload(submit) {
   return { manual, overrides, submit };
 }
 
+function renderReportChips() {
+  const bar = $("report-class-chips");
+  const chips = ["All", ...state.classes];
+  if (!chips.includes(state.reportClass)) state.reportClass = "All";
+  bar.innerHTML = chips
+    .map(
+      (c) => `
+      <button type="button" class="chip-btn ${state.reportClass === c ? "active" : ""}" data-class="${escapeHtml(c)}">
+        ${escapeHtml(c === "All" ? "All (company)" : c)}
+      </button>`
+    )
+    .join("");
+  bar.querySelectorAll(".chip-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.reportClass = b.dataset.class;
+      localStorage.setItem("reportClass", state.reportClass);
+      renderReportChips();
+      loadReport();
+    })
+  );
+}
+
+async function loadReportClasses() {
+  try {
+    const { classes } = await (await fetch("/api/classes")).json();
+    state.classes = classes || [];
+  } catch {
+    state.classes = [];
+  }
+  renderReportChips();
+}
+
+async function loadReportHistory() {
+  const box = $("report-history");
+  try {
+    const res = await fetch("/api/reports");
+    const list = await res.json();
+    if (!Array.isArray(list) || !list.length) {
+      box.innerHTML = `<div class="empty small">No reports saved yet.</div>`;
+      return;
+    }
+    box.innerHTML = list
+      .slice(0, 20)
+      .map(
+        (r) => `
+        <div class="history-row">
+          <span class="history-week">Week of ${escapeHtml(r.weekStart)}</span>
+          <span class="history-class">${escapeHtml(r.className || "All")}</span>
+          <span class="status-pill ${r.status}">${r.status === "submitted" ? "Submitted" : "Draft"}</span>
+        </div>`
+      )
+      .join("");
+  } catch {
+    box.innerHTML = `<div class="empty small">Couldn't load history.</div>`;
+  }
+}
+
 async function loadReport() {
   try {
-    const res = await fetch("/api/report");
+    const res = await fetch(`/api/report?class=${encodeURIComponent(state.reportClass)}`);
     if (!res.ok) throw await res.json().catch(() => ({}));
     fillForm(await res.json());
   } catch (err) {
     toast(err.message || "Couldn't load the report.", "error");
   }
+  loadReportHistory();
 }
 
 async function saveReport(submit) {
   const btn = submit ? $("btn-submit") : $("btn-save");
   btn.disabled = true;
   try {
-    const res = await fetch("/api/report", {
+    const res = await fetch(`/api/report?class=${encodeURIComponent(state.reportClass)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(collectPayload(submit)),
@@ -970,9 +1031,13 @@ function showScreen(name) {
     t.classList.toggle("active", t.dataset.screen === name)
   );
   if (name === "projects" && !allProjects.length) loadProjects();
-  if (name === "report" && !reportLoaded) {
-    reportLoaded = true;
-    loadReport();
+  if (name === "report") {
+    if (!reportLoaded) {
+      reportLoaded = true;
+      loadReportClasses().then(loadReport);
+    } else {
+      loadReport();
+    }
   }
   if (name === "schedule") loadSchedule();
 }
@@ -986,6 +1051,7 @@ async function init() {
     dataSource = cfg.source ?? "sample";
     $("mult-label").textContent = state.laborMultiplier + "×";
     if (cfg.usingSampleData) $("sample-banner").hidden = false;
+    if (cfg.ephemeralStorage) $("storage-warning").hidden = false;
   } catch {
     /* non-fatal */
   }

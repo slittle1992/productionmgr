@@ -76,12 +76,12 @@ export class ReportService {
       : getReportingWeek(this.now(), this.weekStartDay);
   }
 
-  /** Sum prior weeks' manual counts for the quarter, excluding `week` itself. */
-  private async priorQtd(week: ReportingWeek): Promise<PriorQtd> {
+  /** Sum this class's prior weeks for the quarter, excluding `week` itself. */
+  private async priorQtd(week: ReportingWeek, className: string): Promise<PriorQtd> {
     const starts = quarterWeekStarts(week, this.weekStartDay).filter(
       (s) => s !== week.weekStart
     );
-    const stored = await Promise.all(starts.map((s) => this.repo.get(s)));
+    const stored = await Promise.all(starts.map((s) => this.repo.get(s, className)));
     return stored.reduce<PriorQtd>(
       (acc, r) => {
         if (r) {
@@ -96,6 +96,7 @@ export class ReportService {
 
   private assemble(
     week: ReportingWeek,
+    className: string,
     stored: StoredReport | null,
     autoSource: AutoFilledFields,
     overrides: AutoOverrides,
@@ -112,6 +113,7 @@ export class ReportService {
     });
     return {
       weekStart: week.weekStart,
+      className,
       weekEnd: week.weekEnd,
       quarter: week.quarter,
       status: stored?.status ?? "draft",
@@ -127,13 +129,13 @@ export class ReportService {
   }
 
   /**
-   * Load (and live-refresh) the report for a week. A submitted report keeps its
-   * Builder Prime snapshot; a draft re-pulls fresh auto values while preserving
-   * the manager's manual entries and overrides.
+   * Load (and live-refresh) a class's report for a week. A submitted report
+   * keeps its Builder Prime snapshot; a draft re-pulls fresh auto values (for
+   * that class only) while preserving the manager's manual entries/overrides.
    */
-  async getReport(weekStart?: string): Promise<WeeklyReport> {
+  async getReport(weekStart: string | undefined, className: string): Promise<WeeklyReport> {
     const week = this.resolveWeek(weekStart);
-    const stored = await this.repo.get(week.weekStart);
+    const stored = await this.repo.get(week.weekStart, className);
 
     let autoSource: AutoFilledFields;
     let usingSampleData: boolean;
@@ -141,17 +143,20 @@ export class ReportService {
       autoSource = stored.autoSource;
       usingSampleData = stored.usingSampleData;
     } else {
-      const raw = await this.projects.fetchRawProjects();
+      const raw = await this.projects.fetchRawProjects(
+        className === "All" ? undefined : className
+      );
       autoSource = computeAutoFromProjects(raw, week);
       usingSampleData = this.projects.usingSampleData;
     }
 
     const overrides = stored?.overrides ?? {};
     const manual = stored?.manual ?? emptyManualFields();
-    const priorQtd = await this.priorQtd(week);
+    const priorQtd = await this.priorQtd(week, className);
 
     return this.assemble(
       week,
+      className,
       stored,
       autoSource,
       overrides,
@@ -161,24 +166,28 @@ export class ReportService {
     );
   }
 
-  /** Save a draft or submit a final report (FR-4, FR-5). */
+  /** Save a draft or submit a final report for one class (FR-4, FR-5). */
   async saveReport(
     weekStart: string | undefined,
+    className: string,
     input: SaveReportInput,
     submit: boolean
   ): Promise<WeeklyReport> {
     const week = this.resolveWeek(weekStart);
-    const existing = await this.repo.get(week.weekStart);
+    const existing = await this.repo.get(week.weekStart, className);
 
     // Refresh the snapshot from Builder Prime at save time so the stored auto
     // values match what the manager is confirming.
-    const raw = await this.projects.fetchRawProjects();
+    const raw = await this.projects.fetchRawProjects(
+      className === "All" ? undefined : className
+    );
     const autoSource = computeAutoFromProjects(raw, week);
     const usingSampleData = this.projects.usingSampleData;
 
     const nowIso = new Date(this.now()).toISOString();
     const toStore: StoredReport = {
       weekStart: week.weekStart,
+      className,
       weekEnd: week.weekEnd,
       quarter: week.quarter,
       status: submit ? "submitted" : "draft",
@@ -191,9 +200,10 @@ export class ReportService {
     };
     await this.repo.save(toStore);
 
-    const priorQtd = await this.priorQtd(week);
+    const priorQtd = await this.priorQtd(week, className);
     return this.assemble(
       week,
+      className,
       toStore,
       autoSource,
       input.overrides,
@@ -205,13 +215,19 @@ export class ReportService {
 
   /** Lightweight history list for the archive view. */
   async listHistory(): Promise<
-    Array<Pick<StoredReport, "weekStart" | "weekEnd" | "quarter" | "status" | "submittedAt">>
+    Array<
+      Pick<
+        StoredReport,
+        "weekStart" | "weekEnd" | "quarter" | "className" | "status" | "submittedAt"
+      >
+    >
   > {
     const all = await this.repo.listAll();
     return all.map((r) => ({
       weekStart: r.weekStart,
       weekEnd: r.weekEnd,
       quarter: r.quarter,
+      className: r.className,
       status: r.status,
       submittedAt: r.submittedAt,
     }));

@@ -4,30 +4,38 @@ import type { ReportService } from "../services/reportService.js";
 import { saveReportSchema, weekStartSchema } from "./validation.js";
 import { asyncHandler } from "./asyncHandler.js";
 
-/** Routes for the weekly report (FR-1 .. FR-5). */
+/**
+ * Routes for the weekly report (FR-1 .. FR-5). Reports are per class — each
+ * production manager submits their own class's report; `class=All` is the
+ * company-wide rollup and the default when omitted.
+ */
 export function reportsRouter(service: ReportService): Router {
   const router = Router();
 
-  const weekQuery = z.object({ week: weekStartSchema.optional() });
+  const reportQuery = z.object({
+    week: weekStartSchema.optional(),
+    class: z.string().trim().min(1).max(60).default("All"),
+  });
 
-  // GET /api/report?week=YYYY-MM-DD  (defaults to the current reporting week)
+  // GET /api/report?week=YYYY-MM-DD&class=Austin
   router.get(
     "/report",
     asyncHandler(async (req, res) => {
-      const { week } = weekQuery.parse(req.query);
-      const report = await service.getReport(week);
+      const q = reportQuery.parse(req.query);
+      const report = await service.getReport(q.week, q.class);
       res.json(report);
     })
   );
 
-  // POST /api/report?week=YYYY-MM-DD  — save draft or submit
+  // POST /api/report?week=YYYY-MM-DD&class=Austin — save draft or submit
   router.post(
     "/report",
     asyncHandler(async (req, res) => {
-      const { week } = weekQuery.parse(req.query);
+      const q = reportQuery.parse(req.query);
       const body = saveReportSchema.parse(req.body);
       const report = await service.saveReport(
-        week,
+        q.week,
+        q.class,
         { overrides: body.overrides, manual: body.manual },
         body.submit
       );
@@ -35,7 +43,7 @@ export function reportsRouter(service: ReportService): Router {
     })
   );
 
-  // GET /api/reports — history/archive list
+  // GET /api/reports — history/archive list (all classes)
   router.get(
     "/reports",
     asyncHandler(async (_req, res) => {

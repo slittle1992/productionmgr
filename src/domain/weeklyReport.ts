@@ -56,6 +56,8 @@ export type ReportStatus = "draft" | "submitted";
 
 export interface WeeklyReport {
   weekStart: string;
+  /** Class this report covers (e.g. "Austin"); "All" = company-wide. */
+  className: string;
   weekEnd: string;
   quarter: string;
   status: ReportStatus;
@@ -75,6 +77,8 @@ export interface WeeklyReport {
 /** Persisted shape — the inputs we need to recompute a report deterministically. */
 export interface StoredReport {
   weekStart: string;
+  /** Class this report covers; "All" = company-wide. */
+  className: string;
   weekEnd: string;
   quarter: string;
   status: ReportStatus;

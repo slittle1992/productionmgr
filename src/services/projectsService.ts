@@ -123,14 +123,36 @@ export class ProjectsService {
     return views.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /** Raw provider access for the report service (avoids a second normalise pass). */
-  async fetchRawProjects(): Promise<BuilderPrimeProject[]> {
+  /**
+   * Raw provider access for the report service (avoids a second normalise
+   * pass). Optionally scoped to one class — how each PM's per-class weekly
+   * report pulls only that class's jobs.
+   */
+  async fetchRawProjects(className?: string): Promise<BuilderPrimeProject[]> {
+    let raw = await this.provider.listAllProjects({});
+    if (this.productionManagerId) {
+      raw = raw.filter(
+        (p) =>
+          p.projectManagerId !== undefined &&
+          String(p.projectManagerId) === this.productionManagerId
+      );
+    }
+    if (className) {
+      raw = raw.filter(
+        (p) => (p.className?.trim() || "Unassigned") === className
+      );
+    }
+    return raw;
+  }
+
+  /** Distinct class names across the provider's projects (for filter chips). */
+  async listClasses(): Promise<string[]> {
     const raw = await this.provider.listAllProjects({});
-    if (!this.productionManagerId) return raw;
-    return raw.filter(
-      (p) =>
-        p.projectManagerId !== undefined &&
-        String(p.projectManagerId) === this.productionManagerId
-    );
+    const classes = new Set<string>();
+    for (const p of raw) {
+      if (p.projectStatusIsCancelled) continue;
+      classes.add(p.className?.trim() || "Unassigned");
+    }
+    return [...classes].sort((a, b) => a.localeCompare(b));
   }
 }

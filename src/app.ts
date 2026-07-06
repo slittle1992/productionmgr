@@ -165,6 +165,9 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
         scopedToManager: Boolean(config.productionManagerId),
         coverage: config.coverage,
         durableStorage: durable,
+        // True on serverless with no KV: uploads/edits live in one instance's
+        // /tmp and are NOT shared across devices or requests.
+        ephemeralStorage: !durable && config.dataDir.startsWith("/tmp"),
       });
     })
   );
