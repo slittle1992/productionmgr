@@ -1,4 +1,9 @@
-import type { JobAssignment, ScheduleStore, WeekAssignments } from "./scheduleStore.js";
+import {
+  cleanAssignment,
+  type JobAssignment,
+  type ScheduleStore,
+  type WeekAssignments,
+} from "./scheduleStore.js";
 import type { KvClient } from "./kv/kvClient.js";
 
 /**
@@ -28,14 +33,7 @@ export class KvScheduleStore implements ScheduleStore {
   ): Promise<JobAssignment> {
     const key = this.key(weekStart);
     const existing = (await this.kv.hgetall<JobAssignment>(key))[jobId] ?? {};
-    const next: JobAssignment = { ...existing, ...assignment };
-
-    // Drop empty values so the stored record stays clean.
-    if (!next.crew) delete next.crew;
-    if (!next.colorOverride) delete next.colorOverride;
-    if (next.sqftOverride === undefined || next.sqftOverride === null) {
-      delete next.sqftOverride;
-    }
+    const next = cleanAssignment({ ...existing, ...assignment });
 
     await this.kv.hset(key, jobId, next);
     return next;

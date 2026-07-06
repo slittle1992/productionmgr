@@ -83,13 +83,20 @@ same schedule engine.
 | Project Type | `Type` column | `Project Type` custom field |
 | SQFT | `Project Sq Ft` column | `SQFT` custom field |
 | Color | parsed from `Description` | `Flake Color` custom field |
-| Crew | `Project Manager` (trailer) column | manual on the schedule |
+| Crew | three named slots (First/Second/Third, "+ person" for more); trailer from the `Project Manager` column seeds the First slot | manual on the schedule |
 | Scheduled day | `Start` column | `estimatedStartDate` |
 | Material to use | **Computed** from SQFT × coverage rates; color names the flake | same |
 
-Crew, color, and sqft are all correctable inline and saved per week; for API
-jobs the customer name is shown as the title, for pipeline jobs (which have no
-customer column) the card is titled by Job # with the description beneath.
+Crew, color, base color (Grey/Tan/Black polyurea), sqft, day, and duration are
+all editable inline and saved per week. Jobs can be moved to another weekday
+and stretched over multiple days (shown as e.g. "Tue–Wed").
+
+**Work orders** (warranty/paid repairs) ride alongside pipeline jobs: upload
+the Builder Prime work-order export (WO#, Client, Type, Start, Class, Status)
+or add one-off work orders in the app. Open WOs appear on the schedule in
+their week and class; once the PM sets SQFT + color (and flake/rubber
+coating), material auto-computes into the crew staging lists. Closed WOs
+(COMPLETE/PAID) stage nothing.
 
 **Material math** (all rates configurable) — rubber uses different products
 and ratios than flake/concrete:

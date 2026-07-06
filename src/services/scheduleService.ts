@@ -3,6 +3,7 @@ import type { ProjectProvider } from "../builderPrime/provider.js";
 import { readCustomField, type BuilderPrimeProject } from "../builderPrime/types.js";
 import { normalizeColor } from "../domain/colors.js";
 import { computeMaterials, type MaterialEstimate } from "../domain/materials.js";
+import { isClosedStatus, type WorkOrder } from "../domain/workOrders.js";
 import {
   getReportingWeek,
   getReportingWeekFromStart,
@@ -10,8 +11,9 @@ import {
   type ReportingWeek,
 } from "../domain/week.js";
 import type { JobAssignment, ScheduleStore } from "../storage/scheduleStore.js";
+import type { WorkOrderStore } from "../storage/workOrderStore.js";
 
-/** One job line on the weekly schedule. */
+/** One line on the weekly schedule — a pipeline job or a work order. */
 export interface ScheduleJob {
   id: string;
   jobNumber: string;
@@ -19,19 +21,30 @@ export interface ScheduleJob {
   projectType: string;
   className: string;
   city: string;
-  /** Free-text job description from the pipeline (area, notes, etc.). */
+  /** Free-text description / notes. */
   description: string | null;
   sqft: number | null;
   color: string | null;
-  /** True when the color matched the canonical catalog. */
   colorRecognized: boolean;
-  /** Crew/trailer — defaults from the pipeline, overridable on the schedule. */
+  /** Polyurea base color for flake jobs ("Grey" | "Tan" | "Black"). */
+  baseColor: string | null;
+  /** Ordered crew: [0]=First, [1]=Second, [2]=Third, plus extras. */
+  crewMembers: string[];
+  /** Joined crew string (search / grouping / legacy display). */
   crew: string;
-  /** Scheduled day (ms) and weekday label. */
   scheduledDate: number | null;
+  /** Effective weekday index 0–6 (after any PM day move), null if undated. */
+  dayIndex: number | null;
+  /** How many days the job runs (default 1). */
+  days: number;
+  /** "Tue" or "Tue–Thu". */
+  dayLabel: string | null;
   scheduledDay: string | null;
   material: MaterialEstimate;
-  /** True when the manager corrected the pulled color/sqft. */
+  /** Work-order extras. */
+  isWorkOrder: boolean;
+  urgency: string | null;
+  status: string | null;
   edited: { color: boolean; sqft: boolean };
 }
 
@@ -46,9 +59,11 @@ export interface WeeklySchedule {
   usingSampleData: boolean;
   classes: ScheduleClassGroup[];
   jobCount: number;
+  workOrderCount: number;
 }
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WD3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function str(value: unknown): string | null {
   if (value === null || value === undefined) return null;
@@ -62,6 +77,28 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function crewList(assignment: JobAssignment, defaultCrew: string | null): string[] {
+  if (assignment.crewMembers?.length) return assignment.crewMembers;
+  if (assignment.crew) return [assignment.crew];
+  return defaultCrew ? [defaultCrew] : [];
+}
+
+function dayFields(
+  scheduledDate: number | null,
+  assignment: JobAssignment
+): Pick<ScheduleJob, "dayIndex" | "days" | "dayLabel" | "scheduledDay"> {
+  const baseIndex =
+    assignment.dayOverride ??
+    (scheduledDate !== null ? new Date(scheduledDate).getUTCDay() : null);
+  const days = Math.max(1, assignment.daysCount ?? 1);
+  if (baseIndex === null) {
+    return { dayIndex: null, days, dayLabel: null, scheduledDay: null };
+  }
+  const end = Math.min(baseIndex + days - 1, 6);
+  const dayLabel = days > 1 ? `${WD3[baseIndex]}–${WD3[end]}` : WD3[baseIndex]!;
+  return { dayIndex: baseIndex, days, dayLabel, scheduledDay: WEEKDAYS[baseIndex]! };
+}
+
 export class ScheduleService {
   constructor(
     private readonly provider: ProjectProvider,
@@ -69,7 +106,8 @@ export class ScheduleService {
     private readonly coverage: CoverageConfig,
     private readonly fields: CustomFieldNames,
     private readonly weekStartDay: number,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly workOrders?: WorkOrderStore
   ) {}
 
   get usingSampleData(): boolean {
@@ -85,7 +123,6 @@ export class ScheduleService {
   private buildJob(
     p: BuilderPrimeProject,
     index: number,
-    week: ReportingWeek,
     assignments: Record<string, JobAssignment>
   ): ScheduleJob {
     const jobNumber =
@@ -108,18 +145,23 @@ export class ScheduleService {
       str(readCustomField(p, this.fields.projectType)) ??
       str(p.projectStatusDescription) ??
       "—";
+    const effectiveType =
+      assignment.coating === "rubber"
+        ? "Rubber"
+        : assignment.coating === "flake"
+        ? "Flake"
+        : projectType;
 
-    // Crew defaults from the pipeline (trailer/PM column); a manual assignment wins.
     const defaultCrew = str(readCustomField(p, this.fields.crew));
-
     const scheduledDate = p.estimatedStartDate ?? null;
     const material = computeMaterials(
       sqft,
-      projectType,
+      effectiveType,
       { name: normalized?.name ?? null, flakeProduct: normalized?.flakeProduct ?? null },
       this.coverage
     );
 
+    const crewMembers = crewList(assignment, defaultCrew);
     return {
       id,
       jobNumber,
@@ -135,11 +177,15 @@ export class ScheduleService {
       sqft,
       color: normalized?.name ?? null,
       colorRecognized: normalized?.recognized ?? false,
-      crew: assignment.crew ?? defaultCrew ?? "",
+      baseColor: assignment.baseColor ?? null,
+      crewMembers,
+      crew: crewMembers.join(" / "),
       scheduledDate,
-      scheduledDay:
-        scheduledDate !== null ? WEEKDAYS[new Date(scheduledDate).getUTCDay()]! : null,
+      ...dayFields(scheduledDate, assignment),
       material,
+      isWorkOrder: false,
+      urgency: null,
+      status: null,
       edited: {
         color: assignment.colorOverride !== undefined,
         sqft: assignment.sqftOverride !== undefined,
@@ -147,22 +193,80 @@ export class ScheduleService {
     };
   }
 
-  /** Build the weekly schedule grouped by Builder Prime class. */
+  private buildWorkOrderJob(
+    wo: WorkOrder,
+    assignments: Record<string, JobAssignment>
+  ): ScheduleJob {
+    const assignment = assignments[wo.id] ?? {};
+    const sqft = assignment.sqftOverride ?? null;
+    const normalized = normalizeColor(assignment.colorOverride ?? null);
+    const closed = isClosedStatus(wo.status);
+
+    // Warranty repairs stage material once the PM sets sqft + color; the
+    // coating toggle decides flake vs rubber rates. Closed WOs stage nothing.
+    const effectiveType = closed
+      ? "Warranty"
+      : assignment.coating === "rubber"
+      ? "Rubber Repair"
+      : "Repair (flake)";
+    const material = computeMaterials(
+      sqft,
+      effectiveType,
+      { name: normalized?.name ?? null, flakeProduct: normalized?.flakeProduct ?? null },
+      this.coverage
+    );
+
+    const crewMembers = crewList(assignment, null);
+    const descBits = [wo.address, wo.city].filter(Boolean).join(", ");
+    return {
+      id: wo.id,
+      jobNumber: `WO ${wo.woNumber}`,
+      customer: wo.client,
+      projectType: wo.type,
+      className: wo.className,
+      city: wo.city ?? "",
+      description: descBits || null,
+      sqft,
+      color: normalized?.name ?? null,
+      colorRecognized: normalized?.recognized ?? false,
+      baseColor: assignment.baseColor ?? null,
+      crewMembers,
+      crew: crewMembers.join(" / "),
+      scheduledDate: wo.startDate,
+      ...dayFields(wo.startDate, assignment),
+      material,
+      isWorkOrder: true,
+      urgency: wo.urgency,
+      status: wo.status,
+      edited: {
+        color: assignment.colorOverride !== undefined,
+        sqft: assignment.sqftOverride !== undefined,
+      },
+    };
+  }
+
+  /** Build the weekly schedule (jobs + work orders) grouped by class. */
   async getSchedule(weekStart?: string): Promise<WeeklySchedule> {
     const week = this.resolveWeek(weekStart);
-    const [projects, assignments] = await Promise.all([
+    const [projects, assignments, storedWos] = await Promise.all([
       this.provider.listAllProjects({}),
       this.store.getWeek(week.weekStart),
+      this.workOrders?.get(),
     ]);
 
     const jobs = projects
       .filter((p) => !p.projectStatusIsCancelled)
       .filter((p) => isWithinWeek(p.estimatedStartDate, week))
-      .map((p, i) => this.buildJob(p, i, week, assignments));
+      .map((p, i) => this.buildJob(p, i, assignments));
+
+    const weekWos = (storedWos ? [...storedWos.uploaded, ...storedWos.manual] : []).filter(
+      (wo) => isWithinWeek(wo.startDate ?? undefined, week)
+    );
+    const woJobs = weekWos.map((wo) => this.buildWorkOrderJob(wo, assignments));
 
     // Group by class, preserving a stable, readable order.
     const groups = new Map<string, ScheduleJob[]>();
-    for (const job of jobs) {
+    for (const job of [...jobs, ...woJobs]) {
       const bucket = groups.get(job.className) ?? [];
       bucket.push(job);
       groups.set(job.className, bucket);
@@ -172,7 +276,10 @@ export class ScheduleService {
       .map(([className, list]) => ({
         className,
         jobs: list.sort(
-          (a, b) => (a.scheduledDate ?? 0) - (b.scheduledDate ?? 0) || a.customer.localeCompare(b.customer)
+          (a, b) =>
+            (a.dayIndex ?? 7) - (b.dayIndex ?? 7) ||
+            (a.scheduledDate ?? 0) - (b.scheduledDate ?? 0) ||
+            a.customer.localeCompare(b.customer)
         ),
       }))
       .sort((a, b) => a.className.localeCompare(b.className));
@@ -182,11 +289,12 @@ export class ScheduleService {
       weekEnd: week.weekEnd,
       usingSampleData: this.provider.isSample,
       classes,
-      jobCount: jobs.length,
+      jobCount: jobs.length + woJobs.length,
+      workOrderCount: woJobs.length,
     };
   }
 
-  /** Persist a crew assignment or a color/sqft correction for a job. */
+  /** Persist a crew/day/color/sqft/coating/base edit for a job or work order. */
   async assignJob(
     weekStart: string | undefined,
     jobId: string,

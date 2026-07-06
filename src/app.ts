@@ -18,6 +18,7 @@ import { projectsRouter } from "./routes/projects.js";
 import { reportsRouter } from "./routes/reports.js";
 import { scheduleRouter } from "./routes/schedule.js";
 import { pipelineRouter } from "./routes/pipeline.js";
+import { workOrdersRouter } from "./routes/workOrders.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
 import { ScheduleService } from "./services/scheduleService.js";
@@ -32,6 +33,11 @@ import {
   KvPipelineStore,
   type PipelineStore,
 } from "./storage/pipelineStore.js";
+import {
+  JsonWorkOrderStore,
+  KvWorkOrderStore,
+  type WorkOrderStore,
+} from "./storage/workOrderStore.js";
 
 /**
  * Resolve the static `public/` directory. Works both when running from source
@@ -66,6 +72,7 @@ export interface BuildAppOptions {
   repository?: ReportRepository;
   scheduleStore?: ScheduleStore;
   pipelineStore?: PipelineStore;
+  workOrderStore?: WorkOrderStore;
   now?: () => number;
 }
 
@@ -125,6 +132,9 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const pipelineStore =
     options.pipelineStore ??
     (kv ? new KvPipelineStore(kv) : new JsonPipelineStore(config.dataDir));
+  const workOrderStore =
+    options.workOrderStore ??
+    (kv ? new KvWorkOrderStore(kv) : new JsonWorkOrderStore(config.dataDir));
 
   const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
@@ -142,7 +152,8 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
     config.coverage,
     config.customFields,
     config.weekStartDay,
-    now
+    now,
+    workOrderStore
   );
 
   const app = express();
@@ -175,6 +186,7 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
   app.use("/api", pipelineRouter(pipelineStore, now));
+  app.use("/api", workOrdersRouter(workOrderStore, now));
   app.use("/api", scheduleRouter(scheduleService));
   app.use("/api", reportsRouter(reportService));
   app.use("/api", projectsRouter(projectsService));

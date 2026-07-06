@@ -3,16 +3,47 @@ import path from "node:path";
 
 /**
  * Per-job edits the manager makes on the schedule: crew assignment (which isn't
- * in Builder Prime) plus optional corrections to the auto-pulled color or sqft.
+ * in Builder Prime) plus optional corrections to the auto-pulled color or sqft,
+ * day moves, multi-day stretches, and (for work orders) the coating type.
  * Stored one JSON file per week so the weekly schedule is reproducible.
  */
 export interface JobAssignment {
+  /** Legacy single-string crew (older saves); superseded by crewMembers. */
   crew?: string;
+  /** Ordered crew list: [0]=First, [1]=Second, [2]=Third, plus extras. */
+  crewMembers?: string[];
   colorOverride?: string;
   sqftOverride?: number;
+  /** Move the job to another weekday (0=Sunday … 6=Saturday). */
+  dayOverride?: number;
+  /** How many days the job runs (default 1). */
+  daysCount?: number;
+  /** Coating override for work orders ("flake" | "rubber"). */
+  coating?: string;
+  /** Polyurea base color for flake jobs ("Grey" | "Tan" | "Black"). */
+  baseColor?: string;
 }
 
 export type WeekAssignments = Record<string, JobAssignment>;
+
+/** Drop empty values so stored records stay clean. */
+export function cleanAssignment(a: JobAssignment): JobAssignment {
+  if (!a.crew) delete a.crew;
+  if (a.crewMembers) {
+    a.crewMembers = a.crewMembers.map((m) => m.trim());
+    while (a.crewMembers.length && !a.crewMembers[a.crewMembers.length - 1]) {
+      a.crewMembers.pop(); // trailing blanks only — keep gaps so slots stay put
+    }
+    if (!a.crewMembers.length) delete a.crewMembers;
+  }
+  if (!a.colorOverride) delete a.colorOverride;
+  if (a.sqftOverride === undefined || a.sqftOverride === null) delete a.sqftOverride;
+  if (a.dayOverride === undefined || a.dayOverride === null) delete a.dayOverride;
+  if (!a.daysCount || a.daysCount <= 1) delete a.daysCount;
+  if (!a.coating) delete a.coating;
+  if (!a.baseColor) delete a.baseColor;
+  return a;
+}
 
 export interface ScheduleStore {
   getWeek(weekStart: string): Promise<WeekAssignments>;
@@ -53,11 +84,7 @@ export class JsonScheduleStore implements ScheduleStore {
       await fs.mkdir(this.dir, { recursive: true });
       const week = await this.getWeek(weekStart);
       const next: JobAssignment = { ...week[jobId], ...assignment };
-      // Drop empty values so the file stays clean.
-      if (!next.crew) delete next.crew;
-      if (!next.colorOverride) delete next.colorOverride;
-      if (next.sqftOverride === undefined || next.sqftOverride === null)
-        delete next.sqftOverride;
+      cleanAssignment(next);
       week[jobId] = next;
       const file = this.fileFor(weekStart);
       const tmp = `${file}.tmp`;
@@ -78,7 +105,7 @@ export class MemoryScheduleStore implements ScheduleStore {
   }
   async setJob(weekStart: string, jobId: string, assignment: JobAssignment) {
     const week = this.weeks.get(weekStart) ?? {};
-    week[jobId] = { ...week[jobId], ...assignment };
+    week[jobId] = cleanAssignment({ ...week[jobId], ...assignment });
     this.weeks.set(weekStart, week);
     return structuredClone(week[jobId]!);
   }

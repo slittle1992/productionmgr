@@ -497,20 +497,73 @@ function matCells(job) {
   return `<td class="c-flake${m.applies ? "" : " dim"}">${name}</td>${cells}`;
 }
 
+const SLOT_NAMES = ["First", "Second", "Third"];
+const WD3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const CLOSED_STATUSES = ["complete", "completed", "paid", "canceled", "cancelled", "closed"];
+const isClosedWo = (job) =>
+  job.isWorkOrder && job.status && CLOSED_STATUSES.includes(String(job.status).toLowerCase());
+
+function crewInputsHtml(job) {
+  const members = job.crewMembers || [];
+  const slots = Math.max(3, members.length);
+  let html = "";
+  for (let i = 0; i < slots; i++) {
+    html += `<input class="js-crew" data-slot="${i}" type="text" placeholder="${SLOT_NAMES[i] || "More"}" value="${escapeHtml(members[i] || "")}" />`;
+  }
+  return html + `<button class="crew-add" type="button" title="Add another person">+ person</button>`;
+}
+
+function dayControlsHtml(job) {
+  const opts = ['<option value="">—</option>']
+    .concat(WD3.map((d, i) => `<option value="${i}"${job.dayIndex === i ? " selected" : ""}>${d}</option>`))
+    .join("");
+  return `
+    <select class="js-day">${opts}</select>
+    <span class="day-x">×</span>
+    <input class="js-days" type="number" min="1" max="6" value="${job.days || 1}" title="How many days" />`;
+}
+
+function typeCellHtml(job) {
+  let html = `<span class="chip ${typeChipClass(job.projectType)}">${escapeHtml(job.projectType)}</span>`;
+  if (job.isWorkOrder) {
+    if (job.status) html += `<span class="wo-status">${escapeHtml(job.status)}</span>`;
+    if (!isClosedWo(job)) {
+      const c = job.material.kind === "rubber" ? "rubber" : "flake";
+      html += `<select class="js-coating" title="Coating type">
+        <option value="flake"${c === "flake" ? " selected" : ""}>Flake</option>
+        <option value="rubber"${c === "rubber" ? " selected" : ""}>Rubber</option>
+      </select>`;
+    }
+  }
+  return html;
+}
+
+function baseCellHtml(job) {
+  if (job.material.kind === "rubber" || !job.material.applies) {
+    return `<td class="c-base dim">—</td>`;
+  }
+  const warn = job.material.kind === "flake" && !job.baseColor ? " warn" : "";
+  const opts = ['<option value="">—</option>']
+    .concat(["Grey", "Tan", "Black"].map((b) => `<option${job.baseColor === b ? " selected" : ""}>${b}</option>`))
+    .join("");
+  return `<td class="cell-edit c-base"><select class="js-base${warn}">${opts}</select></td>`;
+}
+
 function rowHtml(job) {
   const hasCustomer = job.customer && job.customer !== "—";
   const label = hasCustomer ? job.customer : job.description || `Job #${job.jobNumber}`;
   const tooltip = job.description || label;
   const colorWarn = job.color && !job.colorRecognized ? " warn" : "";
   return `
-    <tr class="jobrow" data-id="${escapeHtml(job.id)}">
-      <td class="c-day">${escapeHtml((job.scheduledDay || "—").slice(0, 3))}</td>
+    <tr class="jobrow${job.isWorkOrder ? " worow" : ""}" data-id="${escapeHtml(job.id)}">
+      <td class="cell-edit c-day day-cell">${dayControlsHtml(job)}</td>
       <td class="c-jobno">${escapeHtml(job.jobNumber)}</td>
       <td class="c-name" title="${escapeHtml(tooltip)}">${escapeHtml(label)}</td>
-      <td class="c-type"><span class="chip ${typeChipClass(job.projectType)}">${escapeHtml(job.projectType)}</span></td>
-      <td class="cell-edit"><input class="js-crew" type="text" placeholder="—" value="${escapeHtml(job.crew || "")}" /></td>
+      <td class="c-type">${typeCellHtml(job)}</td>
+      <td class="cell-edit crew-cell">${crewInputsHtml(job)}</td>
       <td class="cell-edit num"><input class="js-sqft" type="number" inputmode="numeric" min="0" value="${job.sqft ?? ""}" placeholder="—" /></td>
       <td class="cell-edit"><input class="js-color${colorWarn}" list="color-list" type="text" value="${escapeHtml(job.color || "")}" placeholder="—" /></td>
+      ${baseCellHtml(job)}
       ${matCells(job)}
     </tr>`;
 }
@@ -533,6 +586,7 @@ function totalsRowHtml(label, jobs, className) {
     <tr class="totals" data-class="${escapeHtml(className)}">
       <td colspan="5">${escapeHtml(label)}</td>
       <td class="num c-sqft">${fmtN(t.sqft, 0)}</td>
+      <td></td>
       <td></td>
       <td></td>
       ${MAT_KEYS.map((k) => `<td class="num c-${k}">${fmtN(t[k])}</td>`).join("")}
@@ -577,7 +631,7 @@ function renderTable(list, groups) {
   let body = "";
   for (const g of groups) {
     if (showBands) {
-      body += `<tr class="group-band"><td colspan="17">${escapeHtml(g.className)} · ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}</td></tr>`;
+      body += `<tr class="group-band"><td colspan="18">${escapeHtml(g.className)} · ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}</td></tr>`;
     }
     body += g.jobs.map(rowHtml).join("");
     body += totalsRowHtml(`${g.className} totals`, g.jobs, g.className);
@@ -592,9 +646,9 @@ function renderTable(list, groups) {
       <table class="sched">
         <thead>
           <tr>
-            <th>Day</th><th>Job #</th><th class="th-name">Customer / Job</th><th>Type</th>
-            <th class="th-crew">Crew</th><th class="num">SQFT</th><th class="th-color">Color</th>
-            <th>Material</th><th class="num">Lbs</th><th class="num">Boxes 40#</th><th class="num">Base A</th><th class="num">Base B</th><th class="num">Top A</th><th class="num">Top B</th>
+            <th class="th-day">Day</th><th>Job #</th><th class="th-name">Customer / Job</th><th>Type</th>
+            <th class="th-crew">Crew (1st / 2nd / 3rd)</th><th class="num">SQFT</th><th class="th-color">Color</th>
+            <th>Base</th><th>Material</th><th class="num">Lbs</th><th class="num">Boxes 40#</th><th class="num">Base A</th><th class="num">Base B</th><th class="num">Top A</th><th class="num">Top B</th>
             <th class="num">Bags 50#</th><th class="num">Binder 5G</th><th class="num">Primer 5G</th>
           </tr>
         </thead>
@@ -646,11 +700,57 @@ function updateTotalsRows() {
   if (grand) fillTotalsRow(grand, groups.flatMap((g) => g.jobs));
 }
 
+function effectiveType(job) {
+  if (isClosedWo(job)) return "Warranty"; // closed WOs stage nothing
+  if (job.coating === "rubber") return "Rubber";
+  if (job.coating === "flake") return "Flake";
+  if (job.isWorkOrder) return "Repair (flake)"; // WOs default to flake rates
+  return job.projectType;
+}
+
+function collectCrew(container) {
+  return [...container.querySelectorAll(".js-crew")].map((i) => i.value.trim());
+}
+
+function wireCrewInputs(container, id, flash) {
+  container.querySelectorAll(".js-crew").forEach((input) =>
+    input.addEventListener("input", () => {
+      const members = collectCrew(container);
+      const job = findJob(id);
+      if (job) {
+        job.crewMembers = members.filter(Boolean);
+        job.crew = job.crewMembers.join(" / ");
+      }
+      saveAssignment(id, { crewMembers: members }, flash);
+    })
+  );
+  const add = container.querySelector(".crew-add");
+  if (add) {
+    add.addEventListener("click", () => {
+      const slot = container.querySelectorAll(".js-crew").length;
+      const input = document.createElement("input");
+      input.className = "js-crew";
+      input.dataset.slot = String(slot);
+      input.type = "text";
+      input.placeholder = "More";
+      container.insertBefore(input, add);
+      input.addEventListener("input", () => {
+        const members = collectCrew(container);
+        saveAssignment(id, { crewMembers: members }, flash);
+      });
+      input.focus();
+    });
+  }
+}
+
 function wireRow(row) {
   const id = row.dataset.id;
-  const crew = row.querySelector(".js-crew");
   const sqft = row.querySelector(".js-sqft");
   const color = row.querySelector(".js-color");
+  const daySel = row.querySelector(".js-day");
+  const daysInput = row.querySelector(".js-days");
+  const coatingSel = row.querySelector(".js-coating");
+  const baseSel = row.querySelector(".js-base");
 
   const flash = () => {
     row.classList.add("saved-flash");
@@ -662,17 +762,14 @@ function wireRow(row) {
     if (!job) return;
     job.sqft = sqft.value === "" ? null : Number(sqft.value) || 0;
     job.color = color.value.trim() || null;
-    job.material = computeMaterialClient(job.sqft || 0, job.projectType, job.color);
+    job.material = computeMaterialClient(job.sqft || 0, effectiveType(job), job.color);
     color.classList.toggle("warn", Boolean(job.color) && !schedule.colorMap.has(job.color.toLowerCase()));
     updateRowMaterial(row, job);
     updateTotalsRows();
   };
 
-  crew.addEventListener("input", () => {
-    const job = findJob(id);
-    if (job) job.crew = crew.value.trim();
-    saveAssignment(id, { crew: crew.value.trim() }, flash);
-  });
+  wireCrewInputs(row.querySelector(".crew-cell"), id, flash);
+
   sqft.addEventListener("input", () => {
     recompute();
     const v = Number(sqft.value);
@@ -682,6 +779,39 @@ function wireRow(row) {
     recompute();
     saveAssignment(id, { colorOverride: color.value.trim() || undefined }, flash);
   });
+  if (daySel) {
+    daySel.addEventListener("change", () => {
+      const v = daySel.value === "" ? undefined : Number(daySel.value);
+      const job = findJob(id);
+      if (job && v !== undefined) job.dayIndex = v;
+      if (v !== undefined) saveAssignment(id, { dayOverride: v }, flash);
+    });
+  }
+  if (daysInput) {
+    daysInput.addEventListener("input", () => {
+      const v = Math.max(1, Math.min(6, Number(daysInput.value) || 1));
+      const job = findJob(id);
+      if (job) job.days = v;
+      saveAssignment(id, { daysCount: v }, flash);
+    });
+  }
+  if (coatingSel) {
+    coatingSel.addEventListener("change", () => {
+      const job = findJob(id);
+      if (job) job.coating = coatingSel.value;
+      recompute();
+      saveAssignment(id, { coating: coatingSel.value }, flash);
+    });
+  }
+  if (baseSel) {
+    baseSel.addEventListener("change", () => {
+      const job = findJob(id);
+      if (job) job.baseColor = baseSel.value || null;
+      baseSel.classList.toggle("warn", !baseSel.value);
+      saveAssignment(id, { baseColor: baseSel.value }, flash);
+      updateTotalsRows();
+    });
+  }
 }
 
 // ── Card view (phone) ──
@@ -729,18 +859,27 @@ function jobCardHtml(job) {
       </div>
       ${job.description ? `<p class="job-desc">${escapeHtml(job.description)}</p>` : ""}
       <div class="job-grid">
-        <div class="job-field">
-          <label>Crew</label>
-          <input class="js-crew" type="text" placeholder="Assign crew…" value="${escapeHtml(job.crew || "")}" />
+        <div class="job-field full crew-cell card-crew">
+          <label>Crew (First / Second / Third)</label>
+          ${crewInputsHtml(job)}
+        </div>
+        <div class="job-field day-cell card-day">
+          <label>Day × days</label>
+          <div class="day-controls">${dayControlsHtml(job)}</div>
         </div>
         <div class="job-field">
           <label>SQFT</label>
           <input class="js-sqft" type="number" inputmode="numeric" min="0" value="${job.sqft ?? ""}" />
         </div>
-        <div class="job-field full">
+        <div class="job-field">
           <label>Color</label>
           <input class="js-color${job.color && !job.colorRecognized ? " warn" : ""}" list="color-list" type="text" value="${escapeHtml(job.color || "")}" />
         </div>
+        <div class="job-field">
+          <label>Base (Grey/Tan/Black)</label>
+          ${job.material.kind === "rubber" ? '<input type="text" value="—" disabled />' : `<select class="js-base${job.material.kind === "flake" && !job.baseColor ? " warn" : ""}"><option value="">—</option>${["Grey","Tan","Black"].map((b)=>`<option${job.baseColor===b?" selected":""}>${b}</option>`).join("")}</select>`}
+        </div>
+        ${job.isWorkOrder && !isClosedWo(job) ? `<div class="job-field full"><label>Coating</label><select class="js-coating"><option value="flake"${job.material.kind!=="rubber"?" selected":""}>Flake</option><option value="rubber"${job.material.kind==="rubber"?" selected":""}>Rubber</option></select></div>` : ""}
       </div>
       <div class="js-material">${materialHtml(job.material)}</div>
       <span class="save-tick js-tick">saved ✓</span>
@@ -763,9 +902,12 @@ function renderCards(list, groups) {
 
 function wireCard(el) {
   const id = el.dataset.id;
-  const crew = el.querySelector(".js-crew");
   const sqft = el.querySelector(".js-sqft");
   const color = el.querySelector(".js-color");
+  const daySel = el.querySelector(".js-day");
+  const daysInput = el.querySelector(".js-days");
+  const coatingSel = el.querySelector(".js-coating");
+  const baseSel = el.querySelector(".js-base");
   const matBox = el.querySelector(".js-material");
   const tick = el.querySelector(".js-tick");
 
@@ -779,16 +921,12 @@ function wireCard(el) {
     if (!job) return;
     job.sqft = sqft.value === "" ? null : Number(sqft.value) || 0;
     job.color = color.value.trim() || null;
-    job.material = computeMaterialClient(job.sqft || 0, job.projectType, job.color);
+    job.material = computeMaterialClient(job.sqft || 0, effectiveType(job), job.color);
     color.classList.toggle("warn", Boolean(job.color) && !schedule.colorMap.has(job.color.toLowerCase()));
     matBox.innerHTML = materialHtml(job.material);
   };
 
-  crew.addEventListener("input", () => {
-    const job = findJob(id);
-    if (job) job.crew = crew.value.trim();
-    saveAssignment(id, { crew: crew.value.trim() }, flash);
-  });
+  wireCrewInputs(el.querySelector(".crew-cell"), id, flash);
   sqft.addEventListener("input", () => {
     recompute();
     const v = Number(sqft.value);
@@ -798,6 +936,34 @@ function wireCard(el) {
     recompute();
     saveAssignment(id, { colorOverride: color.value.trim() || undefined }, flash);
   });
+  if (daySel) {
+    daySel.addEventListener("change", () => {
+      const v = daySel.value === "" ? undefined : Number(daySel.value);
+      if (v !== undefined) saveAssignment(id, { dayOverride: v }, flash);
+    });
+  }
+  if (daysInput) {
+    daysInput.addEventListener("input", () => {
+      const v = Math.max(1, Math.min(6, Number(daysInput.value) || 1));
+      saveAssignment(id, { daysCount: v }, flash);
+    });
+  }
+  if (coatingSel) {
+    coatingSel.addEventListener("change", () => {
+      const job = findJob(id);
+      if (job) job.coating = coatingSel.value;
+      recompute();
+      saveAssignment(id, { coating: coatingSel.value }, flash);
+    });
+  }
+  if (baseSel) {
+    baseSel.addEventListener("change", () => {
+      const job = findJob(id);
+      if (job) job.baseColor = baseSel.value || null;
+      baseSel.classList.toggle("warn", !baseSel.value);
+      saveAssignment(id, { baseColor: baseSel.value }, flash);
+    });
+  }
 }
 
 function findJob(id) {
@@ -832,14 +998,16 @@ function goToWeek(weekStart) {
 
 // ─────────────────────────── Export week to .xlsx ───────────────────────────
 const EXPORT_HEAD = [
-  "Day", "Job #", "Customer / Job", "Type", "Class", "Crew", "SQFT", "Color",
-  "Material", "Flake lbs", "Flake boxes (40 lb)", "Base A gal", "Base B gal",
-  "Top A gal", "Top B gal", "Rubber bags (50 lb)", "Binder (5-gal)", "Primer (5-gal)", "Notes",
+  "Day", "Job #", "Customer / Job", "Type", "Class", "First", "Second", "Third",
+  "SQFT", "Color", "Base", "Material", "Flake lbs", "Flake boxes (40 lb)",
+  "Base A gal", "Base B gal", "Top A gal", "Top B gal",
+  "Rubber bags (50 lb)", "Binder (5-gal)", "Primer (5-gal)", "Notes",
 ];
 const EXPORT_COLS = [
-  { wch: 5 }, { wch: 8 }, { wch: 34 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
-  { wch: 7 }, { wch: 13 }, { wch: 16 }, { wch: 9 }, { wch: 11 }, { wch: 9 },
-  { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 14 }, { wch: 11 }, { wch: 11 }, { wch: 50 },
+  { wch: 9 }, { wch: 9 }, { wch: 34 }, { wch: 15 }, { wch: 14 }, { wch: 14 },
+  { wch: 14 }, { wch: 14 }, { wch: 7 }, { wch: 13 }, { wch: 7 }, { wch: 16 },
+  { wch: 9 }, { wch: 11 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 },
+  { wch: 14 }, { wch: 11 }, { wch: 11 }, { wch: 50 },
 ];
 
 function exportJobRow(job) {
@@ -847,9 +1015,13 @@ function exportJobRow(job) {
   const label = hasCustomer ? job.customer : job.description || `Job #${job.jobNumber}`;
   const v = matValues(job.material);
   const n = (x) => (x === null ? "" : x);
+  const members = job.crewMembers || [];
+  const third = [members[2], ...members.slice(3)].filter(Boolean).join(" / ");
+  const typeLabel = job.projectType + (job.status ? ` (${job.status})` : "");
   return [
-    (job.scheduledDay || "").slice(0, 3), job.jobNumber, label, job.projectType,
-    job.className, job.crew || "", job.sqft ?? "", job.color || "",
+    job.dayLabel || "", job.jobNumber, label, typeLabel,
+    job.className, members[0] || "", members[1] || "", third,
+    job.sqft ?? "", job.color || "", job.baseColor || "",
     job.material.applies ? job.material.flake || "" : "",
     n(v.lbs), n(v.box), n(v.bca), n(v.bcb), n(v.tca), n(v.tcb), n(v.bags), n(v.bind), n(v.prim),
     job.description || "",
@@ -859,7 +1031,7 @@ function exportJobRow(job) {
 function exportTotalsRow(label, jobs) {
   const t = computeClassTotals(jobs);
   return [
-    label, "", "", "", "", "", t.sqft, "", "",
+    label, "", "", "", "", "", "", "", t.sqft, "", "", "",
     r2(t.lbs), r2(t.box), r2(t.bca), r2(t.bcb), r2(t.tca), r2(t.tcb),
     r2(t.bags), r2(t.bind), r2(t.prim), "",
   ];
@@ -870,7 +1042,8 @@ function exportTotalsRow(label, jobs) {
 function colorBreakdown(jobs) {
   const flake = new Map(); // color -> { lbs, boxes }
   const rubber = new Map(); // color -> bags
-  const liquids = { bca: 0, bcb: 0, tca: 0, tcb: 0, bind: 0, prim: 0 };
+  const polyurea = new Map(); // base color (Grey/Tan/Black) -> { a, b }
+  const liquids = { tca: 0, tcb: 0, bind: 0, prim: 0 };
   for (const j of jobs) {
     const m = j.material;
     if (m.kind === "flake") {
@@ -879,8 +1052,11 @@ function colorBreakdown(jobs) {
       e.lbs += m.flakePounds;
       e.boxes += m.flakeBoxes;
       flake.set(key, e);
-      liquids.bca += m.basecoatAGallons;
-      liquids.bcb += m.basecoatBGallons;
+      const base = j.baseColor || "No base set";
+      const pu = polyurea.get(base) || { a: 0, b: 0 };
+      pu.a += m.basecoatAGallons;
+      pu.b += m.basecoatBGallons;
+      polyurea.set(base, pu);
       liquids.tca += m.topcoatAGallons;
       liquids.tcb += m.topcoatBGallons;
     } else if (m.kind === "rubber") {
@@ -890,7 +1066,7 @@ function colorBreakdown(jobs) {
       liquids.prim += m.primerBuckets;
     }
   }
-  return { flake, rubber, liquids };
+  return { flake, rubber, polyurea, liquids };
 }
 
 function stagingRows(title, jobs) {
@@ -908,9 +1084,13 @@ function stagingRows(title, jobs) {
       rows.push([color, "", r2(bags), "", bags > 0 ? "" : "⚠ SQFT missing on job"]);
     }
   }
+  if (b.polyurea.size) {
+    rows.push(["POLYUREA BASE BY COLOR", "", "Part A (gal)", "Part B (gal)"]);
+    for (const [base, pu] of [...b.polyurea].sort((x, y) => x[0].localeCompare(y[0]))) {
+      rows.push([base, "", r2(pu.a), r2(pu.b), base === "No base set" ? "⚠ pick Grey/Tan/Black" : ""]);
+    }
+  }
   const liquids = [
-    ["Polyurea Base A (gal)", b.liquids.bca],
-    ["Polyurea Base B (gal)", b.liquids.bcb],
     ["Polyaspartic Top A (gal)", b.liquids.tca],
     ["Polyaspartic Top B (gal)", b.liquids.tcb],
     ["Binder (5-gal kits)", b.liquids.bind],
@@ -969,7 +1149,7 @@ function exportWeek() {
   // One printable sheet per crew.
   const byCrew = new Map();
   for (const j of allJobs) {
-    const crew = (j.crew || "").trim() || "Unassigned";
+    const crew = (j.crewMembers && j.crewMembers[0]) || "Unassigned";
     if (!byCrew.has(crew)) byCrew.set(crew, []);
     byCrew.get(crew).push(j);
   }
@@ -997,6 +1177,100 @@ function exportWeek() {
   const clsSlug = cls === "all" ? "" : "-" + cls.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   XLSX.writeFile(wb, `schedule-${schedule.weekStart}${clsSlug}.xlsx`);
   toast(cls === "all" ? "Exported all classes." : `Exported ${cls}.`, "success");
+}
+
+// ─────────────────────────── Work orders ───────────────────────────
+async function refreshWoStatus() {
+  try {
+    const s = await (await fetch("/api/workorders")).json();
+    const total = (s.count || 0) + (s.manualCount || 0);
+    if (total > 0) {
+      $("wo-status").innerHTML = `<strong>${total} work orders</strong>${
+        s.uploadedAt ? " · uploaded " + fmtDate(s.uploadedAt) : ""
+      }${s.manualCount ? ` · ${s.manualCount} added by hand` : ""}`;
+      $("wo-clear").hidden = false;
+      $("wo-upload-label").textContent = "Replace WOs";
+    } else {
+      $("wo-status").textContent = "No work orders loaded.";
+      $("wo-clear").hidden = true;
+      $("wo-upload-label").textContent = "Upload WOs";
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
+
+async function handleWoFile(file) {
+  if (!file) return;
+  if (typeof XLSX === "undefined") {
+    toast("Spreadsheet reader didn't load — check your connection.", "error");
+    return;
+  }
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+    const res = await fetch("/api/workorders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, rows }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Upload failed.");
+    toast(`Loaded ${data.count} work orders ✓`, "success");
+  } catch (err) {
+    toast(err.message || "Couldn't read that file.", "error");
+  } finally {
+    $("wo-file").value = "";
+    await refreshWoStatus();
+    await loadSchedule();
+  }
+}
+
+function openWoDialog() {
+  const sel = $("wo-class");
+  const classes = schedule.classes.map((g) => g.className);
+  const all = classes.length ? classes : state.classes;
+  sel.innerHTML = (all.length ? all : ["Unassigned"])
+    .map((c) => `<option>${escapeHtml(c)}</option>`)
+    .join("");
+  $("wo-date").value = $("week-date").value || new Date().toISOString().slice(0, 10);
+  $("wo-dialog").showModal();
+}
+
+async function submitWoDialog(e) {
+  e.preventDefault();
+  try {
+    const res = await fetch("/api/workorders/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client: $("wo-client").value.trim(),
+        className: $("wo-class").value,
+        date: $("wo-date").value,
+        type: $("wo-type").value,
+        city: $("wo-city").value.trim() || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Couldn't add work order.");
+    $("wo-dialog").close();
+    $("wo-form").reset();
+    toast("Work order added ✓", "success");
+    await refreshWoStatus();
+    await loadSchedule();
+  } catch (err) {
+    toast(err.message || "Couldn't add work order.", "error");
+  }
+}
+
+async function clearWorkOrders() {
+  if (!confirm("Remove all work orders (uploaded and added)?")) return;
+  await fetch("/api/workorders", { method: "DELETE" });
+  toast("Work orders cleared.", "success");
+  await refreshWoStatus();
+  await loadSchedule();
 }
 
 // ─────────────────────────── Pipeline upload ───────────────────────────
@@ -1127,7 +1401,13 @@ async function init() {
     handlePipelineFile(e.target.files[0])
   );
   $("pipeline-clear").addEventListener("click", clearPipeline);
+  $("wo-file").addEventListener("change", (e) => handleWoFile(e.target.files[0]));
+  $("wo-add").addEventListener("click", openWoDialog);
+  $("wo-cancel").addEventListener("click", () => $("wo-dialog").close());
+  $("wo-form").addEventListener("submit", submitWoDialog);
+  $("wo-clear").addEventListener("click", clearWorkOrders);
   await refreshPipelineStatus();
+  refreshWoStatus();
 
   // Live recalc on every report input.
   document.getElementById("report-form").addEventListener("input", recalc);

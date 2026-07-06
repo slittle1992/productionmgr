@@ -49,6 +49,17 @@
             <button id="pipeline-clear" class="btn-clear" type="button" hidden>Clear</button>
           </div>
         </div>
+        <div class="pipeline-bar">
+          <div id="wo-status" class="pipeline-status">No work orders loaded.</div>
+          <div class="pipeline-actions">
+            <label class="btn-upload wo-btn">
+              <span id="wo-upload-label">Upload WOs</span>
+              <input id="wo-file" type="file" accept=".xlsx,.xls" hidden />
+            </label>
+            <button id="wo-add" class="btn-export wo-add-btn" type="button">+ Add WO</button>
+            <button id="wo-clear" class="btn-clear" type="button" hidden>Clear</button>
+          </div>
+        </div>
         <div class="filter-bar sched-tools">
           <input
             id="schedule-search"
@@ -292,6 +303,34 @@
     </nav>
 
     <datalist id="color-list"></datalist>
+
+    <dialog id="wo-dialog">
+      <form id="wo-form" method="dialog">
+        <h3>Add work order</h3>
+        <label class="dlg-field">Customer name
+          <input id="wo-client" type="text" required maxlength="120" placeholder="e.g. Julie Helland" />
+        </label>
+        <label class="dlg-field">Class
+          <select id="wo-class" required></select>
+        </label>
+        <label class="dlg-field">Date
+          <input id="wo-date" type="date" required />
+        </label>
+        <label class="dlg-field">Type
+          <select id="wo-type">
+            <option>Warranty Repair</option>
+            <option>Paid Repair</option>
+          </select>
+        </label>
+        <label class="dlg-field">City (optional)
+          <input id="wo-city" type="text" maxlength="80" />
+        </label>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-secondary" id="wo-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add</button>
+        </div>
+      </form>
+    </dialog>
 
     <div id="toast" class="toast" hidden></div>
 
