@@ -865,6 +865,64 @@ function exportTotalsRow(label, jobs) {
   ];
 }
 
+// Per-color material rollup: the PM stages one pallet per crew, pulling
+// colored flake boxes / rubber bags — so totals must be by color, not lumped.
+function colorBreakdown(jobs) {
+  const flake = new Map(); // color -> { lbs, boxes }
+  const rubber = new Map(); // color -> bags
+  const liquids = { bca: 0, bcb: 0, tca: 0, tcb: 0, bind: 0, prim: 0 };
+  for (const j of jobs) {
+    const m = j.material;
+    if (m.kind === "flake") {
+      const key = m.flake || "No color set";
+      const e = flake.get(key) || { lbs: 0, boxes: 0 };
+      e.lbs += m.flakePounds;
+      e.boxes += m.flakeBoxes;
+      flake.set(key, e);
+      liquids.bca += m.basecoatAGallons;
+      liquids.bcb += m.basecoatBGallons;
+      liquids.tca += m.topcoatAGallons;
+      liquids.tcb += m.topcoatBGallons;
+    } else if (m.kind === "rubber") {
+      const key = m.flake || "No color set";
+      rubber.set(key, (rubber.get(key) || 0) + m.rubberBags);
+      liquids.bind += m.binderBuckets;
+      liquids.prim += m.primerBuckets;
+    }
+  }
+  return { flake, rubber, liquids };
+}
+
+function stagingRows(title, jobs) {
+  const b = colorBreakdown(jobs);
+  const rows = [[], [title]];
+  if (b.flake.size) {
+    rows.push(["FLAKE BY COLOR", "", "Lbs", "Boxes (40 lb)"]);
+    for (const [color, e] of [...b.flake].sort((x, y) => x[0].localeCompare(y[0]))) {
+      rows.push([color, "", r2(e.lbs), r2(e.boxes), e.lbs > 0 ? "" : "⚠ SQFT missing on job"]);
+    }
+  }
+  if (b.rubber.size) {
+    rows.push(["RUBBER BY COLOR", "", "Bags (50 lb)"]);
+    for (const [color, bags] of [...b.rubber].sort((x, y) => x[0].localeCompare(y[0]))) {
+      rows.push([color, "", r2(bags), "", bags > 0 ? "" : "⚠ SQFT missing on job"]);
+    }
+  }
+  const liquids = [
+    ["Polyurea Base A (gal)", b.liquids.bca],
+    ["Polyurea Base B (gal)", b.liquids.bcb],
+    ["Polyaspartic Top A (gal)", b.liquids.tca],
+    ["Polyaspartic Top B (gal)", b.liquids.tcb],
+    ["Binder (5-gal kits)", b.liquids.bind],
+    ["Primer (5-gal kits)", b.liquids.prim],
+  ].filter(([, v]) => v > 0);
+  if (liquids.length) {
+    rows.push(["LIQUIDS"]);
+    for (const [label, v] of liquids) rows.push([label, "", r2(v)]);
+  }
+  return rows;
+}
+
 function sheetName(name, used) {
   let base = String(name || "Unassigned").replace(/[\\\/\?\*\[\]:]/g, " ").trim().slice(0, 28) || "Sheet";
   let candidate = base;
@@ -879,24 +937,31 @@ function exportWeek() {
     toast("Spreadsheet writer didn't load — check your connection.", "error");
     return;
   }
-  const allJobs = schedule.classes.flatMap((g) => g.jobs);
+  // Export follows the selected class chip: pick Dallas, export Dallas.
+  const cls = schedule.activeClass;
+  const groups = schedule.classes.filter(
+    (g) => cls === "all" || g.className === cls
+  );
+  const allJobs = groups.flatMap((g) => g.jobs);
   if (!allJobs.length) {
-    toast("Nothing to export for this week.", "error");
+    toast("Nothing to export for this selection.", "error");
     return;
   }
+  const clsLabel = cls === "all" ? "" : ` — ${cls}`;
   const weekLabel = `Week of ${schedule.weekStart}`;
   const wb = XLSX.utils.book_new();
   const used = new Set();
 
-  // Sheet 1 — full schedule grouped by class, with totals.
-  const rows = [[`Weekly Schedule — ${weekLabel}`], [], EXPORT_HEAD];
-  for (const g of schedule.classes) {
+  // Sheet 1 — schedule for the selection, with per-class per-color staging.
+  const rows = [[`Weekly Schedule — ${weekLabel}${clsLabel}`], [], EXPORT_HEAD];
+  for (const g of groups) {
     rows.push([`${g.className} — ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}`]);
     for (const j of g.jobs) rows.push(exportJobRow(j));
     rows.push(exportTotalsRow(`${g.className} totals`, g.jobs));
+    rows.push(...stagingRows(`${g.className} — material staging by color`, g.jobs));
     rows.push([]);
   }
-  rows.push(exportTotalsRow("WEEK TOTALS", allJobs));
+  if (groups.length > 1) rows.push(exportTotalsRow("WEEK TOTALS", allJobs));
   const wsAll = XLSX.utils.aoa_to_sheet(rows);
   wsAll["!cols"] = EXPORT_COLS;
   XLSX.utils.book_append_sheet(wb, wsAll, sheetName("Schedule", used));
@@ -915,21 +980,23 @@ function exportWeek() {
     const jobs = byCrew.get(crew).slice().sort((a, b) => (a.scheduledDate ?? 0) - (b.scheduledDate ?? 0));
     const crewRows = [
       [`Crew: ${crew}`],
-      [`${weekLabel} · ${jobs.length} job${jobs.length === 1 ? "" : "s"}`],
+      [`${weekLabel}${clsLabel} · ${jobs.length} job${jobs.length === 1 ? "" : "s"}`],
       ["Primer kit = 3.5 gal binder + 1.5 gal alcohol spirits (5-gal kit covers 700 sqft)"],
       [],
       EXPORT_HEAD,
       ...jobs.map(exportJobRow),
       [],
       exportTotalsRow("Crew totals", jobs),
+      ...stagingRows("PALLET — stage this material by color", jobs),
     ];
     const ws = XLSX.utils.aoa_to_sheet(crewRows);
     ws["!cols"] = EXPORT_COLS;
     XLSX.utils.book_append_sheet(wb, ws, sheetName(crew, used));
   }
 
-  XLSX.writeFile(wb, `schedule-${schedule.weekStart}.xlsx`);
-  toast("Exported — check your downloads.", "success");
+  const clsSlug = cls === "all" ? "" : "-" + cls.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  XLSX.writeFile(wb, `schedule-${schedule.weekStart}${clsSlug}.xlsx`);
+  toast(cls === "all" ? "Exported all classes." : `Exported ${cls}.`, "success");
 }
 
 // ─────────────────────────── Pipeline upload ───────────────────────────
