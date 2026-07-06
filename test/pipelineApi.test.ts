@@ -79,8 +79,8 @@ describe("pipeline upload API", () => {
     expect(job).toBeTruthy();
     expect(job.sqft).toBe(255);
     expect(job.color).toBe("Claystone");
-    // Material computed from sqft (255 / 315 ≈ 0.81).
-    expect(job.material.basecoatAGallons).toBeCloseTo(0.81, 2);
+    // Polyurea A from sqft: 255/200 * 2/3 = 0.85.
+    expect(job.material.basecoatAGallons).toBeCloseTo(0.85, 2);
   });
 
   it("rejects a non-pipeline file with a clear error", async () => {

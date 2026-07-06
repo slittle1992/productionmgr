@@ -3,14 +3,18 @@ import { ScheduleService } from "../src/services/scheduleService.js";
 import { MemoryScheduleStore } from "../src/storage/scheduleStore.js";
 import type { ProjectProvider } from "../src/builderPrime/provider.js";
 import type { BuilderPrimeProject } from "../src/builderPrime/types.js";
-import type { CoverageRates, CustomFieldNames } from "../src/config.js";
+import type { CoverageConfig, CustomFieldNames } from "../src/config.js";
 
-const rates: CoverageRates = {
-  basecoatADivisor: 315,
-  basecoatBDivisor: 630,
-  topcoatADivisor: 330,
-  topcoatBDivisor: 330,
-  flakeLbsPerSqft: 0.125,
+const rates: CoverageConfig = {
+  flake: {
+    flakeLbsPerSqft: 0.15,
+    flakeBoxLbs: 40,
+    polyureaSqftPerGallon: 200,
+    polyureaPartsA: 2,
+    polyureaPartsB: 1,
+    polyasparticSqftPerGallon: 130,
+  },
+  rubber: { sqftPerBag: 30, sqftPerBinderBucket: 160, sqftPerPrimerBucket: 700 },
 };
 const fields: CustomFieldNames = {
   sqft: ["SQFT", "Square Footage"],
@@ -89,8 +93,9 @@ describe("ScheduleService", () => {
     const { service } = makeService(projects);
     const sched = await service.getSchedule();
     const austin = sched.classes.find((c) => c.className === "Austin")!.jobs[0]!;
-    expect(austin.material.basecoatAGallons).toBe(2); // 630/315
-    expect(austin.material.flakePounds).toBe(78.75); // 630 * 0.125
+    expect(austin.material.basecoatAGallons).toBe(2.1); // 630/200 * 2/3
+    expect(austin.material.flakePounds).toBe(94.5); // 630 * 0.15
+    expect(austin.material.flakeBoxes).toBe(2.36); // 94.5 / 40
   });
 
   it("persists a crew assignment and reflects it on reload", async () => {
@@ -110,12 +115,23 @@ describe("ScheduleService", () => {
     expect(dallas.edited.color).toBe(true);
   });
 
-  it("applies a sqft override and recomputes material", async () => {
+  it("uses rubber rates for rubber jobs", async () => {
     const { service } = makeService(projects);
-    await service.assignJob(undefined, "200", { sqftOverride: 315 });
     const sched = await service.getSchedule();
     const dallas = sched.classes.find((c) => c.className === "Dallas")!.jobs[0]!;
-    expect(dallas.sqft).toBe(315);
-    expect(dallas.material.basecoatAGallons).toBe(1);
+    expect(dallas.material.kind).toBe("rubber");
+    expect(dallas.material.rubberBags).toBe(13.33); // 400/30
+    expect(dallas.material.binderBuckets).toBe(2.5); // 400/160
+    expect(dallas.material.primerBuckets).toBe(0.57); // 400/700
+    expect(dallas.material.basecoatAGallons).toBe(0); // no flake products
+  });
+
+  it("applies a sqft override and recomputes material", async () => {
+    const { service } = makeService(projects);
+    await service.assignJob(undefined, "200", { sqftOverride: 300 });
+    const sched = await service.getSchedule();
+    const dallas = sched.classes.find((c) => c.className === "Dallas")!.jobs[0]!;
+    expect(dallas.sqft).toBe(300);
+    expect(dallas.material.rubberBags).toBe(10); // 300/30
   });
 });

@@ -483,6 +483,34 @@ input:focus {
   white-space: nowrap;
 }
 
+/* Schedule tools row: search + export side by side */
+.sched-tools {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.sched-tools input[type="search"] {
+  flex: 1;
+  min-width: 180px;
+  width: auto;
+}
+.btn-export {
+  flex-shrink: 0;
+  min-height: var(--tap);
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--brand);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0 16px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-export:active {
+  transform: translateY(1px);
+}
+
 /* Class filter chips */
 .class-chips {
   display: flex;
@@ -538,7 +566,7 @@ table.sched {
   border-collapse: separate;
   border-spacing: 0;
   width: 100%;
-  min-width: 1080px;
+  min-width: 1320px;
   font-size: 13.5px;
 }
 table.sched th,

@@ -271,27 +271,61 @@ function updateWeekBar(weekStart, weekEnd) {
 }
 
 const NO_MATERIAL = ["warranty", "inspection", "sand & clear", "sand and clear"];
+function normType(type) {
+  return String(type || "").toLowerCase().replace(/\*+$/, "").trim();
+}
 function appliesMaterial(type) {
   if (!type) return true;
-  return !NO_MATERIAL.includes(String(type).toLowerCase().replace(/\*+$/, "").trim());
+  return !NO_MATERIAL.includes(normType(type));
+}
+function isRubber(type) {
+  return normType(type).includes("rubber");
 }
 function r2(n) {
   return Math.round(n * 100) / 100;
 }
 
-function computeMaterialClient(sqft, type, flake) {
-  const cov = schedule.coverage;
-  const applies = appliesMaterial(type);
-  const area = applies && sqft > 0 ? sqft : 0;
-  const div = (d) => (cov && d > 0 ? r2(area / d) : 0);
+// Mirrors src/domain/materials.ts so edits recalculate instantly.
+function computeMaterialClient(sqft, type, colorName) {
+  const zero = {
+    basecoatAGallons: 0, basecoatBGallons: 0, topcoatAGallons: 0, topcoatBGallons: 0,
+    flakePounds: 0, flakeBoxes: 0, rubberBags: 0, binderBuckets: 0, primerBuckets: 0,
+  };
+  if (!appliesMaterial(type)) return { kind: "none", applies: false, flake: null, ...zero };
+
+  const area = sqft > 0 ? sqft : 0;
+  const per = (u) => (u > 0 ? r2(area / u) : 0);
+
+  if (isRubber(type)) {
+    const r = schedule.coverage?.rubber || {};
+    return {
+      kind: "rubber",
+      applies: true,
+      flake: colorName || null,
+      ...zero,
+      rubberBags: per(r.sqftPerBag),
+      binderBuckets: per(r.sqftPerBinderBucket),
+      primerBuckets: per(r.sqftPerPrimerBucket),
+    };
+  }
+
+  const f = schedule.coverage?.flake || {};
+  // Polyurea basecoat: total gallons split 2:1 A:B; polyaspartic: equal parts.
+  const puTotal = f.polyureaSqftPerGallon > 0 ? area / f.polyureaSqftPerGallon : 0;
+  const parts = (f.polyureaPartsA || 0) + (f.polyureaPartsB || 0);
+  const paTotal = f.polyasparticSqftPerGallon > 0 ? area / f.polyasparticSqftPerGallon : 0;
+  const flakePounds = r2(area * (f.flakeLbsPerSqft || 0));
   return {
-    applies,
-    flake: applies ? flake : null,
-    basecoatAGallons: div(cov?.basecoatADivisor),
-    basecoatBGallons: div(cov?.basecoatBDivisor),
-    topcoatAGallons: div(cov?.topcoatADivisor),
-    topcoatBGallons: div(cov?.topcoatBDivisor),
-    flakePounds: r2(area * (cov?.flakeLbsPerSqft ?? 0)),
+    kind: "flake",
+    applies: true,
+    flake: colorName ? flakeFor(colorName) : null,
+    ...zero,
+    basecoatAGallons: parts > 0 ? r2((puTotal * (f.polyureaPartsA || 0)) / parts) : 0,
+    basecoatBGallons: parts > 0 ? r2((puTotal * (f.polyureaPartsB || 0)) / parts) : 0,
+    topcoatAGallons: r2(paTotal / 2),
+    topcoatBGallons: r2(paTotal / 2),
+    flakePounds,
+    flakeBoxes: f.flakeBoxLbs > 0 ? r2(flakePounds / f.flakeBoxLbs) : 0,
   };
 }
 
@@ -375,18 +409,31 @@ desktopQuery.addEventListener("change", () => {
 });
 
 // ── Excel-style table (desktop) ──
+// Material cell values in column order: Material, then flake columns, then rubber columns.
+const MAT_KEYS = ["lbs", "box", "bca", "bcb", "tca", "tcb", "bags", "bind", "prim"];
+function matValues(m) {
+  const empty = Object.fromEntries(MAT_KEYS.map((k) => [k, null]));
+  if (m.kind === "flake") {
+    return {
+      ...empty,
+      lbs: m.flakePounds, box: m.flakeBoxes, bca: m.basecoatAGallons,
+      bcb: m.basecoatBGallons, tca: m.topcoatAGallons, tcb: m.topcoatBGallons,
+    };
+  }
+  if (m.kind === "rubber") {
+    return { ...empty, bags: m.rubberBags, bind: m.binderBuckets, prim: m.primerBuckets };
+  }
+  return empty;
+}
+
 function matCells(job) {
   const m = job.material;
-  if (!m.applies) {
-    return `<td class="c-flake dim">—</td><td class="num c-lbs dim">—</td><td class="num c-bca dim">—</td><td class="num c-bcb dim">—</td><td class="num c-tca dim">—</td><td class="num c-tcb dim">—</td>`;
-  }
-  return `
-    <td class="c-flake">${escapeHtml(m.flake || "—")}</td>
-    <td class="num c-lbs">${fmtN(m.flakePounds)}</td>
-    <td class="num c-bca">${fmtN(m.basecoatAGallons)}</td>
-    <td class="num c-bcb">${fmtN(m.basecoatBGallons)}</td>
-    <td class="num c-tca">${fmtN(m.topcoatAGallons)}</td>
-    <td class="num c-tcb">${fmtN(m.topcoatBGallons)}</td>`;
+  const v = matValues(m);
+  const name = m.applies ? escapeHtml(m.flake || "—") : "—";
+  const cells = MAT_KEYS.map(
+    (k) => `<td class="num c-${k}${v[k] === null ? " dim" : ""}">${v[k] === null ? "—" : fmtN(v[k])}</td>`
+  ).join("");
+  return `<td class="c-flake${m.applies ? "" : " dim"}">${name}</td>${cells}`;
 }
 
 function rowHtml(job) {
@@ -408,16 +455,13 @@ function rowHtml(job) {
 }
 
 function computeClassTotals(jobs) {
-  const t = { sqft: 0, lbs: 0, bca: 0, bcb: 0, tca: 0, tcb: 0 };
+  // Keys derived from MAT_KEYS so adding a material column can't skew totals.
+  const t = { sqft: 0 };
+  for (const k of MAT_KEYS) t[k] = 0;
   for (const j of jobs) {
     t.sqft += j.sqft || 0;
-    if (j.material.applies) {
-      t.lbs += j.material.flakePounds;
-      t.bca += j.material.basecoatAGallons;
-      t.bcb += j.material.basecoatBGallons;
-      t.tca += j.material.topcoatAGallons;
-      t.tcb += j.material.topcoatBGallons;
-    }
+    const v = matValues(j.material);
+    for (const k of MAT_KEYS) t[k] += v[k] || 0;
   }
   return t;
 }
@@ -429,11 +473,8 @@ function totalsRowHtml(label, jobs, className) {
       <td colspan="5">${escapeHtml(label)}</td>
       <td class="num c-sqft">${fmtN(t.sqft, 0)}</td>
       <td></td>
-      <td class="num c-lbs">${fmtN(t.lbs)}</td>
-      <td class="num c-bca">${fmtN(t.bca)}</td>
-      <td class="num c-bcb">${fmtN(t.bcb)}</td>
-      <td class="num c-tca">${fmtN(t.tca)}</td>
-      <td class="num c-tcb">${fmtN(t.tcb)}</td>
+      <td></td>
+      ${MAT_KEYS.map((k) => `<td class="num c-${k}">${fmtN(t[k])}</td>`).join("")}
     </tr>`;
 }
 
@@ -475,7 +516,7 @@ function renderTable(list, groups) {
   let body = "";
   for (const g of groups) {
     if (showBands) {
-      body += `<tr class="group-band"><td colspan="13">${escapeHtml(g.className)} · ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}</td></tr>`;
+      body += `<tr class="group-band"><td colspan="17">${escapeHtml(g.className)} · ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}</td></tr>`;
     }
     body += g.jobs.map(rowHtml).join("");
     body += totalsRowHtml(`${g.className} totals`, g.jobs, g.className);
@@ -492,7 +533,8 @@ function renderTable(list, groups) {
           <tr>
             <th>Day</th><th>Job #</th><th class="th-name">Customer / Job</th><th>Type</th>
             <th class="th-crew">Crew</th><th class="num">SQFT</th><th class="th-color">Color</th>
-            <th>Flake</th><th class="num">Lbs</th><th class="num">Base A</th><th class="num">Base B</th><th class="num">Top A</th><th class="num">Top B</th>
+            <th>Material</th><th class="num">Lbs</th><th class="num">Boxes 40#</th><th class="num">Base A</th><th class="num">Base B</th><th class="num">Top A</th><th class="num">Top B</th>
+            <th class="num">Bags 50#</th><th class="num">Binder 5G</th><th class="num">Primer 5G</th>
           </tr>
         </thead>
         <tbody>${body}</tbody>
@@ -510,44 +552,37 @@ function debounce(key, fn, ms = 600) {
 
 function updateRowMaterial(row, job) {
   const m = job.material;
-  const set = (cls, val, num = true) => {
-    const cell = row.querySelector(`.c-${cls}`);
-    if (!cell) return;
-    cell.classList.toggle("dim", !m.applies);
-    cell.textContent = m.applies ? (num ? fmtN(val) : val || "—") : "—";
-  };
-  set("flake", m.flake, false);
-  set("lbs", m.flakePounds);
-  set("bca", m.basecoatAGallons);
-  set("bcb", m.basecoatBGallons);
-  set("tca", m.topcoatAGallons);
-  set("tcb", m.topcoatBGallons);
+  const v = matValues(m);
+  const flakeCell = row.querySelector(".c-flake");
+  if (flakeCell) {
+    flakeCell.classList.toggle("dim", !m.applies);
+    flakeCell.textContent = m.applies ? m.flake || "—" : "—";
+  }
+  for (const k of MAT_KEYS) {
+    const cell = row.querySelector(`.c-${k}`);
+    if (!cell) continue;
+    cell.classList.toggle("dim", v[k] === null);
+    cell.textContent = v[k] === null ? "—" : fmtN(v[k]);
+  }
+}
+
+function fillTotalsRow(row, jobs) {
+  const t = computeClassTotals(jobs);
+  row.querySelector(".c-sqft").textContent = fmtN(t.sqft, 0);
+  for (const k of MAT_KEYS) {
+    const cell = row.querySelector(`.c-${k}`);
+    if (cell) cell.textContent = fmtN(t[k]);
+  }
 }
 
 function updateTotalsRows() {
   const groups = visibleGroups();
   for (const g of groups) {
     const row = document.querySelector(`tr.totals[data-class="${CSS.escape(g.className)}"]`);
-    if (!row) continue;
-    const t = computeClassTotals(g.jobs);
-    row.querySelector(".c-sqft").textContent = fmtN(t.sqft, 0);
-    row.querySelector(".c-lbs").textContent = fmtN(t.lbs);
-    row.querySelector(".c-bca").textContent = fmtN(t.bca);
-    row.querySelector(".c-bcb").textContent = fmtN(t.bcb);
-    row.querySelector(".c-tca").textContent = fmtN(t.tca);
-    row.querySelector(".c-tcb").textContent = fmtN(t.tcb);
+    if (row) fillTotalsRow(row, g.jobs);
   }
   const grand = document.querySelector(`tr.totals[data-class="__all__"]`);
-  if (grand) {
-    const all = groups.flatMap((g) => g.jobs);
-    const t = computeClassTotals(all);
-    grand.querySelector(".c-sqft").textContent = fmtN(t.sqft, 0);
-    grand.querySelector(".c-lbs").textContent = fmtN(t.lbs);
-    grand.querySelector(".c-bca").textContent = fmtN(t.bca);
-    grand.querySelector(".c-bcb").textContent = fmtN(t.bcb);
-    grand.querySelector(".c-tca").textContent = fmtN(t.tca);
-    grand.querySelector(".c-tcb").textContent = fmtN(t.tcb);
-  }
+  if (grand) fillTotalsRow(grand, groups.flatMap((g) => g.jobs));
 }
 
 function wireRow(row) {
@@ -566,7 +601,7 @@ function wireRow(row) {
     if (!job) return;
     job.sqft = sqft.value === "" ? null : Number(sqft.value) || 0;
     job.color = color.value.trim() || null;
-    job.material = computeMaterialClient(job.sqft || 0, job.projectType, flakeFor(job.color));
+    job.material = computeMaterialClient(job.sqft || 0, job.projectType, job.color);
     color.classList.toggle("warn", Boolean(job.color) && !schedule.colorMap.has(job.color.toLowerCase()));
     updateRowMaterial(row, job);
     updateTotalsRows();
@@ -593,10 +628,21 @@ function materialHtml(mat) {
   if (!mat.applies) {
     return `<div class="material none">No material needed (warranty / inspection).</div>`;
   }
+  if (mat.kind === "rubber") {
+    return `
+    <div class="material">
+      <h4>Material to use (rubber)</h4>
+      <div class="flake-name">Rubber: ${escapeHtml(mat.flake || "—")} · <b>${fmtN(mat.rubberBags)} bags (50 lb)</b></div>
+      <div class="mat-rows">
+        <span>Binder <b>${fmtN(mat.binderBuckets)} × 5-gal</b></span>
+        <span>Primer <b>${fmtN(mat.primerBuckets)} × 5-gal</b></span>
+      </div>
+    </div>`;
+  }
   return `
     <div class="material">
       <h4>Material to use</h4>
-      <div class="flake-name">Flake: ${escapeHtml(mat.flake || "—")} · <b>${fmtN(mat.flakePounds)} lbs</b></div>
+      <div class="flake-name">Flake: ${escapeHtml(mat.flake || "—")} · <b>${fmtN(mat.flakePounds)} lbs (${fmtN(mat.flakeBoxes)} boxes)</b></div>
       <div class="mat-rows">
         <span>Basecoat A <b>${fmtN(mat.basecoatAGallons)} gal</b></span>
         <span>Basecoat B <b>${fmtN(mat.basecoatBGallons)} gal</b></span>
@@ -672,7 +718,7 @@ function wireCard(el) {
     if (!job) return;
     job.sqft = sqft.value === "" ? null : Number(sqft.value) || 0;
     job.color = color.value.trim() || null;
-    job.material = computeMaterialClient(job.sqft || 0, job.projectType, flakeFor(job.color));
+    job.material = computeMaterialClient(job.sqft || 0, job.projectType, job.color);
     color.classList.toggle("warn", Boolean(job.color) && !schedule.colorMap.has(job.color.toLowerCase()));
     matBox.innerHTML = materialHtml(job.material);
   };
@@ -721,6 +767,108 @@ async function loadSchedule() {
 function goToWeek(weekStart) {
   schedule.weekStart = weekStart;
   loadSchedule();
+}
+
+// ─────────────────────────── Export week to .xlsx ───────────────────────────
+const EXPORT_HEAD = [
+  "Day", "Job #", "Customer / Job", "Type", "Class", "Crew", "SQFT", "Color",
+  "Material", "Flake lbs", "Flake boxes (40 lb)", "Base A gal", "Base B gal",
+  "Top A gal", "Top B gal", "Rubber bags (50 lb)", "Binder (5-gal)", "Primer (5-gal)", "Notes",
+];
+const EXPORT_COLS = [
+  { wch: 5 }, { wch: 8 }, { wch: 34 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
+  { wch: 7 }, { wch: 13 }, { wch: 16 }, { wch: 9 }, { wch: 11 }, { wch: 9 },
+  { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 14 }, { wch: 11 }, { wch: 11 }, { wch: 50 },
+];
+
+function exportJobRow(job) {
+  const hasCustomer = job.customer && job.customer !== "—";
+  const label = hasCustomer ? job.customer : job.description || `Job #${job.jobNumber}`;
+  const v = matValues(job.material);
+  const n = (x) => (x === null ? "" : x);
+  return [
+    (job.scheduledDay || "").slice(0, 3), job.jobNumber, label, job.projectType,
+    job.className, job.crew || "", job.sqft ?? "", job.color || "",
+    job.material.applies ? job.material.flake || "" : "",
+    n(v.lbs), n(v.box), n(v.bca), n(v.bcb), n(v.tca), n(v.tcb), n(v.bags), n(v.bind), n(v.prim),
+    job.description || "",
+  ];
+}
+
+function exportTotalsRow(label, jobs) {
+  const t = computeClassTotals(jobs);
+  return [
+    label, "", "", "", "", "", t.sqft, "", "",
+    r2(t.lbs), r2(t.box), r2(t.bca), r2(t.bcb), r2(t.tca), r2(t.tcb),
+    r2(t.bags), r2(t.bind), r2(t.prim), "",
+  ];
+}
+
+function sheetName(name, used) {
+  let base = String(name || "Unassigned").replace(/[\\\/\?\*\[\]:]/g, " ").trim().slice(0, 28) || "Sheet";
+  let candidate = base;
+  let i = 2;
+  while (used.has(candidate.toLowerCase())) candidate = `${base} ${i++}`;
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function exportWeek() {
+  if (typeof XLSX === "undefined") {
+    toast("Spreadsheet writer didn't load — check your connection.", "error");
+    return;
+  }
+  const allJobs = schedule.classes.flatMap((g) => g.jobs);
+  if (!allJobs.length) {
+    toast("Nothing to export for this week.", "error");
+    return;
+  }
+  const weekLabel = `Week of ${schedule.weekStart}`;
+  const wb = XLSX.utils.book_new();
+  const used = new Set();
+
+  // Sheet 1 — full schedule grouped by class, with totals.
+  const rows = [[`Weekly Schedule — ${weekLabel}`], [], EXPORT_HEAD];
+  for (const g of schedule.classes) {
+    rows.push([`${g.className} — ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}`]);
+    for (const j of g.jobs) rows.push(exportJobRow(j));
+    rows.push(exportTotalsRow(`${g.className} totals`, g.jobs));
+    rows.push([]);
+  }
+  rows.push(exportTotalsRow("WEEK TOTALS", allJobs));
+  const wsAll = XLSX.utils.aoa_to_sheet(rows);
+  wsAll["!cols"] = EXPORT_COLS;
+  XLSX.utils.book_append_sheet(wb, wsAll, sheetName("Schedule", used));
+
+  // One printable sheet per crew.
+  const byCrew = new Map();
+  for (const j of allJobs) {
+    const crew = (j.crew || "").trim() || "Unassigned";
+    if (!byCrew.has(crew)) byCrew.set(crew, []);
+    byCrew.get(crew).push(j);
+  }
+  const crews = [...byCrew.keys()].sort((a, b) =>
+    a === "Unassigned" ? 1 : b === "Unassigned" ? -1 : a.localeCompare(b)
+  );
+  for (const crew of crews) {
+    const jobs = byCrew.get(crew).slice().sort((a, b) => (a.scheduledDate ?? 0) - (b.scheduledDate ?? 0));
+    const crewRows = [
+      [`Crew: ${crew}`],
+      [`${weekLabel} · ${jobs.length} job${jobs.length === 1 ? "" : "s"}`],
+      ["Primer kit = 3.5 gal binder + 1.5 gal alcohol spirits (5-gal kit covers 700 sqft)"],
+      [],
+      EXPORT_HEAD,
+      ...jobs.map(exportJobRow),
+      [],
+      exportTotalsRow("Crew totals", jobs),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(crewRows);
+    ws["!cols"] = EXPORT_COLS;
+    XLSX.utils.book_append_sheet(wb, ws, sheetName(crew, used));
+  }
+
+  XLSX.writeFile(wb, `schedule-${schedule.weekStart}.xlsx`);
+  toast("Exported — check your downloads.", "success");
 }
 
 // ─────────────────────────── Pipeline upload ───────────────────────────
@@ -860,6 +1008,7 @@ async function init() {
   $("project-search").addEventListener("input", renderProjects);
   $("include-cancelled").addEventListener("change", loadProjects);
   $("schedule-search").addEventListener("input", renderSchedule);
+  $("export-week").addEventListener("click", exportWeek);
 
   // Week navigation.
   $("week-prev").addEventListener("click", () =>

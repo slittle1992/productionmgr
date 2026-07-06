@@ -1,4 +1,4 @@
-import type { CoverageRates, CustomFieldNames } from "../config.js";
+import type { CoverageConfig, CustomFieldNames } from "../config.js";
 import type { ProjectProvider } from "../builderPrime/provider.js";
 import { readCustomField, type BuilderPrimeProject } from "../builderPrime/types.js";
 import { normalizeColor } from "../domain/colors.js";
@@ -66,7 +66,7 @@ export class ScheduleService {
   constructor(
     private readonly provider: ProjectProvider,
     private readonly store: ScheduleStore,
-    private readonly coverage: CoverageRates,
+    private readonly coverage: CoverageConfig,
     private readonly fields: CustomFieldNames,
     private readonly weekStartDay: number,
     private readonly now: () => number = () => Date.now()
@@ -116,7 +116,7 @@ export class ScheduleService {
     const material = computeMaterials(
       sqft,
       projectType,
-      normalized?.flakeProduct ?? null,
+      { name: normalized?.name ?? null, flakeProduct: normalized?.flakeProduct ?? null },
       this.coverage
     );
 

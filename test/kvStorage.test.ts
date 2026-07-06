@@ -8,7 +8,7 @@ import { ScheduleService } from "../src/services/scheduleService.js";
 import type { ProjectProvider } from "../src/builderPrime/provider.js";
 import type { StoredReport } from "../src/domain/weeklyReport.js";
 import { emptyAutoFields, emptyManualFields } from "../src/domain/weeklyReport.js";
-import type { CoverageRates, CustomFieldNames } from "../src/config.js";
+import type { CoverageConfig, CustomFieldNames } from "../src/config.js";
 import type { BuilderPrimeProject } from "../src/builderPrime/types.js";
 
 function storedReport(weekStart: string, quarter: string): StoredReport {
@@ -90,12 +90,16 @@ describe("services on KV storage", () => {
   });
 
   it("persists schedule crew via the KV schedule store", async () => {
-    const rates: CoverageRates = {
-      basecoatADivisor: 315,
-      basecoatBDivisor: 630,
-      topcoatADivisor: 330,
-      topcoatBDivisor: 330,
-      flakeLbsPerSqft: 0.125,
+    const rates: CoverageConfig = {
+      flake: {
+        flakeLbsPerSqft: 0.15,
+        flakeBoxLbs: 40,
+        polyureaSqftPerGallon: 200,
+        polyureaPartsA: 2,
+        polyureaPartsB: 1,
+        polyasparticSqftPerGallon: 130,
+      },
+      rubber: { sqftPerBag: 30, sqftPerBinderBucket: 160, sqftPerPrimerBucket: 700 },
     };
     const fields: CustomFieldNames = {
       sqft: ["SQFT"],

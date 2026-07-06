@@ -16,13 +16,35 @@ function bool(value: string | undefined, fallback: boolean): boolean {
   return !["false", "0", "no", "off"].includes(value.trim().toLowerCase());
 }
 
-/** SQFT-driven material coverage rates (gallons = sqft / divisor; flake = sqft * lbsPerSqft). */
-export interface CoverageRates {
-  basecoatADivisor: number;
-  basecoatBDivisor: number;
-  topcoatADivisor: number;
-  topcoatBDivisor: number;
+/** SQFT-driven material rates for flake/concrete coating. */
+export interface FlakeRates {
+  /** Pounds of flake per sqft (0.15 → sqft × 0.15 = lbs). */
   flakeLbsPerSqft: number;
+  /** Pounds per box of flake (40 lb boxes). */
+  flakeBoxLbs: number;
+  /** Sqft covered by one TOTAL gallon of polyurea basecoat (A+B combined). */
+  polyureaSqftPerGallon: number;
+  /** Polyurea mix ratio — 2 parts A to 1 part B. */
+  polyureaPartsA: number;
+  polyureaPartsB: number;
+  /** Sqft covered by one TOTAL gallon of polyaspartic topcoat (equal parts A/B). */
+  polyasparticSqftPerGallon: number;
+}
+
+/** SQFT-per-unit rates for rubber coating (units = sqft / sqftPerUnit). */
+export interface RubberRates {
+  /** Sqft covered by one 50 lb bag of rubber granules. */
+  sqftPerBag: number;
+  /** Sqft covered by one 5-gallon bucket of binder. */
+  sqftPerBinderBucket: number;
+  /** Sqft covered by one 5-gallon bucket of primer. */
+  sqftPerPrimerBucket: number;
+}
+
+/** Material rates by coating type — rubber uses different products and ratios. */
+export interface CoverageConfig {
+  flake: FlakeRates;
+  rubber: RubberRates;
 }
 
 /** Names of the Builder Prime custom fields the schedule reads from. */
@@ -45,7 +67,7 @@ export interface AppConfig {
     apiKey: string | null;
   };
   allowSampleData: boolean;
-  coverage: CoverageRates;
+  coverage: CoverageConfig;
   customFields: CustomFieldNames;
   kv: {
     url: string | null;
@@ -80,11 +102,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     builderPrime: { subdomain, apiKey },
     allowSampleData: bool(env.ALLOW_SAMPLE_DATA, true),
     coverage: {
-      basecoatADivisor: num(env.COVERAGE_BASECOAT_A_DIVISOR, 315),
-      basecoatBDivisor: num(env.COVERAGE_BASECOAT_B_DIVISOR, 630),
-      topcoatADivisor: num(env.COVERAGE_TOPCOAT_A_DIVISOR, 330),
-      topcoatBDivisor: num(env.COVERAGE_TOPCOAT_B_DIVISOR, 330),
-      flakeLbsPerSqft: num(env.COVERAGE_FLAKE_LBS_PER_SQFT, 0.125),
+      flake: {
+        flakeLbsPerSqft: num(env.FLAKE_LBS_PER_SQFT, 0.15),
+        flakeBoxLbs: num(env.FLAKE_BOX_LBS, 40),
+        polyureaSqftPerGallon: num(env.POLYUREA_SQFT_PER_GALLON, 200),
+        polyureaPartsA: num(env.POLYUREA_PARTS_A, 2),
+        polyureaPartsB: num(env.POLYUREA_PARTS_B, 1),
+        polyasparticSqftPerGallon: num(env.POLYASPARTIC_SQFT_PER_GALLON, 130),
+      },
+      rubber: {
+        sqftPerBag: num(env.RUBBER_SQFT_PER_BAG, 30),
+        sqftPerBinderBucket: num(env.RUBBER_SQFT_PER_BINDER_BUCKET, 160),
+        sqftPerPrimerBucket: num(env.RUBBER_SQFT_PER_PRIMER_BUCKET, 700),
+      },
     },
     customFields: {
       sqft: list(env.BP_FIELD_SQFT, ["SQFT", "Square Footage", "Sq Ft"]),

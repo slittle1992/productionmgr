@@ -91,16 +91,34 @@ Crew, color, and sqft are all correctable inline and saved per week; for API
 jobs the customer name is shown as the title, for pipeline jobs (which have no
 customer column) the card is titled by Job # with the description beneath.
 
-**Material math** (from the spreadsheet's Job-Costing sheet; all configurable):
+**Material math** (all rates configurable) — rubber uses different products
+and ratios than flake/concrete:
 
 ```
-Basecoat A = SQFT ÷ 315 gal     Topcoat A = SQFT ÷ 330 gal
-Basecoat B = SQFT ÷ 630 gal     Topcoat B = SQFT ÷ 330 gal
-Flake      = SQFT × 0.125 lbs   Flake blend = the job's color
+Flake / concrete coating:
+  Flake                    = SQFT × 0.15 lbs, in 40 lb boxes
+  Polyurea basecoat        = 1 total gal per 200 sqft, mixed 2:1 →
+                             Base A = SQFT ÷ 300 gal, Base B = SQFT ÷ 600 gal
+  Polyaspartic topcoat     = 1 total gal per 130 sqft, equal parts →
+                             Top A = Top B = SQFT ÷ 260 gal
+  Flake blend              = the job's color
+
+Rubber coating:
+  Rubber bags (50 lb)      = SQFT ÷ 30
+  Binder (5-gal kit)       = SQFT ÷ 160
+  Primer (5-gal kit)       = SQFT ÷ 700
+                             (primer kit = 3.5 gal binder + 1.5 gal alcohol spirits)
+  Granule blend            = the job's color
 ```
 
 Warranty / inspection / sand-&-clear jobs show **no material**, matching how
 those rows were left blank in the sheet.
+
+**Export**: the Export .xlsx button downloads the viewed week as a workbook —
+a full Schedule sheet grouped by class with per-class and week totals, plus
+**one printable sheet per crew** (title, week, that crew's jobs by day, and
+crew material totals) for handing out. SheetJS is vendored locally
+(`public/vendor/`), so upload and export work without any external CDN.
 
 **Colors** are a fixed dropdown (`src/data/colors.ts`) seeded from the Flake
 Inventory and the colors used on recent schedules. Builder Prime's stored value

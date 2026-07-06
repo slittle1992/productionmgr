@@ -44,13 +44,16 @@
             <button id="pipeline-clear" class="btn-clear" type="button" hidden>Clear</button>
           </div>
         </div>
-        <div class="filter-bar">
+        <div class="filter-bar sched-tools">
           <input
             id="schedule-search"
             type="search"
             placeholder="Search customer, job #, crew, color…"
             aria-label="Search schedule"
           />
+          <button id="export-week" class="btn-export" type="button">
+            ⬇ Export .xlsx
+          </button>
         </div>
         <div id="class-chips" class="class-chips"></div>
         <div id="schedule-list" class="schedule-list">
@@ -274,7 +277,8 @@
 
     <div id="toast" class="toast" hidden></div>
 
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <!-- SheetJS, vendored locally so uploads/exports work with no external CDN -->
+    <script src="/vendor/xlsx.full.min.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
