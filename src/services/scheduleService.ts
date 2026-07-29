@@ -23,6 +23,8 @@ export interface ScheduleJob {
   city: string;
   /** Free-text description / notes. */
   description: string | null;
+  /** Contract (sold) amount — the commissionable basis for performance pay. */
+  contractValue: number | null;
   sqft: number | null;
   color: string | null;
   colorRecognized: boolean;
@@ -174,6 +176,7 @@ export class ScheduleService {
       className: str(p.className) ?? "Unassigned",
       city: [p.city, p.state].filter(Boolean).join(", "),
       description: str(p.description),
+      contractValue: p.estimatedValue ?? null,
       sqft,
       color: normalized?.name ?? null,
       colorRecognized: normalized?.recognized ?? false,
@@ -226,6 +229,7 @@ export class ScheduleService {
       className: wo.className,
       city: wo.city ?? "",
       description: descBits || null,
+      contractValue: null,
       sqft,
       color: normalized?.name ?? null,
       colorRecognized: normalized?.recognized ?? false,

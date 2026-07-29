@@ -140,6 +140,27 @@ configurable via `COVERAGE_*` vars.
 
 ---
 
+## Roster & Performance Pay
+
+- **Roster tab** (admins): each rep with their class, fixed position
+  (First / Second / Third / Floater), and hourly rate (defaults $24/$22/$20/$20).
+  Positions never shift day-to-day, per the PFP plan — promotions are edited
+  here. Roster names auto-suggest in the schedule's crew slots.
+- **Pay tab** (admins): pick a class + week and the app computes performance
+  pay from the schedule's contract amounts and crew assignments:
+  First 5% / Second 4% / Third 3% of contract; more than 3 non-floater
+  installers on a job = two-crew rates (2.5/2/1.5), even for a partial second
+  crew; floaters earn no commission; the Lead earns +1% of the week's total
+  commissionable revenue when the crew completes over $30,000. Jobs with no
+  crew are flagged so nothing silently drops out of payroll.
+- **Export sheet** downloads the week in the admin's Performance Pay Worksheet
+  layout — CREW blocks with Sunday–Saturday day rows (Job #, Contracted
+  Amount, Lead/Tech 1/Tech 2 daily pay, rain-out column), totals, pay-period
+  dates with Pay Date (end + 6 days), and the employee table (name, position,
+  %, bonus payout, commission payout) — ready to hand to payroll.
+
+---
+
 ## Field source map (spec §4 → implementation)
 
 | Field | Source | Where it's handled |
@@ -192,7 +213,20 @@ can click through the UI immediately:
 | `BP_FIELD_*`, `COVERAGE_*` | optional | match your BP fields / coverage rates |
 | `PRODUCTION_MANAGER_ID` | optional | scope to one PM |
 
-### Durable storage on Vercel (recommended)
+### Durable storage — Neon Postgres (required for multi-user)
+
+The app stores everything (pipeline uploads, work orders, schedule edits,
+reports, and the installer roster) in **Neon Postgres** when `DATABASE_URL`
+is set. Two tiny key-value tables are created automatically on first use —
+no migrations to run.
+
+1. In Vercel: **Storage → Create Database → Neon (Postgres)** and connect it
+   to the project (this injects `DATABASE_URL`), or create a database at
+   neon.tech and add `DATABASE_URL` yourself.
+2. Redeploy. `GET /api/config` reports `"durableStorage": true` and the red
+   warning banner disappears.
+
+### Alternative: Redis (Vercel KV / Upstash)
 
 Vercel's filesystem is read-only except `/tmp`, which is ephemeral and
 per-instance — so the default JSON-file store won't persist saved crew

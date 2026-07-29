@@ -19,6 +19,8 @@ import { reportsRouter } from "./routes/reports.js";
 import { scheduleRouter } from "./routes/schedule.js";
 import { pipelineRouter } from "./routes/pipeline.js";
 import { workOrdersRouter } from "./routes/workOrders.js";
+import { rosterRouter } from "./routes/roster.js";
+import { payRouter } from "./routes/pay.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
 import { ScheduleService } from "./services/scheduleService.js";
@@ -28,6 +30,7 @@ import { JsonScheduleStore, type ScheduleStore } from "./storage/scheduleStore.j
 import { KvReportRepository } from "./storage/kvReportRepository.js";
 import { KvScheduleStore } from "./storage/kvScheduleStore.js";
 import { UpstashKvClient } from "./storage/kv/upstashKvClient.js";
+import { PgKvClient } from "./storage/kv/pgKvClient.js";
 import {
   JsonPipelineStore,
   KvPipelineStore,
@@ -38,6 +41,11 @@ import {
   KvWorkOrderStore,
   type WorkOrderStore,
 } from "./storage/workOrderStore.js";
+import {
+  JsonRosterStore,
+  KvRosterStore,
+  type RosterStore,
+} from "./storage/rosterStore.js";
 
 /**
  * Resolve the static `public/` directory. Works both when running from source
@@ -73,6 +81,7 @@ export interface BuildAppOptions {
   scheduleStore?: ScheduleStore;
   pipelineStore?: PipelineStore;
   workOrderStore?: WorkOrderStore;
+  rosterStore?: RosterStore;
   now?: () => number;
 }
 
@@ -120,8 +129,11 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   // Durable KV store when configured (Vercel KV / Upstash); otherwise the
   // JSON-file store. Both satisfy the same repository interfaces.
   const durable = hasDurableStorage(config);
-  const kv = durable
-    ? new UpstashKvClient(config.kv.url!, config.kv.token!)
+  // Prefer Neon Postgres; fall back to Upstash/Vercel KV; else JSON files.
+  const kv = config.databaseUrl
+    ? new PgKvClient(config.databaseUrl)
+    : config.kv.url && config.kv.token
+    ? new UpstashKvClient(config.kv.url, config.kv.token)
     : null;
   const repository =
     options.repository ??
@@ -135,6 +147,9 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const workOrderStore =
     options.workOrderStore ??
     (kv ? new KvWorkOrderStore(kv) : new JsonWorkOrderStore(config.dataDir));
+  const rosterStore =
+    options.rosterStore ??
+    (kv ? new KvRosterStore(kv) : new JsonRosterStore(config.dataDir));
 
   const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
@@ -187,6 +202,8 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
 
   app.use("/api", pipelineRouter(pipelineStore, now));
   app.use("/api", workOrdersRouter(workOrderStore, now));
+  app.use("/api", rosterRouter(rosterStore, now));
+  app.use("/api", payRouter(scheduleService, rosterStore));
   app.use("/api", scheduleRouter(scheduleService));
   app.use("/api", reportsRouter(reportService));
   app.use("/api", projectsRouter(projectsService));

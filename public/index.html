@@ -16,8 +16,8 @@
     </div>
     <div id="storage-warning" class="banner warn" hidden>
       ⚠ <strong>No shared database connected.</strong> Uploads and edits are not
-      shared between devices and can be lost. Connect Vercel KV (Storage → Redis)
-      so every PM sees the same data.
+      shared between devices and can be lost. Connect Neon Postgres (set
+      DATABASE_URL) so every PM sees the same data.
     </div>
 
     <header class="app-header">
@@ -265,6 +265,53 @@
         </div>
       </section>
 
+      <!-- ───────────────────────── Performance Pay ───────────────────────── -->
+      <section id="screen-pay" class="screen" hidden>
+        <p class="report-class-label">Pay for performance — pick a class:</p>
+        <div id="pay-class-chips" class="class-chips"></div>
+        <div class="week-bar">
+          <button id="pay-prev" class="week-arrow" type="button" aria-label="Previous week">◀</button>
+          <div class="week-display"><span id="pay-week-range">—</span></div>
+          <button id="pay-next" class="week-arrow" type="button" aria-label="Next week">▶</button>
+          <button id="pay-export" class="week-today" type="button">⬇ Export sheet</button>
+        </div>
+        <p class="card-help">
+          Computed from the week's schedule and the roster: First 5% / Second 4% /
+          Third 3% of contract (halved when more than 3 installers are on a job).
+          Lead earns +1% of the week's total over $30,000. Floaters are hourly.
+        </p>
+        <div id="pay-content" class="pay-content">
+          <div class="loading">Pick a class…</div>
+        </div>
+      </section>
+
+      <!-- ───────────────────────── Roster ───────────────────────── -->
+      <section id="screen-roster" class="screen" hidden>
+        <div class="card">
+          <h2 class="history-title">Add a rep</h2>
+          <form id="roster-form" class="roster-form">
+            <input id="ros-name" type="text" placeholder="Name" required maxlength="80" />
+            <select id="ros-class" required></select>
+            <select id="ros-role">
+              <option>First</option>
+              <option>Second</option>
+              <option>Third</option>
+              <option>Floater</option>
+            </select>
+            <input id="ros-hourly" type="number" min="0" step="0.5" placeholder="$/hr (auto)" />
+            <button type="submit" class="btn btn-primary">Add</button>
+          </form>
+          <p class="card-help">
+            Position is fixed per rep (per the PFP plan) and sets their commission
+            percentage. Hourly is used for PTO, go-backs, and floater pay
+            (defaults: First $24, Second $22, Third/Floater $20).
+          </p>
+        </div>
+        <div id="roster-list" class="roster-list">
+          <div class="loading">Loading roster…</div>
+        </div>
+      </section>
+
       <!-- ───────────────────────── Projects ───────────────────────── -->
       <section id="screen-projects" class="screen" hidden>
         <div class="filter-bar">
@@ -297,12 +344,19 @@
       <button class="tab" data-screen="report" type="button">
         <span class="tab-icon">📋</span><span>Report</span>
       </button>
+      <button class="tab" data-screen="pay" type="button">
+        <span class="tab-icon">💵</span><span>Pay</span>
+      </button>
+      <button class="tab" data-screen="roster" type="button">
+        <span class="tab-icon">👷</span><span>Roster</span>
+      </button>
       <button class="tab" data-screen="projects" type="button">
         <span class="tab-icon">🏗️</span><span>Projects</span>
       </button>
     </nav>
 
     <datalist id="color-list"></datalist>
+    <datalist id="roster-list-dl"></datalist>
 
     <dialog id="wo-dialog">
       <form id="wo-form" method="dialog">

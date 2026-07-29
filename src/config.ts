@@ -73,6 +73,8 @@ export interface AppConfig {
     url: string | null;
     token: string | null;
   };
+  /** Neon Postgres connection string (preferred durable store). */
+  databaseUrl: string | null;
 }
 
 function list(value: string | undefined, fallback: string[]): string[] {
@@ -128,12 +130,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       url: env.KV_REST_API_URL?.trim() || env.UPSTASH_REDIS_REST_URL?.trim() || null,
       token: env.KV_REST_API_TOKEN?.trim() || env.UPSTASH_REDIS_REST_TOKEN?.trim() || null,
     },
+    // Neon (or any Postgres) — Vercel's Neon integration injects DATABASE_URL.
+    databaseUrl:
+      env.DATABASE_URL?.trim() ||
+      env.NEON_DATABASE_URL?.trim() ||
+      env.POSTGRES_URL?.trim() ||
+      null,
   };
 }
 
-/** True when a durable KV store (Vercel KV / Upstash) is configured. */
+/** True when a durable store (Neon Postgres or Vercel KV / Upstash) is configured. */
 export function hasDurableStorage(config: AppConfig): boolean {
-  return Boolean(config.kv.url && config.kv.token);
+  return Boolean(config.databaseUrl || (config.kv.url && config.kv.token));
 }
 
 /** True when we have real Builder Prime credentials to talk to the live API. */

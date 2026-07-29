@@ -508,7 +508,7 @@ function crewInputsHtml(job) {
   const slots = Math.max(3, members.length);
   let html = "";
   for (let i = 0; i < slots; i++) {
-    html += `<input class="js-crew" data-slot="${i}" type="text" placeholder="${SLOT_NAMES[i] || "More"}" value="${escapeHtml(members[i] || "")}" />`;
+    html += `<input class="js-crew" data-slot="${i}" list="roster-list-dl" type="text" placeholder="${SLOT_NAMES[i] || "More"}" value="${escapeHtml(members[i] || "")}" />`;
   }
   return html + `<button class="crew-add" type="button" title="Add another person">+ person</button>`;
 }
@@ -1357,17 +1357,332 @@ async function clearPipeline() {
   }
 }
 
+// ─────────────────────────── Roster ───────────────────────────
+const ROLE_DEFAULT_HOURLY = { First: 24, Second: 22, Third: 20, Floater: 20 };
+let rosterCache = [];
+
+function fillRosterDatalist() {
+  $("roster-list-dl").innerHTML = rosterCache
+    .filter((r) => r.active)
+    .map((r) => `<option value="${escapeHtml(r.name)}"></option>`)
+    .join("");
+}
+
+async function loadRoster() {
+  try {
+    const { roster } = await (await fetch("/api/roster")).json();
+    rosterCache = roster || [];
+  } catch {
+    rosterCache = [];
+  }
+  fillRosterDatalist();
+  renderRoster();
+}
+
+function renderRoster() {
+  const box = $("roster-list");
+  if (!box) return;
+  if (!rosterCache.length) {
+    box.innerHTML = `<div class="empty">No reps yet — add your installers above.</div>`;
+    return;
+  }
+  const byClass = new Map();
+  for (const r of rosterCache) {
+    if (!byClass.has(r.className)) byClass.set(r.className, []);
+    byClass.get(r.className).push(r);
+  }
+  box.innerHTML = [...byClass.entries()]
+    .map(
+      ([cls, reps]) => `
+      <div class="card">
+        <h2 class="history-title">${escapeHtml(cls)} <span class="count">${reps.length}</span></h2>
+        ${reps
+          .map(
+            (r) => `
+          <div class="roster-row${r.active ? "" : " inactive"}" data-id="${escapeHtml(r.id)}">
+            <span class="ros-name">${escapeHtml(r.name)}</span>
+            <select class="ros-role">
+              ${["First", "Second", "Third", "Floater"]
+                .map((role) => `<option${r.role === role ? " selected" : ""}>${role}</option>`)
+                .join("")}
+            </select>
+            <span class="ros-rate">$<input class="ros-hourly" type="number" min="0" step="0.5" value="${r.hourlyRate}" />/hr</span>
+            <button class="ros-remove" type="button" title="Remove">✕</button>
+          </div>`
+          )
+          .join("")}
+      </div>`
+    )
+    .join("");
+
+  box.querySelectorAll(".roster-row").forEach((row) => {
+    const id = row.dataset.id;
+    const rep = rosterCache.find((r) => r.id === id);
+    const save = () =>
+      fetch("/api/roster", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rep),
+      }).then(fillRosterDatalist);
+    row.querySelector(".ros-role").addEventListener("change", (e) => {
+      rep.role = e.target.value;
+      rep.hourlyRate = ROLE_DEFAULT_HOURLY[rep.role] ?? rep.hourlyRate;
+      row.querySelector(".ros-hourly").value = rep.hourlyRate;
+      save();
+    });
+    row.querySelector(".ros-hourly").addEventListener("input", (e) => {
+      rep.hourlyRate = Number(e.target.value) || 0;
+      debounce("ros-" + id, save);
+    });
+    row.querySelector(".ros-remove").addEventListener("click", async () => {
+      if (!confirm(`Remove ${rep.name} from the roster?`)) return;
+      await fetch(`/api/roster/${encodeURIComponent(id)}`, { method: "DELETE" });
+      loadRoster();
+    });
+  });
+}
+
+function fillRosterClassSelect() {
+  const sel = $("ros-class");
+  const classes = state.classes.length
+    ? state.classes
+    : schedule.classes.map((g) => g.className);
+  sel.innerHTML = (classes.length ? classes : ["Unassigned"])
+    .map((c) => `<option>${escapeHtml(c)}</option>`)
+    .join("");
+}
+
+async function submitRosterForm(e) {
+  e.preventDefault();
+  const role = $("ros-role").value;
+  const hourlyRaw = $("ros-hourly").value;
+  try {
+    const res = await fetch("/api/roster", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: $("ros-name").value.trim(),
+        className: $("ros-class").value,
+        role,
+        hourlyRate: hourlyRaw === "" ? undefined : Number(hourlyRaw),
+      }),
+    });
+    if (!res.ok) throw new Error((await res.json()).message || "Couldn't add.");
+    $("ros-name").value = "";
+    $("ros-hourly").value = "";
+    toast("Rep added ✓", "success");
+    loadRoster();
+  } catch (err) {
+    toast(err.message || "Couldn't add rep.", "error");
+  }
+}
+
+// ─────────────────────────── Performance pay ───────────────────────────
+let payClass = localStorage.getItem("payClass") || "";
+let payData = null;
+
+function renderPayChips() {
+  const bar = $("pay-class-chips");
+  const classes = state.classes.length
+    ? state.classes
+    : schedule.classes.map((g) => g.className);
+  if (!classes.includes(payClass)) payClass = classes[0] || "";
+  bar.innerHTML = classes
+    .map(
+      (c) => `
+      <button type="button" class="chip-btn ${payClass === c ? "active" : ""}" data-class="${escapeHtml(c)}">
+        ${escapeHtml(c)}
+      </button>`
+    )
+    .join("");
+  bar.querySelectorAll(".chip-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      payClass = b.dataset.class;
+      localStorage.setItem("payClass", payClass);
+      renderPayChips();
+      loadPay();
+    })
+  );
+}
+
+function payEmployeeRows(crew) {
+  return crew.employees
+    .map(
+      (e) => `
+      <tr>
+        <td>${escapeHtml(e.name)}${e.onRoster ? "" : ' <span class="ros-warn" title="Not on roster — role guessed from slot">⚠</span>'}</td>
+        <td>${escapeHtml(e.position)}</td>
+        <td class="num">${(e.pct * 100).toFixed(0)}%</td>
+        <td class="num">${e.bonus === null ? (e.role === "First" ? "—" : "N/A") : "$" + fmtN(e.bonus)}</td>
+        <td class="num"><strong>$${fmtN(e.commission)}</strong></td>
+      </tr>`
+    )
+    .join("");
+}
+
+function renderPay() {
+  const box = $("pay-content");
+  if (!payData) {
+    box.innerHTML = `<div class="empty">No pay data.</div>`;
+    return;
+  }
+  $("pay-week-range").textContent = `${fmtWeekDay(payData.weekStart)} – ${fmtWeekDay(payData.weekEnd)}`;
+  const blocks = [];
+  payData.crews.forEach((crew, i) => {
+    blocks.push(`
+      <div class="card pay-crew">
+        <h2 class="history-title">Crew #${i + 1} — ${escapeHtml(crew.crewName)}</h2>
+        <table class="pay-table">
+          <thead><tr><th>Day</th><th>Job #</th><th>Customer</th><th class="num">Contracted</th><th class="num">Crews</th></tr></thead>
+          <tbody>
+            ${crew.jobs
+              .map(
+                (j) => `
+              <tr>
+                <td>${escapeHtml(j.dayLabel || "—")}</td>
+                <td>${escapeHtml(j.jobNumber)}</td>
+                <td class="pay-cust">${escapeHtml(j.customer)}</td>
+                <td class="num">$${fmtN(j.amount)}</td>
+                <td class="num">${j.crews}</td>
+              </tr>`
+              )
+              .join("")}
+            <tr class="pay-total"><td colspan="3">TOTAL CONTRACTED</td><td class="num">$${fmtN(crew.totalContracted)}</td><td></td></tr>
+          </tbody>
+        </table>
+        <table class="pay-table pay-emps">
+          <thead><tr><th>Employee</th><th>Position</th><th class="num">%</th><th class="num">Bonus</th><th class="num">Commission</th></tr></thead>
+          <tbody>${payEmployeeRows(crew)}</tbody>
+        </table>
+      </div>`);
+  });
+  if (payData.unassigned.length) {
+    blocks.push(`
+      <div class="card pay-crew warn-card">
+        <h2 class="history-title">⚠ Jobs with no crew assigned</h2>
+        <p class="card-help">Assign crews on the Schedule tab so these count toward pay.</p>
+        ${payData.unassigned
+          .map((j) => `<div class="history-row"><span>${escapeHtml(j.dayLabel || "—")} · #${escapeHtml(j.jobNumber)}</span><span class="history-class">${escapeHtml(j.customer)}</span><strong>$${fmtN(j.amount)}</strong></div>`)
+          .join("")}
+      </div>`);
+  }
+  if (!blocks.length) {
+    blocks.push(`<div class="empty">No payable jobs this week for ${escapeHtml(payClass)}.</div>`);
+  }
+  box.innerHTML = blocks.join("");
+}
+
+async function loadPay() {
+  if (!payClass) {
+    renderPayChips();
+    if (!payClass) return;
+  }
+  const box = $("pay-content");
+  box.innerHTML = `<div class="loading">Calculating…</div>`;
+  try {
+    const q = schedule.weekStart ? `week=${schedule.weekStart}&` : "";
+    const res = await fetch(`/api/pay?${q}class=${encodeURIComponent(payClass)}`);
+    if (!res.ok) throw new Error("load failed");
+    payData = await res.json();
+    schedule.weekStart = payData.weekStart;
+    renderPay();
+  } catch {
+    box.innerHTML = `<div class="empty">Couldn't calculate pay.</div>`;
+  }
+}
+
+// PFP worksheet export — matches the admin's Performance Pay Worksheet layout.
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function payDateFromWeekEnd(weekEnd) {
+  const ms = Date.parse(`${weekEnd}T00:00:00Z`) + 6 * 86400000;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function pfpCrewBlock(crew, index, meta) {
+  const rows = [];
+  const metaCol = (label, value) => (index === 0 ? ["", label, value] : []);
+  rows.push(["", `CREW #${index + 1}`, "", "", "", "", "", "", "", "", ...metaCol("Pay period start date:", meta.weekStart)]);
+  rows.push(["", "", "Job Number", "Contracted Amount", "Notes", "", "Lead Daily Pay", "Tech 1 Daily Pay", "Tech 2 Daily Pay", "Rain outs/additonal pay", ...metaCol("Pay period end date:", meta.weekEnd)]);
+  let metaRow = 0;
+  const extraMeta = [["Pay Date:", meta.payDate], ["Employee phone:", ""], ["Employee Email:", ""]];
+  for (let d = 0; d < 7; d++) {
+    const dayJobs = crew.jobs.filter((j) => j.dayIndex === d);
+    const tail = index === 0 && metaRow < extraMeta.length ? ["", ...extraMeta[metaRow++]] : [];
+    if (!dayJobs.length) {
+      rows.push(["", DAY_NAMES[d], "", "", "", "", 0, 0, 0, "", ...tail]);
+    } else {
+      dayJobs.forEach((j, k) => {
+        const note = j.dayLabel && j.dayLabel.includes("–") ? `${j.dayLabel} job` : j.crews === 2 ? "2 crews" : "";
+        const t = k === 0 ? tail : [];
+        rows.push(["", k === 0 ? DAY_NAMES[d] : "", j.jobNumber, j.amount, note, "", j.leadDailyPay, j.tech1DailyPay, j.tech2DailyPay, "", ...t]);
+      });
+    }
+  }
+  const totals = crew.jobs.reduce(
+    (t, j) => ({ lead: t.lead + j.leadDailyPay, t1: t.t1 + j.tech1DailyPay, t2: t.t2 + j.tech2DailyPay }),
+    { lead: 0, t1: 0, t2: 0 }
+  );
+  rows.push(["", "TOTAL CONTRACTED:", "", crew.totalContracted, "Totals:", "", r2(totals.lead), r2(totals.t1), r2(totals.t2), ""]);
+  rows.push([]);
+  rows.push(["", "Employee Name", "Position", "Commission Percentage", "BONUS PAYOUT", "COMMISSION PAYOUT", "", "", "", "Notes"]);
+  for (const e of crew.employees) {
+    rows.push(["", e.name, e.position, e.pct, e.bonus === null ? (e.role === "First" ? "FALSE" : "N/A") : e.bonus, e.commission, "", "", "", e.onRoster ? "" : "Not on roster — verify role"]);
+  }
+  rows.push([]);
+  rows.push([]);
+  return rows;
+}
+
+function exportPay() {
+  if (typeof XLSX === "undefined" || !payData) {
+    toast("Nothing to export yet.", "error");
+    return;
+  }
+  const meta = {
+    weekStart: payData.weekStart,
+    weekEnd: payData.weekEnd,
+    payDate: payDateFromWeekEnd(payData.weekEnd),
+  };
+  const rows = [[]];
+  payData.crews.forEach((crew, i) => rows.push(...pfpCrewBlock(crew, i, meta)));
+  if (!payData.crews.length) rows.push(["", "No crews with payable jobs this week."]);
+  if (payData.unassigned.length) {
+    rows.push(["", "UNASSIGNED JOBS — assign crews before payroll:"]);
+    for (const j of payData.unassigned) {
+      rows.push(["", j.dayLabel || "", j.jobNumber, j.amount, j.customer]);
+    }
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [
+    { wch: 2 }, { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 26 }, { wch: 18 },
+    { wch: 14 }, { wch: 15 }, { wch: 15 }, { wch: 20 }, { wch: 2 }, { wch: 20 }, { wch: 14 },
+  ];
+  const wb = XLSX.utils.book_new();
+  const md = (iso) => `${Number(iso.slice(5, 7))}${Number(iso.slice(8, 10))}`;
+  const sheetTitle = `${payData.className} DG ${md(payData.weekStart)}-${md(payData.weekEnd)}`.slice(0, 31);
+  XLSX.utils.book_append_sheet(wb, ws, sheetTitle);
+  XLSX.writeFile(wb, `pfp-${payData.className.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${payData.weekStart}.xlsx`);
+  toast("Pay sheet exported ✓", "success");
+}
+
 // ─────────────────────────── Navigation ───────────────────────────
-const TITLES = { schedule: "Weekly Schedule", report: "Weekly Report", projects: "Projects" };
+const TITLES = {
+  schedule: "Weekly Schedule",
+  report: "Weekly Report",
+  pay: "Performance Pay",
+  roster: "Roster",
+  projects: "Projects",
+};
 let reportLoaded = false;
 
 function showScreen(name) {
-  for (const s of ["schedule", "report", "projects"]) {
+  for (const s of ["schedule", "report", "pay", "roster", "projects"]) {
     $(`screen-${s}`).hidden = s !== name;
   }
   $("screen-title").textContent = TITLES[name];
   $("save-bar").classList.toggle("hidden", name !== "report");
-  $("week-label").hidden = name === "projects";
+  $("week-label").hidden = name !== "schedule" && name !== "report";
   document.querySelectorAll(".tab").forEach((t) =>
     t.classList.toggle("active", t.dataset.screen === name)
   );
@@ -1381,6 +1696,16 @@ function showScreen(name) {
     }
   }
   if (name === "schedule") loadSchedule();
+  if (name === "pay") {
+    loadReportClasses().then(() => {
+      renderPayChips();
+      loadPay();
+    });
+  }
+  if (name === "roster") {
+    loadReportClasses().then(fillRosterClassSelect);
+    loadRoster();
+  }
 }
 
 // ─────────────────────────── Init ───────────────────────────
@@ -1422,6 +1747,19 @@ async function init() {
   $("include-cancelled").addEventListener("change", loadProjects);
   $("schedule-search").addEventListener("input", renderSchedule);
   $("export-week").addEventListener("click", exportWeek);
+
+  // Pay + roster controls.
+  $("pay-prev").addEventListener("click", () => {
+    schedule.weekStart = shiftWeekIso(schedule.weekStart || currentWeekStartIso(), -1);
+    loadPay();
+  });
+  $("pay-next").addEventListener("click", () => {
+    schedule.weekStart = shiftWeekIso(schedule.weekStart || currentWeekStartIso(), 1);
+    loadPay();
+  });
+  $("pay-export").addEventListener("click", exportPay);
+  $("roster-form").addEventListener("submit", submitRosterForm);
+  loadRoster(); // also fills crew-name suggestions on the schedule
 
   // Week navigation.
   $("week-prev").addEventListener("click", () =>
