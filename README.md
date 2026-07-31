@@ -118,6 +118,12 @@ so the meeting history builds week over week.
 Warranties, Pipeline sheets) and the staging lists (one sheet per location plus
 an all-locations pull list) both export to spreadsheets for printing/sharing.
 
+**Snapshots:** tap **📸 Save snapshot** at the end of the meeting to freeze the
+whole week server-side — the computed meeting, next week's staging list, and
+the inventory position. Later uploads can't change a saved week; the "Saved
+weeks" list under the meeting re-downloads any archived week's meeting or
+staging workbook.
+
 ---
 
 ## Weekly Schedule (replaces the spreadsheet)

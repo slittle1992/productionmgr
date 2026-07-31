@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { buildStaging, itemLabel, neededByItem } from "../domain/staging.js";
+import { buildInventoryView, buildStaging } from "../domain/staging.js";
 import type { ScheduleService } from "../services/scheduleService.js";
 import type { InventoryStore } from "../storage/inventoryStore.js";
 import { asyncHandler } from "./asyncHandler.js";
@@ -36,39 +36,7 @@ export function stagingRouter(
         scheduleService.getSchedule(week),
         inventoryStore.getAll(),
       ]);
-      const staging = buildStaging(schedule);
-
-      const classNames = new Set<string>([
-        ...staging.classes.map((c) => c.className),
-        ...Object.keys(inventory),
-      ]);
-      const classes = [...classNames].sort().map((className) => {
-        const list = staging.classes.find((c) => c.className === className);
-        const need = list ? neededByItem(list) : {};
-        const onHand = inventory[className]?.items ?? {};
-        const keys = new Set([...Object.keys(need), ...Object.keys(onHand)]);
-        const items = [...keys]
-          .sort()
-          .map((key) => {
-            const needed = need[key] ?? 0;
-            const have = onHand[key] ?? 0;
-            return {
-              key,
-              ...itemLabel(key),
-              onHand: have,
-              needed,
-              short: Math.max(0, Math.round((needed - have) * 100) / 100),
-            };
-          });
-        return {
-          className,
-          items,
-          updatedAt: inventory[className]?.updatedAt ?? null,
-          by: inventory[className]?.by ?? null,
-        };
-      });
-
-      res.json({ weekStart: staging.weekStart, weekEnd: staging.weekEnd, classes });
+      res.json(buildInventoryView(buildStaging(schedule), inventory));
     })
   );
 

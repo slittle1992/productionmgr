@@ -203,6 +203,63 @@ export function buildStaging(schedule: WeeklySchedule): StagingWeek {
   };
 }
 
+export interface InventoryItemView {
+  key: string;
+  label: string;
+  unit: string;
+  onHand: number;
+  needed: number;
+  short: number;
+}
+
+export interface InventoryClassView {
+  className: string;
+  items: InventoryItemView[];
+  updatedAt: string | null;
+  by: string | null;
+}
+
+export interface InventoryView {
+  weekStart: string;
+  weekEnd: string;
+  classes: InventoryClassView[];
+}
+
+/** Join staged needs with on-hand counts (shape of GET /api/inventory). */
+export function buildInventoryView(
+  staging: StagingWeek,
+  inventory: Record<string, { items: Record<string, number>; updatedAt: string | null; by: string | null }>
+): InventoryView {
+  const classNames = new Set<string>([
+    ...staging.classes.map((c) => c.className),
+    ...Object.keys(inventory),
+  ]);
+  const classes = [...classNames].sort().map((className) => {
+    const list = staging.classes.find((c) => c.className === className);
+    const need = list ? neededByItem(list) : {};
+    const onHand = inventory[className]?.items ?? {};
+    const keys = new Set([...Object.keys(need), ...Object.keys(onHand)]);
+    const items = [...keys].sort().map((key) => {
+      const needed = need[key] ?? 0;
+      const have = onHand[key] ?? 0;
+      return {
+        key,
+        ...itemLabel(key),
+        onHand: have,
+        needed,
+        short: Math.max(0, Math.round((needed - have) * 100) / 100),
+      };
+    });
+    return {
+      className,
+      items,
+      updatedAt: inventory[className]?.updatedAt ?? null,
+      by: inventory[className]?.by ?? null,
+    };
+  });
+  return { weekStart: staging.weekStart, weekEnd: staging.weekEnd, classes };
+}
+
 /** Needed quantities per item key for one class (for the inventory screen). */
 export function neededByItem(list: StagingClassList): Record<string, number> {
   const need: Record<string, number> = {};

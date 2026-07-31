@@ -168,3 +168,56 @@ describe("staging + inventory API", () => {
     expect(basecoatA.short).toBe(basecoatA.needed);
   });
 });
+
+describe("weekly snapshots", () => {
+  const PIPELINE_GRID = [
+    ["Production Pipeline Report"],
+    ["Date as of 7/30/26"],
+    ["Job #", "Description", "Labor Cost", "Material Cost", "Sold Amount", "Start", "Finish", "Project Manager", "Sales Person", "Type", "Class", "Project Sq Ft", "Total Contract Price"],
+    ["101", "Garage - Domino", "", "", "5000", "2026-08-04 07:30", "", "Trailer 1", "Kyle", "Concrete Coating", "Deluxe Garages - Austin, TX", "1000", "5000"],
+  ];
+
+  it("freezes the week and lists/serves it back", async () => {
+    const { buildApp } = await import("../src/app.js");
+    const { MemorySnapshotStore } = await import("../src/storage/snapshotStore.js");
+    const app = buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore: new MemoryPipelineStore(),
+      scheduleStore: new MemoryScheduleStore(),
+      snapshotStore: new MemorySnapshotStore(),
+      now: () => Date.parse("2026-07-31T12:00:00Z"),
+    }).app;
+
+    await request(app)
+      .post("/api/pipeline")
+      .send({ filename: "pipeline.xlsx", rows: PIPELINE_GRID })
+      .expect(200);
+
+    const save = await request(app)
+      .post("/api/snapshots")
+      .send({ week: "2026-07-26", by: "Spencer" });
+    expect(save.status).toBe(200);
+    expect(save.body.snapshot.weekStart).toBe("2026-07-26");
+    expect(save.body.snapshot.by).toBe("Spencer");
+
+    const list = await request(app).get("/api/snapshots");
+    expect(list.body.snapshots).toHaveLength(1);
+    expect(list.body.snapshots[0].savedAt).toBe("2026-07-31T12:00:00.000Z");
+
+    const snap = await request(app).get("/api/snapshots/2026-07-26");
+    expect(snap.status).toBe(200);
+    // The frozen meeting is the full view; staging covers the FOLLOWING week.
+    expect(snap.body.meeting.week.weekStart).toBe("2026-07-26");
+    expect(snap.body.staging.weekStart).toBe("2026-08-02");
+    const austin = snap.body.staging.classes.find(
+      (c: { className: string }) => c.className === "Austin"
+    );
+    expect(austin.jobs).toHaveLength(1);
+
+    const missing = await request(app).get("/api/snapshots/2026-01-04");
+    expect(missing.status).toBe(404);
+  });
+});

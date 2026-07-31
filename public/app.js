@@ -2544,11 +2544,15 @@ function sheetFromRows(wb, name, rows, colWidths) {
 }
 
 function exportStaging() {
-  const v = staging.view;
-  if (!v || typeof XLSX === "undefined") {
+  if (!staging.view || typeof XLSX === "undefined") {
     toast("Load the staging list first.", "error");
     return;
   }
+  buildStagingXlsx(staging.view);
+}
+
+/** Build + download the staging workbook from a staging view (live or snapshot). */
+function buildStagingXlsx(v) {
   const wb = XLSX.utils.book_new();
 
   // Summary sheet: every location's pull list on one page.
@@ -2620,11 +2624,15 @@ function exportStaging() {
 }
 
 function exportMeeting() {
-  const v = meeting.view;
-  if (!v || typeof XLSX === "undefined") {
+  if (!meeting.view || typeof XLSX === "undefined") {
     toast("Load the meeting first.", "error");
     return;
   }
+  buildMeetingXlsx(meeting.view);
+}
+
+/** Build + download the meeting workbook from a meeting view (live or snapshot). */
+function buildMeetingXlsx(v) {
   const wb = XLSX.utils.book_new();
   const secTitle = Object.fromEntries(MEETING_SECTIONS.map((s) => [s.key, s.title]));
 
@@ -2755,6 +2763,75 @@ function exportMeeting() {
   toast("Meeting exported ✓", "success");
 }
 
+// ─────────────────────────── Weekly snapshots ───────────────────────────
+// "Save snapshot" freezes the computed meeting, next week's staging list, and
+// the inventory position server-side, so the week's record survives the next
+// round of uploads. Saved weeks list under the meeting and re-export anytime.
+
+async function saveSnapshot() {
+  const btn = $("meeting-snapshot");
+  btn.disabled = true;
+  try {
+    const data = await meetingApi("/api/snapshots", "POST", {
+      week: meeting.week,
+      by: meetingUser() || null,
+    });
+    toast(`Week of ${data.snapshot.weekStart} saved ✓`, "success");
+    await loadSnapshots();
+  } catch (err) {
+    toast(err.message || "Couldn't save the snapshot.", "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadSnapshots() {
+  const box = $("meeting-snapshots");
+  try {
+    const { snapshots } = await meetingApi("/api/snapshots", "GET");
+    if (!snapshots.length) {
+      box.innerHTML = `<div class="empty small">No weeks saved yet — tap
+        <b>📸 Save snapshot</b> at the end of the Friday meeting.</div>`;
+      return;
+    }
+    box.innerHTML = snapshots
+      .map(
+        (s) => `
+        <div class="history-row snap-row">
+          <span class="history-week">Week of ${escapeHtml(s.weekStart)}</span>
+          <span class="history-class">saved ${fmtDate(s.savedAt)}${
+            s.by ? " by " + escapeHtml(s.by) : ""
+          }</span>
+          <span class="snap-actions">
+            <button type="button" class="btn-export" data-snap="${escapeHtml(s.weekStart)}" data-kind="meeting">Meeting ⬇</button>
+            <button type="button" class="btn-export" data-snap="${escapeHtml(s.weekStart)}" data-kind="staging">Staging ⬇</button>
+          </span>
+        </div>`
+      )
+      .join("");
+  } catch {
+    box.innerHTML = `<div class="empty small">Couldn't load saved weeks.</div>`;
+  }
+}
+
+async function snapshotClick(e) {
+  const btn = e.target.closest("[data-snap]");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    const snap = await meetingApi(
+      `/api/snapshots/${encodeURIComponent(btn.dataset.snap)}`,
+      "GET"
+    );
+    if (btn.dataset.kind === "staging") buildStagingXlsx(snap.staging);
+    else buildMeetingXlsx(snap.meeting);
+  } catch (err) {
+    toast(err.message || "Couldn't download that snapshot.", "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ─────────────────────────── Navigation ───────────────────────────
 const TITLES = {
   meeting: "Friday Meeting",
@@ -2776,7 +2853,10 @@ function showScreen(name) {
     t.classList.toggle("active", t.dataset.screen === name)
   );
   if (name === "projects" && !allProjects.length) loadProjects();
-  if (name === "meeting") loadMeeting();
+  if (name === "meeting") {
+    loadMeeting();
+    loadSnapshots();
+  }
   if (name === "staging") loadStaging();
   if (name === "inventory") loadInventory();
   if (name === "schedule") loadSchedule();
@@ -2855,6 +2935,8 @@ async function init() {
   // "toggle" doesn't bubble — listen in the capture phase.
   meetingRoot.addEventListener("toggle", meetingToggle, true);
   $("meeting-export").addEventListener("click", exportMeeting);
+  $("meeting-snapshot").addEventListener("click", saveSnapshot);
+  $("meeting-snapshots").addEventListener("click", snapshotClick);
 
   // Staging + inventory.
   $("staging-prev").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, -1)));

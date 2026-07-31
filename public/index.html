@@ -145,9 +145,21 @@
             aria-label="Your name"
           />
           <button id="meeting-export" class="btn-export" type="button">⬇ Export .xlsx</button>
+          <button id="meeting-snapshot" class="btn-export snap-btn" type="button">📸 Save snapshot</button>
         </div>
         <div id="meeting-sections">
           <div class="loading">Loading meeting…</div>
+        </div>
+        <div class="card history-card">
+          <h2 class="history-title">Saved weeks</h2>
+          <p class="card-help">
+            A snapshot freezes the whole week — meeting, staging list, and
+            inventory — so later uploads can't change the record. Re-download
+            any saved week below.
+          </p>
+          <div id="meeting-snapshots" class="report-history">
+            <div class="loading">Loading…</div>
+          </div>
         </div>
       </section>
 

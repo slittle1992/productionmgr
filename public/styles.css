@@ -1788,3 +1788,13 @@ tr.totals[data-class="__all__"] td {
 .mtg-payroll-btn {
   margin-left: auto;
 }
+.snap-btn {
+  white-space: nowrap;
+}
+.snap-row {
+  flex-wrap: wrap;
+}
+.snap-actions {
+  display: flex;
+  gap: 6px;
+}
