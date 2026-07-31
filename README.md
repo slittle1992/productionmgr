@@ -47,21 +47,27 @@ Then `npm start` again — the banner disappears and real projects load.
 
 ## What the manager sees
 
-Tabs, all built for a thumb:
+Tabs follow the weekly flow — **Meeting → Schedule → Staging → Inventory** —
+plus Pay, Roster, and Projects. All built for a thumb:
 
-- **Schedule** *(default)* — the weekly production schedule that replaces the
-  spreadsheet. Jobs are pulled from Builder Prime, grouped by **class**, each
-  showing Customer, Job #, project type, scheduled day, SQFT, and Color — and
-  the **material to use auto-populates from SQFT and color**. Assign a crew and
-  fix any color/sqft inline; it saves as you type.
-- **Report** — the weekly report. Builder Prime fields arrive pre-filled and
-  badged `auto`; every derived value (×1.2 labor, sundries ratio, installed
-  revenue, QTD rollups) updates live as you type. Save a draft or submit.
+- **Meeting** — the Friday Production Meeting checklist (below). The pipeline
+  uploaded here feeds the Schedule.
+- **Schedule** *(default screen)* — the weekly production schedule that
+  replaces the spreadsheet. Jobs are pulled from Builder Prime, grouped by
+  **class**, each showing Customer, Job #, project type, scheduled day, SQFT,
+  and Color — and the **material to use auto-populates from SQFT and color**.
+  Assign a crew and fix any color/sqft inline; it saves as you type.
+- **Staging** — per-location pull lists: what material to set out **this week**
+  for the selected week's installs (defaults to next week). Aggregated from the
+  schedule per flake blend / rubber color, plus basecoat, topcoat, binder, and
+  primer totals; jobs missing SQFT or color are flagged. Exports to .xlsx.
+- **Inventory** — on-hand counts per location vs the selected week's staging
+  needs; anything short is flagged so you can order before staging day.
 - **Projects** — active projects with client, address, value, status, and who's
   assigned (PM / foreman / salesperson). Search and a "show cancelled" toggle.
-- **Meeting** — the Friday Production Meeting checklist (below).
 
-No report names, no formulas, no Builder Prime login — the app does that work.
+(The old Weekly Report tab was replaced by the Staging list; the report API
+endpoints still exist server-side.)
 
 ---
 
@@ -86,17 +92,19 @@ sign-off, note, and update so next week you know who owns what.
    location, and every warranty/callback/redo WO can be tagged with the
    **lead responsible** and **why it happened** — the "Warranties by lead"
    rollup shows who is causing warranties and the causes.
-3. **Production pipeline** — uses the **Production Pipeline Report** upload,
-   shared with the Schedule tab. Flags jobs with **no start date**, scheduled
-   jobs with **no crew/labor assigned** (jobs starting this week are marked
-   🔴), and a per-day load view (Mon–Sat) per location so you can spot under-
-   and over-scheduled days at a glance.
+3. **Production pipeline** — upload the **Production Pipeline Report** here or
+   on the Schedule tab (same store). The meeting looks **ahead**: per-day load
+   (Mon–Sat) per location for the **next two weeks** (on Fri 7/31 that's
+   8/2–8/8 and 8/9–8/15), so you can spot under- and over-scheduled days
+   before they happen. Also flags jobs with **no start date** and scheduled
+   jobs with **no crew/labor assigned** (next-week starts are marked 🔴).
 4. **Labor rates** — for the **previous week** (whose pay date lands on the
    meeting Friday): `completed revenue ÷ (production payroll × 1.2)`, per
-   location. Upload the **Completed Projects** report for the revenue side;
-   for payroll either type the number or upload the location's payroll
-   workbook — the app reads every sheet, totals the **Production** department,
-   and suggests the sheet whose pay period matches the week.
+   location. Upload the **Completed Projects** report for the revenue side.
+   For payroll, every market has its own workbook — each location's row has
+   its own **⬆ Payroll** upload; the app reads every sheet, totals the
+   **Production** department, and suggests the sheet whose pay period matches
+   the week. Or just type the number.
 5. **Reviews** · 6. **Lytx** · 7. **Ramp** — one-tap links to each dashboard
    (configurable via `REVIEWS_DASHBOARD_URL`, `LYTX_DASHBOARD_URL`,
    `RAMP_DASHBOARD_URL`), a notes box for what you found (incidents, counts,
@@ -105,6 +113,10 @@ sign-off, note, and update so next week you know who owns what.
 Every section also has a manual **sign-off** row recording who completed it
 and when. Follow-ups, tags, and per-week state persist in the shared database,
 so the meeting history builds week over week.
+
+**Exports:** the meeting (⬇ Export .xlsx in the header — Summary, Past due,
+Warranties, Pipeline sheets) and the staging lists (one sheet per location plus
+an all-locations pull list) both export to spreadsheets for printing/sharing.
 
 ---
 

@@ -228,8 +228,8 @@ export interface PipelineJobFlag {
   soldAmount: number;
   startDate: number | null;
   salesPerson: string | null;
-  /** True when the job starts inside the meeting week (more urgent). */
-  thisWeek: boolean;
+  /** True when the job starts inside the first look-ahead week (urgent). */
+  startsSoon: boolean;
 }
 
 export interface DayLoad {
@@ -248,13 +248,25 @@ export interface PipelineClassWeek {
   days: DayLoad[];
 }
 
+/** One look-ahead week's per-class daily load. */
+export interface PipelineWeekLoad {
+  weekStart: string;
+  weekEnd: string;
+  classes: PipelineClassWeek[];
+  jobCount: number;
+}
+
 export interface PipelineChecks {
   /** Jobs with no start date at all (unscheduled backlog), by class. */
   noStartDate: PipelineJobFlag[];
   /** Jobs scheduled (any date) but with no crew/labor assigned. */
   noCrew: PipelineJobFlag[];
-  /** Per-class per-day load for the meeting week. */
-  week: PipelineClassWeek[];
+  /**
+   * Per-day load for the UPCOMING weeks. The Friday meeting looks ahead:
+   * on Friday 7/31 you're checking that 8/2–8/8 (and 8/9–8/15) are full and
+   * evenly scheduled, not the week that's ending.
+   */
+  weeks: PipelineWeekLoad[];
   totalJobs: number;
 }
 
@@ -270,61 +282,34 @@ function crewOf(p: BuilderPrimeProject, fields: CustomFieldNames): string | null
   return pm || null;
 }
 
-export function buildPipelineChecks(
-  projects: BuilderPrimeProject[],
-  week: ReportingWeek,
-  fields: CustomFieldNames
-): PipelineChecks {
-  const noStartDate: PipelineJobFlag[] = [];
-  const noCrew: PipelineJobFlag[] = [];
-  const perClassDay = new Map<string, Map<string, { jobs: number; total: number }>>();
+const MS_PER_DAY = 86_400_000;
 
-  const flag = (p: BuilderPrimeProject, thisWeek: boolean): PipelineJobFlag => ({
-    jobNumber: String(p.jobNumber ?? p.projectId ?? "—"),
-    description: p.description ?? p.projectName ?? null,
-    className: p.className ?? "Unassigned",
-    soldAmount: p.estimatedValue ?? 0,
-    startDate: p.estimatedStartDate ?? null,
-    salesPerson: p.salesPersonFirstName ?? null,
-    thisWeek,
-  });
+function buildWeekLoad(
+  projects: BuilderPrimeProject[],
+  week: ReportingWeek
+): PipelineWeekLoad {
+  const perClassDay = new Map<string, Map<string, { jobs: number; total: number }>>();
+  let jobCount = 0;
 
   for (const p of projects) {
     if (p.projectStatusIsCancelled || p.projectStatusIsComplete) continue;
     const start = p.estimatedStartDate;
-    const inWeek = isWithinWeek(start, week);
-
-    if (start === undefined || start === null) {
-      noStartDate.push(flag(p, false));
-    } else if (!crewOf(p, fields)) {
-      noCrew.push(flag(p, inWeek));
+    if (!isWithinWeek(start, week) || start === undefined) continue;
+    jobCount++;
+    const cls = p.className ?? "Unassigned";
+    const day = new Date(start).toISOString().slice(0, 10);
+    let days = perClassDay.get(cls);
+    if (!days) {
+      days = new Map();
+      perClassDay.set(cls, days);
     }
-
-    if (inWeek && start !== undefined) {
-      const cls = p.className ?? "Unassigned";
-      const day = new Date(start).toISOString().slice(0, 10);
-      let days = perClassDay.get(cls);
-      if (!days) {
-        days = new Map();
-        perClassDay.set(cls, days);
-      }
-      const d = days.get(day) ?? { jobs: 0, total: 0 };
-      d.jobs++;
-      d.total += p.estimatedValue ?? 0;
-      days.set(day, d);
-    }
+    const d = days.get(day) ?? { jobs: 0, total: 0 };
+    d.jobs++;
+    d.total += p.estimatedValue ?? 0;
+    days.set(day, d);
   }
 
-  noStartDate.sort(
-    (a, b) => a.className.localeCompare(b.className) || b.soldAmount - a.soldAmount
-  );
-  noCrew.sort((a, b) => {
-    if (a.thisWeek !== b.thisWeek) return a.thisWeek ? -1 : 1;
-    return (a.startDate ?? 0) - (b.startDate ?? 0);
-  });
-
-  // Mon–Sat working days of the meeting week (Sunday is off).
-  const MS_PER_DAY = 86_400_000;
+  // Mon–Sat working days (Sunday is off).
   const workDays: string[] = [];
   for (let i = 0; i < 7; i++) {
     const ms = week.startMs + i * MS_PER_DAY;
@@ -332,7 +317,7 @@ export function buildPipelineChecks(
     workDays.push(new Date(ms).toISOString().slice(0, 10));
   }
 
-  const weekOut: PipelineClassWeek[] = [];
+  const classes: PipelineClassWeek[] = [];
   for (const [cls, days] of perClassDay) {
     let jobsThisWeek = 0;
     let totalThisWeek = 0;
@@ -350,11 +335,56 @@ export function buildPipelineChecks(
       else if (avg > 0 && d.total > avg * 1.5) load = "heavy";
       return { date, jobs: d.jobs, total: d.total, load };
     });
-    weekOut.push({ className: cls, jobsThisWeek, totalThisWeek, days: dayLoads });
+    classes.push({ className: cls, jobsThisWeek, totalThisWeek, days: dayLoads });
   }
-  weekOut.sort((a, b) => a.className.localeCompare(b.className));
+  classes.sort((a, b) => a.className.localeCompare(b.className));
 
-  return { noStartDate, noCrew, week: weekOut, totalJobs: projects.length };
+  return { weekStart: week.weekStart, weekEnd: week.weekEnd, classes, jobCount };
+}
+
+export function buildPipelineChecks(
+  projects: BuilderPrimeProject[],
+  weeks: ReportingWeek[],
+  fields: CustomFieldNames
+): PipelineChecks {
+  const noStartDate: PipelineJobFlag[] = [];
+  const noCrew: PipelineJobFlag[] = [];
+  const soonWeek = weeks[0];
+
+  const flag = (p: BuilderPrimeProject, startsSoon: boolean): PipelineJobFlag => ({
+    jobNumber: String(p.jobNumber ?? p.projectId ?? "—"),
+    description: p.description ?? p.projectName ?? null,
+    className: p.className ?? "Unassigned",
+    soldAmount: p.estimatedValue ?? 0,
+    startDate: p.estimatedStartDate ?? null,
+    salesPerson: p.salesPersonFirstName ?? null,
+    startsSoon,
+  });
+
+  for (const p of projects) {
+    if (p.projectStatusIsCancelled || p.projectStatusIsComplete) continue;
+    const start = p.estimatedStartDate;
+    if (start === undefined || start === null) {
+      noStartDate.push(flag(p, false));
+    } else if (!crewOf(p, fields)) {
+      noCrew.push(flag(p, soonWeek ? isWithinWeek(start, soonWeek) : false));
+    }
+  }
+
+  noStartDate.sort(
+    (a, b) => a.className.localeCompare(b.className) || b.soldAmount - a.soldAmount
+  );
+  noCrew.sort((a, b) => {
+    if (a.startsSoon !== b.startsSoon) return a.startsSoon ? -1 : 1;
+    return (a.startDate ?? 0) - (b.startDate ?? 0);
+  });
+
+  return {
+    noStartDate,
+    noCrew,
+    weeks: weeks.map((w) => buildWeekLoad(projects, w)),
+    totalJobs: projects.length,
+  };
 }
 
 // ───────────────────────── §4 Labor rate ─────────────────────────

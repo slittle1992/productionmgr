@@ -308,7 +308,12 @@ export class MeetingService {
       [...storedWo.uploaded, ...storedWo.manual],
       woNotes
     );
-    const pipeline = buildPipelineChecks(projects, week, this.config.customFields);
+    // The Friday meeting looks AHEAD: check that the next two weeks are full
+    // and evenly scheduled (on Fri 7/31 that's 8/2–8/8 and 8/9–8/15).
+    const lookAhead = [1, 2].map((n) =>
+      getReportingWeek(week.startMs + n * 7 * 86_400_000, this.config.weekStartDay)
+    );
+    const pipeline = buildPipelineChecks(projects, lookAhead, this.config.customFields);
     const laborWeek = this.laborWeek(week);
     const laborRows = buildLaborRates(
       completed?.jobs ?? [],

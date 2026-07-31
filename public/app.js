@@ -2,26 +2,9 @@
 // The server is the source of truth for all math; this file mirrors the
 // derived calculations only so the manager sees instant feedback while typing.
 
-const MONEY_FIELDS = [
-  "projectedJobSchedule",
-  "completedJobsRevenue",
-  "projectedLabor",
-  "actualLaborRaw",
-  "materialsGivenForWarranties",
-  "projectedMaterials",
-  "actualMaterials",
-  "totalSundriesCost",
-];
-const COUNT_FIELDS = ["warrantiesOpenedThisWeek", "leadsThisWeek"];
-const AUTO_FIELDS = ["projectedJobSchedule", "completedJobsRevenue", "projectedLabor"];
-
 const state = {
   laborMultiplier: 1.2,
-  autoSource: { projectedJobSchedule: 0, completedJobsRevenue: 0, projectedLabor: 0 },
-  priorQtd: { warranties: 0, leads: 0 },
-  weekStart: null,
-  // Class this PM is reporting for ("All" = company-wide rollup).
-  reportClass: localStorage.getItem("reportClass") || "All",
+  // Class list shared by the pay + roster screens (from /api/classes).
   classes: [],
 };
 
@@ -42,179 +25,13 @@ function toast(message, kind = "") {
   toast._t = setTimeout(() => (el.hidden = true), 3200);
 }
 
-function numVal(id) {
-  const raw = $(id).value;
-  if (raw === "" || raw === null) return 0;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-}
-
-// ─────────────────────────── Live calculations ───────────────────────────
-function recalc() {
-  const completed = numVal("completedJobsRevenue");
-  const actualLabor = numVal("actualLaborRaw") * state.laborMultiplier;
-  const sundries = numVal("totalSundriesCost");
-  const ratio = completed > 0 ? sundries / completed : 0;
-
-  $("out-actualLabor").textContent = fmtMoney(actualLabor);
-  $("out-installedRevenue").textContent = fmtMoney(completed);
-  $("out-sundriesRatio").textContent = (ratio * 100).toFixed(1) + "%";
-  $("out-totalWarrantiesQTD").textContent =
-    state.priorQtd.warranties + numVal("warrantiesOpenedThisWeek");
-  $("out-totalLeadsQTD").textContent =
-    state.priorQtd.leads + numVal("leadsThisWeek");
-
-  // Mark auto fields that the manager has overridden.
-  for (const f of AUTO_FIELDS) {
-    const field = document.querySelector(`.field[data-auto="${f}"]`);
-    if (!field) continue;
-    const changed = Math.abs(numVal(f) - (state.autoSource[f] ?? 0)) > 0.005;
-    field.classList.toggle("edited", changed);
-  }
-}
-
-// ─────────────────────────── Report load / save ───────────────────────────
-function fillForm(report) {
-  state.autoSource = report.autoSource;
-  state.weekStart = report.weekStart;
-  // Derive priorQtd from the difference the server already computed.
-  state.priorQtd = {
-    warranties: report.derived.totalWarrantiesQTD - report.manual.warrantiesOpenedThisWeek,
-    leads: report.derived.totalLeadsQTD - report.manual.leadsThisWeek,
-  };
-
-  // Auto fields show the effective (override-applied) value.
-  $("projectedJobSchedule").value = report.auto.projectedJobSchedule;
-  $("completedJobsRevenue").value = report.auto.completedJobsRevenue;
-  $("projectedLabor").value = report.auto.projectedLabor;
-
-  // Manual fields.
-  for (const f of [...MONEY_FIELDS, ...COUNT_FIELDS]) {
-    if (AUTO_FIELDS.includes(f)) continue;
-    if (report.manual[f] !== undefined) $(f).value = report.manual[f];
-  }
-
-  $("week-label").textContent = `Week of ${report.weekStart} – ${report.weekEnd} · ${report.quarter} · ${report.className}`;
-
-  const pill = $("report-status");
-  pill.hidden = false;
-  pill.className = "status-pill " + report.status;
-  pill.textContent =
-    report.status === "submitted"
-      ? `Submitted${report.submittedAt ? " · " + report.submittedAt.slice(0, 10) : ""}`
-      : "Draft — not yet submitted";
-
-  recalc();
-}
-
-function collectPayload(submit) {
-  const manual = {
-    actualLaborRaw: numVal("actualLaborRaw"),
-    warrantiesOpenedThisWeek: Math.round(numVal("warrantiesOpenedThisWeek")),
-    leadsThisWeek: Math.round(numVal("leadsThisWeek")),
-    materialsGivenForWarranties: numVal("materialsGivenForWarranties"),
-    projectedMaterials: numVal("projectedMaterials"),
-    actualMaterials: numVal("actualMaterials"),
-    totalSundriesCost: numVal("totalSundriesCost"),
-  };
-  // Only send overrides that actually differ from the auto-pulled source.
-  const overrides = {};
-  for (const f of AUTO_FIELDS) {
-    if (Math.abs(numVal(f) - (state.autoSource[f] ?? 0)) > 0.005) {
-      overrides[f] = numVal(f);
-    }
-  }
-  return { manual, overrides, submit };
-}
-
-function renderReportChips() {
-  const bar = $("report-class-chips");
-  const chips = ["All", ...state.classes];
-  if (!chips.includes(state.reportClass)) state.reportClass = "All";
-  bar.innerHTML = chips
-    .map(
-      (c) => `
-      <button type="button" class="chip-btn ${state.reportClass === c ? "active" : ""}" data-class="${escapeHtml(c)}">
-        ${escapeHtml(c === "All" ? "All (company)" : c)}
-      </button>`
-    )
-    .join("");
-  bar.querySelectorAll(".chip-btn").forEach((b) =>
-    b.addEventListener("click", () => {
-      state.reportClass = b.dataset.class;
-      localStorage.setItem("reportClass", state.reportClass);
-      renderReportChips();
-      loadReport();
-    })
-  );
-}
-
+/** Load the class list used by the pay + roster screens. */
 async function loadReportClasses() {
   try {
     const { classes } = await (await fetch("/api/classes")).json();
     state.classes = classes || [];
   } catch {
     state.classes = [];
-  }
-  renderReportChips();
-}
-
-async function loadReportHistory() {
-  const box = $("report-history");
-  try {
-    const res = await fetch("/api/reports");
-    const list = await res.json();
-    if (!Array.isArray(list) || !list.length) {
-      box.innerHTML = `<div class="empty small">No reports saved yet.</div>`;
-      return;
-    }
-    box.innerHTML = list
-      .slice(0, 20)
-      .map(
-        (r) => `
-        <div class="history-row">
-          <span class="history-week">Week of ${escapeHtml(r.weekStart)}</span>
-          <span class="history-class">${escapeHtml(r.className || "All")}</span>
-          <span class="status-pill ${r.status}">${r.status === "submitted" ? "Submitted" : "Draft"}</span>
-        </div>`
-      )
-      .join("");
-  } catch {
-    box.innerHTML = `<div class="empty small">Couldn't load history.</div>`;
-  }
-}
-
-async function loadReport() {
-  try {
-    const res = await fetch(`/api/report?class=${encodeURIComponent(state.reportClass)}`);
-    if (!res.ok) throw await res.json().catch(() => ({}));
-    fillForm(await res.json());
-  } catch (err) {
-    toast(err.message || "Couldn't load the report.", "error");
-  }
-  loadReportHistory();
-}
-
-async function saveReport(submit) {
-  const btn = submit ? $("btn-submit") : $("btn-save");
-  btn.disabled = true;
-  try {
-    const res = await fetch(`/api/report?class=${encodeURIComponent(state.reportClass)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(collectPayload(submit)),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      const detail = data.issues?.[0]?.message || data.message;
-      throw new Error(detail || "Save failed.");
-    }
-    fillForm(data);
-    toast(submit ? "Report submitted ✓" : "Draft saved ✓", "success");
-  } catch (err) {
-    toast(err.message || "Save failed.", "error");
-  } finally {
-    btn.disabled = false;
   }
 }
 
@@ -1686,8 +1503,9 @@ const meeting = {
   view: null,
   // Which <details> stay open across re-renders (sections, classes, items).
   open: new Set(["sec:pastdue"]),
-  // Pending payroll-workbook upload awaiting a "use this sheet" pick.
-  payroll: null,
+  // Pending payroll-workbook uploads awaiting a "use this sheet" pick,
+  // keyed by class — each market uploads its own payroll workbook.
+  payroll: {},
 };
 
 const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
@@ -2095,13 +1913,19 @@ function renderPipelineSection(v) {
   </div>`;
   if (!p.available) return uploadBar;
   let html = `${uploadBar}
-  <p class="card-help">Checks: jobs with <b>no start date</b>, scheduled
-  jobs with <b>no crew assigned</b>, and whether each day this week is under- or
-  over-scheduled.</p>`;
+  <p class="card-help">Looking <b>ahead</b>: are the next two weeks full and evenly
+  scheduled? Plus jobs with <b>no start date</b> and scheduled jobs with
+  <b>no crew assigned</b>.</p>`;
 
-  if (p.week.length) {
-    html += `<h3 class="mtg-h3">This week's schedule load</h3>`;
-    for (const cls of p.week) {
+  for (const wk of p.weeks) {
+    html += `<h3 class="mtg-h3">Week of ${fmtDay(wk.weekStart)} – ${fmtDay(wk.weekEnd)} · ${
+      wk.jobCount
+    } jobs</h3>`;
+    if (!wk.classes.length) {
+      html += `<div class="empty small">Nothing scheduled to start this week yet.</div>`;
+      continue;
+    }
+    for (const cls of wk.classes) {
       html += `<div class="mtg-load">
         <div class="mtg-load-head"><b>${escapeHtml(cls.className)}</b>
           <span>${cls.jobsThisWeek} jobs · ${fmtMoney0(cls.totalThisWeek)}</span></div>
@@ -2116,18 +1940,16 @@ function renderPipelineSection(v) {
         </div>
       </div>`;
     }
-  } else {
-    html += `<div class="empty small">Nothing scheduled to start this week.</div>`;
   }
 
-  const urgentNoCrew = p.noCrew.filter((j) => j.thisWeek);
+  const urgentNoCrew = p.noCrew.filter((j) => j.startsSoon);
   html += renderPipelineList(
     "nocrew",
     `No labor assigned (${p.noCrew.length})`,
-    urgentNoCrew.length ? `${urgentNoCrew.length} starting THIS week` : "",
+    urgentNoCrew.length ? `${urgentNoCrew.length} starting NEXT week` : "",
     p.noCrew,
     (j) =>
-      `${j.thisWeek ? "🔴 " : ""}#${escapeHtml(j.jobNumber)} · ${escapeHtml(
+      `${j.startsSoon ? "🔴 " : ""}#${escapeHtml(j.jobNumber)} · ${escapeHtml(
         j.className
       )} · ${fmtMoney0(j.soldAmount)} · starts ${fmtMsDate(j.startDate)}`
   );
@@ -2179,38 +2001,12 @@ function renderLaborSection(v) {
       <label class="btn-upload"><span>Upload completed</span>
         <input type="file" accept=".xlsx,.xls" data-upload="completed" hidden />
       </label>
-      <label class="btn-upload wo-btn"><span>Upload payroll</span>
-        <input type="file" accept=".xlsx,.xlsm,.xls" data-upload="payroll" hidden />
-      </label>
     </div>
   </div>`;
 
-  if (meeting.payroll) {
-    html += `<div class="mtg-payroll-pick">
-      <b>Payroll workbook read.</b> Pick the location and the pay-period sheet:
-      <select id="mtg-payroll-class">${(v.labor.rows.length
-        ? v.labor.rows.map((r) => r.className)
-        : ["Austin", "Corpus Christi", "Dallas", "Houston", "San Antonio"]
-      )
-        .map((c) => `<option>${escapeHtml(c)}</option>`)
-        .join("")}</select>
-      ${meeting.payroll.sheets
-        .slice(0, 8)
-        .map(
-          (s, i) => `<div class="mtg-resolve-row">
-          <span><b>${escapeHtml(s.sheetName)}</b>${
-            s.periodStart ? ` · ${escapeHtml(s.periodStart)} → ${escapeHtml(s.periodEnd || "?")}` : ""
-          } · ${fmtMoney0(s.productionTotal)} production (${s.employeeCount} ppl)</span>
-          <button type="button" class="btn-export" data-act="payroll-use" data-idx="${i}">Use</button>
-        </div>`
-        )
-        .join("")}
-      <button type="button" class="btn-clear" data-act="payroll-cancel">Cancel</button>
-    </div>`;
-  }
-
   if (!lab.rows.length) {
-    html += `<div class="empty small">Upload the completed-projects report to see revenue per location.</div>`;
+    html += `<div class="empty small">Upload the completed-projects report to see revenue
+      per location, then upload each market's payroll workbook on its row.</div>`;
     return html;
   }
 
@@ -2222,9 +2018,35 @@ function renderLaborSection(v) {
         ? `<span class="hint">enter payroll</span>`
         : `<b class="mtg-rate ${r.rate >= 4 ? "good" : r.rate >= 2.5 ? "mid" : "bad"}">${r.rate.toFixed(2)}×</b>
            <span class="mtg-rate-pct">labor ${(100 / r.rate).toFixed(0)}% of revenue</span>`;
+    const pending = meeting.payroll[r.className];
     html += `
     <div class="mtg-labor-row">
-      <div class="mtg-labor-head"><b>${cls}</b>${rateHtml}</div>
+      <div class="mtg-labor-head"><b>${cls}</b>${rateHtml}
+        <label class="btn-upload wo-btn mtg-payroll-btn"><span>⬆ Payroll</span>
+          <input type="file" accept=".xlsx,.xlsm,.xls" data-upload="payroll" data-class="${cls}" hidden />
+        </label>
+      </div>
+      ${
+        pending
+          ? `<div class="mtg-payroll-pick">
+              <b>${cls} payroll read.</b> Pick the pay-period sheet:
+              ${pending.sheets
+                .slice(0, 8)
+                .map(
+                  (s, i) => `<div class="mtg-resolve-row">
+                  <span><b>${escapeHtml(s.sheetName)}</b>${
+                    s.periodStart
+                      ? ` · ${escapeHtml(s.periodStart)} → ${escapeHtml(s.periodEnd || "?")}`
+                      : ""
+                  } · ${fmtMoney0(s.productionTotal)} production (${s.employeeCount} ppl)</span>
+                  <button type="button" class="btn-export" data-act="payroll-use" data-class="${cls}" data-idx="${i}">Use</button>
+                </div>`
+                )
+                .join("")}
+              <button type="button" class="btn-clear" data-act="payroll-cancel" data-class="${cls}">Cancel</button>
+            </div>`
+          : ""
+      }
       <div class="fu-grid">
         <label class="dlg-field">Completed revenue (${r.completedJobs} jobs)
           <input type="number" min="0" step="0.01" inputmode="decimal"
@@ -2298,7 +2120,7 @@ async function meetingChange(e) {
   const t = e.target;
   try {
     if (t.dataset.upload) {
-      await handleMeetingUpload(t.dataset.upload, t.files[0]);
+      await handleMeetingUpload(t.dataset.upload, t.files[0], t.dataset.class);
       t.value = "";
       return;
     }
@@ -2394,8 +2216,8 @@ async function meetingClick(e) {
       });
       await loadMeeting();
     } else if (act === "payroll-use") {
-      const sheet = meeting.payroll.sheets[Number(btn.dataset.idx)];
-      const className = $("mtg-payroll-class").value;
+      const className = btn.dataset.class;
+      const sheet = meeting.payroll[className].sheets[Number(btn.dataset.idx)];
       await meetingApi("/api/meeting/labor", "PATCH", {
         week: meeting.week,
         className,
@@ -2403,11 +2225,11 @@ async function meetingClick(e) {
         sheetName: sheet.sheetName,
         by: meetingUser() || null,
       });
-      meeting.payroll = null;
+      delete meeting.payroll[className];
       toast(`Payroll set for ${className} ✓`, "success");
       await loadMeeting();
     } else if (act === "payroll-cancel") {
-      meeting.payroll = null;
+      delete meeting.payroll[btn.dataset.class];
       renderMeeting();
     }
   } catch (err) {
@@ -2415,7 +2237,7 @@ async function meetingClick(e) {
   }
 }
 
-async function handleMeetingUpload(kind, file) {
+async function handleMeetingUpload(kind, file, className) {
   if (!file) return;
   if (typeof XLSX === "undefined") {
     toast("Spreadsheet reader didn't load — check your connection.", "error");
@@ -2462,8 +2284,8 @@ async function handleMeetingUpload(kind, file) {
     toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
     refreshPipelineStatus(); // keep the Schedule tab's status bar in sync
   } else if (kind === "payroll") {
-    // Payroll workbooks have one sheet per pay period — send them all and let
-    // the user pick the right week.
+    // One payroll workbook per market. Each has one sheet per pay period —
+    // send them all and let the user pick the right week on that market's row.
     const sheets = wb.SheetNames.map((name) => ({
       name,
       rows: XLSX.utils.sheet_to_json(wb.Sheets[name], {
@@ -2476,43 +2298,459 @@ async function handleMeetingUpload(kind, file) {
       week: meeting.week,
       sheets,
     });
-    meeting.payroll = { sheets: data.sheets };
+    meeting.payroll[className] = { sheets: data.sheets };
     meeting.open.add("sec:labor");
   }
   await loadMeeting();
 }
 
+// ─────────────────────────── Staging lists ───────────────────────────
+// What material each location pulls and sets out ahead of a week's installs.
+// Defaults to NEXT week: you stage this week for next week's jobs.
+
+const staging = { week: null, view: null };
+const inventory = { week: null, view: null };
+
+function nextWeekStartIso() {
+  return shiftWeekIso(currentWeekStartIso(), 1);
+}
+
+async function loadStaging(week) {
+  staging.week = week || staging.week || nextWeekStartIso();
+  try {
+    const res = await fetch(`/api/staging?week=${staging.week}`);
+    if (!res.ok) throw new Error("Couldn't load staging.");
+    staging.view = await res.json();
+    staging.week = staging.view.weekStart;
+    renderStaging();
+  } catch (err) {
+    $("staging-list").innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function stagingJobQty(j) {
+  const m = j.material;
+  if (m.kind === "flake") return `${fmtN(m.flakeBoxes)} bx · ${fmtN(m.flakePounds)} lb`;
+  if (m.kind === "rubber") return `${fmtN(m.rubberBags)} bags`;
+  return "—";
+}
+
+function renderStaging() {
+  const v = staging.view;
+  $("staging-week-range").textContent = `${fmtDay(v.weekStart)} – ${fmtDay(v.weekEnd)}`;
+  if (!v.classes.length) {
+    $("staging-list").innerHTML = `<div class="empty">Nothing scheduled for this week yet.
+      Upload the pipeline (Meeting or Schedule tab) and set SQFT + color per job.</div>`;
+    return;
+  }
+  $("staging-list").innerHTML = v.classes
+    .map((cls) => {
+      const t = cls.totals;
+      const coatRows = [
+        ["Polyurea basecoat A", t.basecoatAGallons, "gal"],
+        ["Polyurea basecoat B", t.basecoatBGallons, "gal"],
+        ["Polyaspartic topcoat A", t.topcoatAGallons, "gal"],
+        ["Polyaspartic topcoat B", t.topcoatBGallons, "gal"],
+        ["Rubber binder", t.binderBuckets, "buckets"],
+        ["Rubber primer", t.primerBuckets, "buckets"],
+      ].filter(([, qty]) => qty > 0);
+
+      return `
+      <div class="card stg-card">
+        <div class="stg-head">
+          <h2>${escapeHtml(cls.className)}</h2>
+          <span class="stg-meta">${cls.jobs.length} jobs · ${fmtN(
+            t.sqftFlake + t.sqftRubber,
+            0
+          )} sqft</span>
+        </div>
+        ${
+          cls.missingInfoCount
+            ? `<div class="stg-warn">⚠ ${cls.missingInfoCount} job${
+                cls.missingInfoCount === 1 ? "" : "s"
+              } missing SQFT or color — set them on the Schedule tab to stage material.</div>`
+            : ""
+        }
+        ${
+          cls.colors.length
+            ? `<table class="mtg-table stg-table">
+                <thead><tr><th>Pull</th><th>Jobs</th><th>Sqft</th><th>Qty</th></tr></thead>
+                <tbody>${cls.colors
+                  .map(
+                    (c) => `<tr>
+                      <td>${c.kind === "flake" ? "🎨" : "⬛"} ${escapeHtml(c.product)}</td>
+                      <td>${c.jobs}</td>
+                      <td>${fmtN(c.sqft, 0)}</td>
+                      <td><b>${
+                        c.kind === "flake"
+                          ? `${fmtN(c.flakeBoxes)} boxes (${fmtN(c.flakePounds)} lb)`
+                          : `${fmtN(c.rubberBags)} bags`
+                      }</b></td>
+                    </tr>`
+                  )
+                  .join("")}</tbody>
+              </table>`
+            : `<div class="empty small">No material to stage (no coating jobs).</div>`
+        }
+        ${
+          coatRows.length
+            ? `<div class="stg-coats">${coatRows
+                .map(([label, qty, unit]) => `<span>${label}: <b>${fmtN(qty)} ${unit}</b></span>`)
+                .join("")}</div>`
+            : ""
+        }
+        <details class="mtg-class stg-jobs">
+          <summary><span class="mtg-class-name">Jobs</span>
+            <span class="mtg-class-info">${cls.jobs.length}</span></summary>
+          ${cls.jobs
+            .map(
+              (j) => `<div class="mtg-line${j.missingInfo ? " stg-missing" : ""}">
+                ${j.dayLabel ? `<b>${escapeHtml(j.dayLabel)}</b> · ` : ""}#${escapeHtml(
+                  j.jobNumber
+                )} · ${escapeHtml(j.customer)}${j.crew ? ` · ${escapeHtml(j.crew)}` : ""}
+                <span class="mtg-line-desc">${escapeHtml(j.projectType)} · ${
+                  j.sqft ? fmtN(j.sqft, 0) + " sqft" : "no sqft"
+                } · ${escapeHtml(j.color || "no color")} · ${stagingJobQty(j)}${
+                  j.missingInfo ? " · ⚠ missing info" : ""
+                }</span>
+              </div>`
+            )
+            .join("")}
+        </details>
+      </div>`;
+    })
+    .join("");
+}
+
+// ─────────────────────────── Inventory ───────────────────────────
+async function loadInventory(week) {
+  inventory.week = week || inventory.week || nextWeekStartIso();
+  try {
+    const res = await fetch(`/api/inventory?week=${inventory.week}`);
+    if (!res.ok) throw new Error("Couldn't load inventory.");
+    inventory.view = await res.json();
+    inventory.week = inventory.view.weekStart;
+    renderInventory();
+  } catch (err) {
+    $("inventory-list").innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderInventory() {
+  const v = inventory.view;
+  $("inv-week-range").textContent = `${fmtDay(v.weekStart)} – ${fmtDay(v.weekEnd)}`;
+  if (!v.classes.length) {
+    $("inventory-list").innerHTML = `<div class="empty">No locations yet — upload a
+      pipeline so staging needs show up, then record what's on hand.</div>`;
+    return;
+  }
+  $("inventory-list").innerHTML = v.classes
+    .map((cls) => {
+      const shortCount = cls.items.filter((i) => i.short > 0).length;
+      return `
+      <div class="card stg-card">
+        <div class="stg-head">
+          <h2>${escapeHtml(cls.className)}</h2>
+          <span class="stg-meta${shortCount ? " short" : ""}">${
+            shortCount ? `${shortCount} short` : "covered ✓"
+          }</span>
+        </div>
+        ${
+          cls.items.length
+            ? `<table class="mtg-table inv-table">
+                <thead><tr><th>Material</th><th>Need</th><th>On hand</th><th></th></tr></thead>
+                <tbody>${cls.items
+                  .map(
+                    (i) => `<tr>
+                      <td>${escapeHtml(i.label)}<span class="inv-unit">${escapeHtml(i.unit)}</span></td>
+                      <td>${i.needed ? fmtN(i.needed) : "—"}</td>
+                      <td><input type="number" min="0" step="0.5" inputmode="decimal"
+                        value="${i.onHand || ""}" placeholder="0"
+                        data-inv-class="${escapeHtml(cls.className)}" data-inv-key="${escapeHtml(i.key)}" /></td>
+                      <td>${
+                        i.short > 0
+                          ? `<span class="mtg-badge warn">short ${fmtN(i.short)}</span>`
+                          : i.needed
+                          ? `<span class="mtg-badge ok">ok</span>`
+                          : ""
+                      }</td>
+                    </tr>`
+                  )
+                  .join("")}</tbody>
+              </table>`
+            : `<div class="empty small">Nothing needed this week and nothing recorded.</div>`
+        }
+        ${
+          cls.updatedAt
+            ? `<p class="hint">Last counted ${fmtDate(cls.updatedAt)}${cls.by ? " by " + escapeHtml(cls.by) : ""}</p>`
+            : ""
+        }
+      </div>`;
+    })
+    .join("");
+}
+
+async function inventoryChange(e) {
+  const t = e.target;
+  if (!t.dataset.invClass || !t.dataset.invKey) return;
+  try {
+    const res = await fetch("/api/inventory", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        className: t.dataset.invClass,
+        key: t.dataset.invKey,
+        qty: Number(t.value) || 0,
+        by: localStorage.getItem("meetingUser") || null,
+      }),
+    });
+    if (!res.ok) throw new Error("Couldn't save.");
+    await loadInventory();
+  } catch (err) {
+    toast(err.message || "Couldn't save.", "error");
+  }
+}
+
+// ─────────────────────────── Xlsx exports (meeting + staging) ───────────────────────────
+function sheetFromRows(wb, name, rows, colWidths) {
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  if (colWidths) ws["!cols"] = colWidths.map((wch) => ({ wch }));
+  XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+}
+
+function exportStaging() {
+  const v = staging.view;
+  if (!v || typeof XLSX === "undefined") {
+    toast("Load the staging list first.", "error");
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+
+  // Summary sheet: every location's pull list on one page.
+  const summary = [
+    [`Staging — week of ${v.weekStart} to ${v.weekEnd}`],
+    [],
+    ["Location", "Product", "Type", "Jobs", "Sqft", "Boxes", "Pounds", "Bags"],
+  ];
+  for (const cls of v.classes) {
+    for (const c of cls.colors) {
+      summary.push([
+        cls.className,
+        c.product,
+        c.kind,
+        c.jobs,
+        c.sqft,
+        c.kind === "flake" ? c.flakeBoxes : "",
+        c.kind === "flake" ? c.flakePounds : "",
+        c.kind === "rubber" ? c.rubberBags : "",
+      ]);
+    }
+  }
+  sheetFromRows(wb, "All locations", summary, [16, 22, 8, 6, 8, 8, 9, 8]);
+
+  for (const cls of v.classes) {
+    const t = cls.totals;
+    const rows = [
+      [`${cls.className} — staging for ${v.weekStart} to ${v.weekEnd}`],
+      [],
+      ["PULL LIST"],
+      ["Product", "Type", "Jobs", "Sqft", "Quantity"],
+      ...cls.colors.map((c) => [
+        c.product,
+        c.kind,
+        c.jobs,
+        c.sqft,
+        c.kind === "flake"
+          ? `${c.flakeBoxes} boxes (${c.flakePounds} lb)`
+          : `${c.rubberBags} bags`,
+      ]),
+      [],
+      ["COATS & KITS"],
+      ["Polyurea basecoat A (gal)", t.basecoatAGallons],
+      ["Polyurea basecoat B (gal)", t.basecoatBGallons],
+      ["Polyaspartic topcoat A (gal)", t.topcoatAGallons],
+      ["Polyaspartic topcoat B (gal)", t.topcoatBGallons],
+      ["Rubber binder (buckets)", t.binderBuckets],
+      ["Rubber primer (buckets)", t.primerBuckets],
+      [],
+      ["JOBS"],
+      ["Day", "Job #", "Customer", "Crew", "Type", "Sqft", "Color", "Material", "Notes"],
+      ...cls.jobs.map((j) => [
+        j.dayLabel || "",
+        j.jobNumber,
+        j.customer,
+        j.crew,
+        j.projectType,
+        j.sqft ?? "",
+        j.color || "",
+        stagingJobQty(j),
+        j.missingInfo ? "MISSING SQFT/COLOR" : "",
+      ]),
+    ];
+    sheetFromRows(wb, cls.className, rows, [12, 10, 22, 18, 16, 7, 16, 22, 20]);
+  }
+
+  XLSX.writeFile(wb, `staging-${v.weekStart}.xlsx`);
+  toast("Staging list exported ✓", "success");
+}
+
+function exportMeeting() {
+  const v = meeting.view;
+  if (!v || typeof XLSX === "undefined") {
+    toast("Load the meeting first.", "error");
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+  const secTitle = Object.fromEntries(MEETING_SECTIONS.map((s) => [s.key, s.title]));
+
+  // Summary: progress, sign-offs, dashboard checks, labor rates.
+  const summary = [
+    [`Friday Production Meeting — week of ${v.week.weekStart} to ${v.week.weekEnd}`],
+    [`${v.doneCount} of ${v.sectionCount} sections done`],
+    [],
+    ["#", "Section", "Done", "Signed off by", "When"],
+    ...v.sections.map((s, i) => [
+      i + 1,
+      secTitle[s.key] || s.key,
+      s.done ? "YES" : "no",
+      s.manual?.by || "",
+      s.manual?.at ? s.manual.at.slice(0, 10) : "",
+    ]),
+    [],
+    ["DASHBOARD CHECKS"],
+    ["Check", "Status", "By", "Notes"],
+    ...["reviews", "lytx", "ramp"].map((k) => [
+      secTitle[k],
+      v.checks[k].status === "done" ? "Reviewed" : "Pending",
+      v.checks[k].by || "",
+      v.checks[k].notes || "",
+    ]),
+    [],
+    [`LABOR RATES — week of ${v.labor.weekStart} to ${v.labor.weekEnd} (revenue ÷ payroll × ${v.labor.multiplier})`],
+    ["Location", "Completed revenue", "Jobs", "Production payroll", "Rate", "Labor % of revenue"],
+    ...v.labor.rows.map((r) => [
+      r.className,
+      r.revenueOverride ?? r.completedRevenue,
+      r.completedJobs,
+      r.productionPayroll ?? "",
+      r.rate !== null ? Number(r.rate.toFixed(2)) : "",
+      r.rate ? Number((100 / r.rate).toFixed(1)) / 100 : "",
+    ]),
+  ];
+  sheetFromRows(wb, "Summary", summary, [10, 26, 10, 16, 14, 16]);
+
+  // Past due, one block per location.
+  const pd = [
+    [`Past due balances — ${v.pastDue.openCount} open`],
+    v.pastDue.meta?.sourceLabel ? [v.pastDue.meta.sourceLabel] : [],
+    [],
+    ["Location", "Client", "Inv #", "Balance", "Status", "Reason past due", "Owner", "Action date", "First seen", "Latest update"],
+  ];
+  for (const cls of v.pastDue.classes) {
+    for (const f of cls.items) {
+      pd.push([
+        cls.className,
+        f.client,
+        f.invoiceNumber,
+        f.balance ?? "",
+        f.status === "resolved" ? "RESOLVED" : f.carriedOver ? "carryover" : "open",
+        f.reason,
+        f.owner,
+        f.actionDate || "",
+        f.firstSeenWeek,
+        f.updates.length ? f.updates[f.updates.length - 1].note : "",
+      ]);
+    }
+  }
+  sheetFromRows(wb, "Past due", pd, [14, 20, 9, 11, 10, 30, 14, 11, 11, 34]);
+
+  // Warranties: rollup by lead, then every tagged/open WO by location.
+  const wo = [
+    [`Warranties — ${v.workOrders.totalOpen} open work orders`],
+    [],
+    ["WARRANTIES BY LEAD"],
+    ["Lead", "Count", "Causes"],
+    ...v.workOrders.byLead.map((l) => [l.lead, l.count, l.causes.join("; ")]),
+    [],
+    ["OPEN WARRANTY WORK ORDERS"],
+    ["Location", "WO #", "Client", "Type", "Status", "Created", "Lead", "Cause"],
+    ...v.workOrders.warranties
+      .filter((w) => w.open)
+      .map((w) => [
+        w.className,
+        w.woNumber,
+        w.client,
+        w.type,
+        w.status || "",
+        w.createdDate ? new Date(w.createdDate).toISOString().slice(0, 10) : "",
+        w.lead,
+        w.cause,
+      ]),
+  ];
+  sheetFromRows(wb, "Warranties", wo, [14, 8, 20, 20, 12, 11, 14, 30]);
+
+  // Pipeline: look-ahead weeks + flags.
+  const pl = [["Pipeline look-ahead"], []];
+  for (const wk of v.pipeline.weeks) {
+    pl.push([`WEEK OF ${wk.weekStart} TO ${wk.weekEnd}`]);
+    pl.push(["Location", "Jobs", "Total $", "Empty days"]);
+    for (const cls of wk.classes) {
+      pl.push([
+        cls.className,
+        cls.jobsThisWeek,
+        cls.totalThisWeek,
+        cls.days.filter((d) => d.load === "empty").map((d) => fmtDay(d.date)).join(", "),
+      ]);
+    }
+    pl.push([]);
+  }
+  pl.push(["NO LABOR ASSIGNED"]);
+  pl.push(["Job #", "Location", "Sold $", "Starts", "Description"]);
+  for (const j of v.pipeline.noCrew) {
+    pl.push([
+      j.jobNumber,
+      j.className,
+      j.soldAmount,
+      j.startDate ? new Date(j.startDate).toISOString().slice(0, 10) : "",
+      j.description || "",
+    ]);
+  }
+  pl.push([]);
+  pl.push(["NO START DATE"]);
+  pl.push(["Job #", "Location", "Sold $", "Sales person", "Description"]);
+  for (const j of v.pipeline.noStartDate) {
+    pl.push([j.jobNumber, j.className, j.soldAmount, j.salesPerson || "", j.description || ""]);
+  }
+  sheetFromRows(wb, "Pipeline", pl, [12, 16, 11, 12, 34]);
+
+  XLSX.writeFile(wb, `friday-meeting-${v.week.weekStart}.xlsx`);
+  toast("Meeting exported ✓", "success");
+}
+
 // ─────────────────────────── Navigation ───────────────────────────
 const TITLES = {
-  schedule: "Weekly Schedule",
   meeting: "Friday Meeting",
-  report: "Weekly Report",
+  schedule: "Weekly Schedule",
+  staging: "Staging Lists",
+  inventory: "Inventory",
   pay: "Performance Pay",
   roster: "Roster",
   projects: "Projects",
 };
-let reportLoaded = false;
 
 function showScreen(name) {
-  for (const s of ["schedule", "meeting", "report", "pay", "roster", "projects"]) {
+  for (const s of ["meeting", "schedule", "staging", "inventory", "pay", "roster", "projects"]) {
     $(`screen-${s}`).hidden = s !== name;
   }
   $("screen-title").textContent = TITLES[name];
-  $("save-bar").classList.toggle("hidden", name !== "report");
-  $("week-label").hidden = name !== "schedule" && name !== "report";
+  $("week-label").hidden = name !== "schedule";
   document.querySelectorAll(".tab").forEach((t) =>
     t.classList.toggle("active", t.dataset.screen === name)
   );
   if (name === "projects" && !allProjects.length) loadProjects();
   if (name === "meeting") loadMeeting();
-  if (name === "report") {
-    if (!reportLoaded) {
-      reportLoaded = true;
-      loadReportClasses().then(loadReport);
-    } else {
-      loadReport();
-    }
-  }
+  if (name === "staging") loadStaging();
+  if (name === "inventory") loadInventory();
   if (name === "schedule") loadSchedule();
   if (name === "pay") {
     loadReportClasses().then(() => {
@@ -2533,7 +2771,6 @@ async function init() {
     state.laborMultiplier = cfg.laborMultiplier ?? 1.2;
     schedule.coverage = cfg.coverage ?? null;
     dataSource = cfg.source ?? "sample";
-    $("mult-label").textContent = state.laborMultiplier + "×";
     if (cfg.usingSampleData) $("sample-banner").hidden = false;
     if (cfg.ephemeralStorage) $("storage-warning").hidden = false;
   } catch {
@@ -2551,12 +2788,6 @@ async function init() {
   $("wo-clear").addEventListener("click", clearWorkOrders);
   await refreshPipelineStatus();
   refreshWoStatus();
-
-  // Live recalc on every report input.
-  document.getElementById("report-form").addEventListener("input", recalc);
-
-  $("btn-save").addEventListener("click", () => saveReport(false));
-  $("btn-submit").addEventListener("click", () => saveReport(true));
 
   document.querySelectorAll(".tab").forEach((tab) =>
     tab.addEventListener("click", () => showScreen(tab.dataset.screen))
@@ -2595,6 +2826,17 @@ async function init() {
   meetingRoot.addEventListener("click", meetingClick);
   // "toggle" doesn't bubble — listen in the capture phase.
   meetingRoot.addEventListener("toggle", meetingToggle, true);
+  $("meeting-export").addEventListener("click", exportMeeting);
+
+  // Staging + inventory.
+  $("staging-prev").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, -1)));
+  $("staging-next").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, 1)));
+  $("staging-nextweek").addEventListener("click", () => loadStaging(nextWeekStartIso()));
+  $("staging-export").addEventListener("click", exportStaging);
+  $("inv-prev").addEventListener("click", () => loadInventory(shiftWeekIso(inventory.week, -1)));
+  $("inv-next").addEventListener("click", () => loadInventory(shiftWeekIso(inventory.week, 1)));
+  $("inv-nextweek").addEventListener("click", () => loadInventory(nextWeekStartIso()));
+  $("inventory-list").addEventListener("change", inventoryChange);
   loadRoster(); // also fills crew-name suggestions on the schedule
 
   // Week navigation.

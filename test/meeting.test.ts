@@ -198,43 +198,50 @@ describe("pipeline checks", () => {
     ...over,
   });
 
-  it("flags missing start dates, missing crews, and day load", () => {
-    const week = getReportingWeekFromStart(WEEK);
+  it("flags missing start dates/crews and day load for the look-ahead weeks", () => {
+    // Meeting week 7/26–8/1 → the meeting looks ahead at 8/2–8/8 and 8/9–8/15.
+    const nextWeek = getReportingWeekFromStart("2026-08-02");
+    const weekAfter = getReportingWeekFromStart("2026-08-09");
     const config = loadConfig({} as NodeJS.ProcessEnv);
     const checks = buildPipelineChecks(
       [
         project({ jobNumber: "1" }), // no start date
         project({
           jobNumber: "2",
-          estimatedStartDate: Date.parse("2026-07-28T12:00:00Z"),
-        }), // this week, no crew
+          estimatedStartDate: Date.parse("2026-08-04T12:00:00Z"),
+        }), // next week, no crew → urgent
         project({
           jobNumber: "3",
-          estimatedStartDate: Date.parse("2026-07-28T12:00:00Z"),
+          estimatedStartDate: Date.parse("2026-08-04T12:00:00Z"),
           customFields: { Crew: "Trailer 1" },
           estimatedValue: 9000,
         }),
         project({
           jobNumber: "4",
           estimatedStartDate: Date.parse("2026-09-10T12:00:00Z"),
-        }), // future, no crew
+        }), // further out, no crew
       ],
-      week,
+      [nextWeek, weekAfter],
       config.customFields
     );
     expect(checks.noStartDate.map((j) => j.jobNumber)).toEqual(["1"]);
     expect(checks.noCrew.map((j) => j.jobNumber)).toEqual(["2", "4"]);
-    expect(checks.noCrew[0]!.thisWeek).toBe(true);
+    expect(checks.noCrew[0]!.startsSoon).toBe(true);
+    expect(checks.noCrew[1]!.startsSoon).toBe(false);
 
-    const austin = checks.week.find((w) => w.className === "Austin")!;
+    expect(checks.weeks).toHaveLength(2);
+    expect(checks.weeks[0]!.weekStart).toBe("2026-08-02");
+    const austin = checks.weeks[0]!.classes.find((w) => w.className === "Austin")!;
     expect(austin.jobsThisWeek).toBe(2);
     expect(austin.totalThisWeek).toBe(14000);
-    const tue = austin.days.find((d) => d.date === "2026-07-28")!;
+    const tue = austin.days.find((d) => d.date === "2026-08-04")!;
     expect(tue.jobs).toBe(2);
-    const wed = austin.days.find((d) => d.date === "2026-07-29")!;
+    const wed = austin.days.find((d) => d.date === "2026-08-05")!;
     expect(wed.load).toBe("empty");
     // Sunday is not a working day.
-    expect(austin.days.some((d) => d.date === "2026-07-26")).toBe(false);
+    expect(austin.days.some((d) => d.date === "2026-08-02")).toBe(false);
+    // Nothing lands in the week after.
+    expect(checks.weeks[1]!.jobCount).toBe(0);
   });
 });
 

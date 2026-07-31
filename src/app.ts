@@ -22,12 +22,18 @@ import { workOrdersRouter } from "./routes/workOrders.js";
 import { rosterRouter } from "./routes/roster.js";
 import { payRouter } from "./routes/pay.js";
 import { meetingRouter } from "./routes/meeting.js";
+import { stagingRouter } from "./routes/staging.js";
 import { MeetingService } from "./services/meetingService.js";
 import {
   JsonMeetingStore,
   KvMeetingStore,
   type MeetingStore,
 } from "./storage/meetingStore.js";
+import {
+  JsonInventoryStore,
+  KvInventoryStore,
+  type InventoryStore,
+} from "./storage/inventoryStore.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
 import { ScheduleService } from "./services/scheduleService.js";
@@ -90,6 +96,7 @@ export interface BuildAppOptions {
   workOrderStore?: WorkOrderStore;
   rosterStore?: RosterStore;
   meetingStore?: MeetingStore;
+  inventoryStore?: InventoryStore;
   now?: () => number;
 }
 
@@ -161,6 +168,9 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const meetingStore =
     options.meetingStore ??
     (kv ? new KvMeetingStore(kv) : new JsonMeetingStore(config.dataDir));
+  const inventoryStore =
+    options.inventoryStore ??
+    (kv ? new KvInventoryStore(kv) : new JsonInventoryStore(config.dataDir));
 
   const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
@@ -221,6 +231,7 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
 
   app.use("/api", pipelineRouter(pipelineStore, now));
   app.use("/api", meetingRouter(meetingService));
+  app.use("/api", stagingRouter(scheduleService, inventoryStore, now));
   app.use("/api", workOrdersRouter(workOrderStore, now));
   app.use("/api", rosterRouter(rosterStore, now));
   app.use("/api", payRouter(scheduleService, rosterStore));

@@ -101,6 +101,6 @@ describe("HTTP API", () => {
   it("serves the mobile app shell at the root", async () => {
     const res = await request(app).get("/");
     expect(res.status).toBe(200);
-    expect(res.text).toContain("Weekly Report");
+    expect(res.text).toContain("Weekly Schedule");
   });
 });

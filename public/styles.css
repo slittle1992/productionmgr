@@ -1722,3 +1722,69 @@ tr.totals[data-class="__all__"] td {
   text-decoration: none;
   margin-bottom: 6px;
 }
+
+/* ─────────────────────────── Staging & Inventory ─────────────────────────── */
+.staging-help {
+  flex: 1;
+  margin: 0;
+}
+.stg-card {
+  margin: 10px 0;
+}
+.stg-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.stg-head h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.stg-meta {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.stg-meta.short {
+  color: var(--danger);
+  font-weight: 700;
+}
+.stg-warn {
+  background: #fdecea;
+  color: var(--danger);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+  margin: 8px 0;
+}
+.stg-coats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 14px;
+  color: var(--muted);
+  margin: 8px 0;
+}
+.stg-jobs {
+  background: var(--card);
+}
+.stg-missing {
+  background: #fff7e0;
+}
+.inv-table input {
+  width: 90px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 16px;
+}
+.inv-unit {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mtg-payroll-btn {
+  margin-left: auto;
+}
