@@ -1659,7 +1659,7 @@ function renderPastDueSection(v) {
       ${pd.likelyResolved
         .map(
           (f) => `<div class="mtg-resolve-row">
-            <span>${escapeHtml(f.client)} · ${fmtMoney0(f.balance)}</span>
+            <span><b>${escapeHtml(f.className)}</b> · ${escapeHtml(f.client)} · ${fmtMoney0(f.balance)}</span>
             <button type="button" class="btn-export" data-act="fu-resolve" data-fu="${escapeHtml(f.invoiceNumber)}">Mark resolved ✓</button>
           </div>`
         )
@@ -1942,44 +1942,69 @@ function renderPipelineSection(v) {
     }
   }
 
-  const urgentNoCrew = p.noCrew.filter((j) => j.startsSoon);
   html += renderPipelineList(
     "nocrew",
     `No labor assigned (${p.noCrew.length})`,
-    urgentNoCrew.length ? `${urgentNoCrew.length} starting NEXT week` : "",
     p.noCrew,
     (j) =>
-      `${j.startsSoon ? "🔴 " : ""}#${escapeHtml(j.jobNumber)} · ${escapeHtml(
-        j.className
-      )} · ${fmtMoney0(j.soldAmount)} · starts ${fmtMsDate(j.startDate)}`
+      `${j.startsSoon ? "🔴 " : ""}#${escapeHtml(j.jobNumber)} · ${fmtMoney0(
+        j.soldAmount
+      )} · starts ${fmtMsDate(j.startDate)}`
   );
   html += renderPipelineList(
     "nostart",
     `No start date (${p.noStartDate.length})`,
-    "",
     p.noStartDate,
     (j) =>
-      `#${escapeHtml(j.jobNumber)} · ${escapeHtml(j.className)} · ${fmtMoney0(
-        j.soldAmount
-      )}${j.salesPerson ? " · " + escapeHtml(j.salesPerson) : ""}`
+      `#${escapeHtml(j.jobNumber)} · ${fmtMoney0(j.soldAmount)}${
+        j.salesPerson ? " · " + escapeHtml(j.salesPerson) : ""
+      }`
   );
   return html;
 }
 
-function renderPipelineList(key, title, warn, jobs, line) {
-  if (!jobs.length) return `<div class="empty small">${escapeHtml(title)}: none 🎉</div>`;
-  const openKey = `pl:${key}`;
-  const MAX = 60;
-  return `
-  <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
-    <summary><span class="mtg-class-name">${escapeHtml(title)}</span>
-      <span class="mtg-class-info warn">${escapeHtml(warn)}</span></summary>
-    ${jobs
-      .slice(0, MAX)
-      .map((j) => `<div class="mtg-line">${line(j)}${j.description ? `<span class="mtg-line-desc">${escapeHtml(j.description)}</span>` : ""}</div>`)
-      .join("")}
-    ${jobs.length > MAX ? `<div class="hint">…and ${jobs.length - MAX} more.</div>` : ""}
-  </details>`;
+/** A pipeline flag list, grouped by location like every other meeting list. */
+function renderPipelineList(key, title, jobs, line) {
+  if (!jobs.length)
+    return `<div class="empty small">${escapeHtml(title)}: none 🎉</div>`;
+  let html = `<h3 class="mtg-h3">${escapeHtml(title)}</h3>`;
+  const byClass = new Map();
+  for (const j of jobs) {
+    const cls = j.className || "Unassigned";
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(j);
+  }
+  const MAX = 40;
+  html += [...byClass.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([cls, rows]) => {
+      const openKey = `pl:${key}:${cls}`;
+      const urgent = rows.filter((j) => j.startsSoon).length;
+      const total = rows.reduce((s, j) => s + (j.soldAmount || 0), 0);
+      const shown = rows.slice(0, MAX);
+      return `
+      <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+        <summary>
+          <span class="mtg-class-name">${escapeHtml(cls)}</span>
+          <span class="mtg-class-info${urgent ? " warn" : ""}">${rows.length} job${
+            rows.length === 1 ? "" : "s"
+          } · ${fmtMoney0(total)}${urgent ? ` · ${urgent} next week` : ""}</span>
+        </summary>
+        ${shown
+          .map(
+            (j) =>
+              `<div class="mtg-line">${line(j)}${
+                j.description
+                  ? `<span class="mtg-line-desc">${escapeHtml(j.description)}</span>`
+                  : ""
+              }</div>`
+          )
+          .join("")}
+        ${rows.length > shown.length ? `<div class="hint">…and ${rows.length - shown.length} more.</div>` : ""}
+      </details>`;
+    })
+    .join("");
+  return html;
 }
 
 // ── §4 Labor rates ──
@@ -2704,24 +2729,27 @@ function exportMeeting() {
     }
     pl.push([]);
   }
+  const byLocation = (a, b) =>
+    a.className.localeCompare(b.className) || (b.soldAmount || 0) - (a.soldAmount || 0);
   pl.push(["NO LABOR ASSIGNED"]);
-  pl.push(["Job #", "Location", "Sold $", "Starts", "Description"]);
-  for (const j of v.pipeline.noCrew) {
+  pl.push(["Location", "Job #", "Sold $", "Starts", "Next week?", "Description"]);
+  for (const j of [...v.pipeline.noCrew].sort(byLocation)) {
     pl.push([
-      j.jobNumber,
       j.className,
+      j.jobNumber,
       j.soldAmount,
       j.startDate ? new Date(j.startDate).toISOString().slice(0, 10) : "",
+      j.startsSoon ? "YES" : "",
       j.description || "",
     ]);
   }
   pl.push([]);
   pl.push(["NO START DATE"]);
-  pl.push(["Job #", "Location", "Sold $", "Sales person", "Description"]);
-  for (const j of v.pipeline.noStartDate) {
-    pl.push([j.jobNumber, j.className, j.soldAmount, j.salesPerson || "", j.description || ""]);
+  pl.push(["Location", "Job #", "Sold $", "Sales person", "Description"]);
+  for (const j of [...v.pipeline.noStartDate].sort(byLocation)) {
+    pl.push([j.className, j.jobNumber, j.soldAmount, j.salesPerson || "", j.description || ""]);
   }
-  sheetFromRows(wb, "Pipeline", pl, [12, 16, 11, 12, 34]);
+  sheetFromRows(wb, "Pipeline", pl, [16, 12, 11, 12, 10, 34]);
 
   XLSX.writeFile(wb, `friday-meeting-${v.week.weekStart}.xlsx`);
   toast("Meeting exported ✓", "success");
