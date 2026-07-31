@@ -1666,9 +1666,784 @@ function exportPay() {
   toast("Pay sheet exported ✓", "success");
 }
 
+// ─────────────────────────── Friday Production Meeting ───────────────────────────
+// Weekly checklist: past-due balances, work orders/warranties, pipeline health,
+// labor rates, and the Reviews/Lytx/Ramp dashboard checks. Anyone (owner, PM,
+// admin) can upload the exports and fill it out; sign-offs record who did.
+
+const MEETING_SECTIONS = [
+  { key: "pastdue", n: 1, title: "Past due balances" },
+  { key: "workorders", n: 2, title: "Work orders & warranties" },
+  { key: "pipeline", n: 3, title: "Production pipeline" },
+  { key: "labor", n: 4, title: "Labor rates" },
+  { key: "reviews", n: 5, title: "Reviews dashboard" },
+  { key: "lytx", n: 6, title: "Lytx incidents" },
+  { key: "ramp", n: 7, title: "Ramp spend" },
+];
+
+const meeting = {
+  week: null,
+  view: null,
+  // Which <details> stay open across re-renders (sections, classes, items).
+  open: new Set(["sec:pastdue"]),
+  // Pending payroll-workbook upload awaiting a "use this sheet" pick.
+  payroll: null,
+};
+
+const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
+const fmtDay = (iso) =>
+  new Date(iso + "T12:00:00Z").toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "numeric",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+const fmtMsDate = (ms) =>
+  ms ? new Date(ms).toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" }) : "—";
+
+function meetingUser() {
+  return $("meeting-user").value.trim();
+}
+
+async function meetingApi(path, method, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || "Request failed.");
+  return data;
+}
+
+async function loadMeeting(week) {
+  try {
+    const target = week || meeting.week;
+    const data = await meetingApi(
+      `/api/meeting${target ? `?week=${target}` : ""}`,
+      "GET"
+    );
+    meeting.view = data;
+    meeting.week = data.week.weekStart;
+    renderMeeting();
+  } catch (err) {
+    $("meeting-sections").innerHTML = `<div class="empty">${escapeHtml(
+      err.message || "Couldn't load the meeting."
+    )}</div>`;
+  }
+}
+
+function renderMeeting() {
+  const v = meeting.view;
+  if (!v) return;
+  $("meeting-week-range").textContent = `${fmtDay(v.week.weekStart)} – ${fmtDay(v.week.weekEnd)}`;
+  $("meeting-progress-label").textContent = `${v.doneCount} of ${v.sectionCount} done`;
+  $("meeting-progress-fill").style.width =
+    Math.round((v.doneCount / v.sectionCount) * 100) + "%";
+
+  const progress = Object.fromEntries(v.sections.map((s) => [s.key, s]));
+  const bodies = {
+    pastdue: renderPastDueSection(v),
+    workorders: renderWorkOrdersSection(v),
+    pipeline: renderPipelineSection(v),
+    labor: renderLaborSection(v),
+    reviews: renderCheckSection(v, "reviews"),
+    lytx: renderCheckSection(v, "lytx"),
+    ramp: renderCheckSection(v, "ramp"),
+  };
+  const subs = {
+    pastdue: pastDueSubtitle(v.pastDue),
+    workorders: `${v.workOrders.totalOpen} open · ${v.workOrders.totalCompleted} done`,
+    pipeline: v.pipeline.available
+      ? `${v.pipeline.noStartDate.length} no date · ${v.pipeline.noCrew.length} no crew`
+      : "no pipeline loaded",
+    labor: v.labor.rows.length
+      ? v.labor.rows
+          .filter((r) => r.rate !== null)
+          .map((r) => `${r.className.slice(0, 3)} ${r.rate.toFixed(1)}×`)
+          .join(" · ") || "enter payroll"
+      : "upload completed jobs",
+    reviews: v.checks.reviews.status === "done" ? "reviewed" : "needs review",
+    lytx: v.checks.lytx.status === "done" ? "reviewed" : "needs review",
+    ramp: v.checks.ramp.status === "done" ? "reviewed" : "needs review",
+  };
+
+  $("meeting-sections").innerHTML = MEETING_SECTIONS.map((s) => {
+    const p = progress[s.key] ?? { done: false, manual: null };
+    const openKey = `sec:${s.key}`;
+    return `
+    <details class="card mtg-section${p.done ? " done" : ""}" data-open="${openKey}" ${
+      meeting.open.has(openKey) ? "open" : ""
+    }>
+      <summary>
+        <span class="mtg-num${p.done ? " ok" : ""}">${p.done ? "✓" : s.n}</span>
+        <span class="mtg-head">
+          <span class="mtg-title">${escapeHtml(s.title)}</span>
+          <span class="mtg-sub">${escapeHtml(subs[s.key] || "")}</span>
+        </span>
+        <span class="mtg-chev">▾</span>
+      </summary>
+      <div class="mtg-body">
+        ${bodies[s.key]}
+        ${renderSignOff(s.key, p)}
+      </div>
+    </details>`;
+  }).join("");
+}
+
+function renderSignOff(key, p) {
+  const who = p.manual?.by ? ` by ${escapeHtml(p.manual.by)}` : "";
+  const when = p.manual?.at ? ` · ${fmtDate(p.manual.at)}` : "";
+  return `
+  <label class="mtg-signoff${p.manual?.done ? " signed" : ""}">
+    <input type="checkbox" data-sec="${key}" ${p.manual?.done ? "checked" : ""} />
+    <span>${
+      p.manual?.done
+        ? `Section signed off${who}${when}`
+        : p.autoDone
+        ? "Looks complete — tap to sign off"
+        : "Mark this section done"
+    }</span>
+  </label>`;
+}
+
+// ── §1 Past due ──
+function pastDueSubtitle(pd) {
+  if (!pd.meta) return "upload the export";
+  const bits = [`${pd.openCount} open`];
+  if (pd.carryoverCount) bits.push(`${pd.carryoverCount} carried over`);
+  if (pd.needsInfoCount) bits.push(`${pd.needsInfoCount} need reason/owner`);
+  return bits.join(" · ");
+}
+
+function renderPastDueSection(v) {
+  const pd = v.pastDue;
+  let html = `
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      pd.meta
+        ? `<strong>${escapeHtml(pd.meta.sourceLabel || pd.meta.filename || "Unpaid invoices")}</strong> · uploaded ${fmtDate(pd.meta.uploadedAt)}`
+        : "Upload the Builder Prime <strong>Unpaid Invoices</strong> export to start."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload past due</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="pastdue" hidden />
+      </label>
+    </div>
+  </div>
+  <p class="card-help">Every open balance needs a <b>reason</b> and an <b>owner</b>.
+  Carried-over items need this week's update. Set an install/action date to put
+  it on the owner's Google Calendar.</p>`;
+
+  if (pd.likelyResolved.length) {
+    html += `<div class="mtg-resolved-hint">
+      <b>${pd.likelyResolved.length} item${pd.likelyResolved.length === 1 ? "" : "s"} no longer in the latest export</b> — probably paid. Confirm:
+      ${pd.likelyResolved
+        .map(
+          (f) => `<div class="mtg-resolve-row">
+            <span>${escapeHtml(f.client)} · ${fmtMoney0(f.balance)}</span>
+            <button type="button" class="btn-export" data-act="fu-resolve" data-fu="${escapeHtml(f.invoiceNumber)}">Mark resolved ✓</button>
+          </div>`
+        )
+        .join("")}
+    </div>`;
+  }
+
+  if (!pd.classes.length) {
+    html += `<div class="empty small">No past-due follow-ups yet.</div>`;
+    return html;
+  }
+
+  for (const group of pd.classes) {
+    const openKey = `pdc:${group.className}`;
+    const openItems = group.items.filter((i) => i.status === "open");
+    html += `
+    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+      <summary>
+        <span class="mtg-class-name">${escapeHtml(group.className)}</span>
+        <span class="mtg-class-info">${openItems.length} open · ${fmtMoney0(group.totalBalance)}</span>
+      </summary>
+      ${group.items.map((f) => renderFollowUp(f, v.week.weekStart)).join("")}
+    </details>`;
+  }
+  return html;
+}
+
+function renderFollowUp(f, weekStart) {
+  const openKey = `fu:${f.invoiceNumber}`;
+  const badges = [];
+  if (f.status === "resolved") badges.push(`<span class="mtg-badge ok">resolved</span>`);
+  else {
+    if (f.firstSeenWeek === weekStart) badges.push(`<span class="mtg-badge new">new</span>`);
+    if (f.carriedOver)
+      badges.push(
+        `<span class="mtg-badge ${f.updatedThisWeek ? "ok" : "warn"}">carryover${
+          f.updatedThisWeek ? " ✓" : " — needs update"
+        }</span>`
+      );
+    if (!f.reason || !f.owner) badges.push(`<span class="mtg-badge warn">needs reason/owner</span>`);
+  }
+  const inv = escapeHtml(f.invoiceNumber);
+  const updates = f.updates
+    .slice()
+    .reverse()
+    .slice(0, 6)
+    .map(
+      (u) =>
+        `<div class="mtg-update"><span class="mtg-update-week">${escapeHtml(u.week)}</span> ${escapeHtml(u.note)}${
+          u.by ? ` <i>— ${escapeHtml(u.by)}</i>` : ""
+        }</div>`
+    )
+    .join("");
+
+  return `
+  <details class="fu-item${f.status === "resolved" ? " resolved" : ""}" data-open="${openKey}" ${
+    meeting.open.has(openKey) ? "open" : ""
+  }>
+    <summary>
+      <span class="fu-client">${escapeHtml(f.client)}</span>
+      <span class="fu-badges">${badges.join("")}</span>
+      <span class="fu-balance">${fmtMoney0(f.balance)}</span>
+    </summary>
+    <div class="fu-body">
+      <p class="fu-meta">
+        Inv #${inv}${f.projectName ? " · " + escapeHtml(f.projectName) : ""}
+        ${f.projectStatus ? `<br/>Status: ${escapeHtml(f.projectStatus)}` : ""}
+        · Due ${fmtMsDate(f.dueDate)}${f.age !== null ? ` · ${f.age} days past` : ""}
+      </p>
+      <label class="dlg-field">Why is it past due?
+        <input type="text" maxlength="500" value="${escapeHtml(f.reason)}" placeholder="e.g. waiting on financing, install not scheduled…" data-fu="${inv}" data-field="reason" />
+      </label>
+      <div class="fu-grid">
+        <label class="dlg-field">Owner
+          <input type="text" maxlength="120" list="roster-list-dl" value="${escapeHtml(f.owner)}" placeholder="Who owns this?" data-fu="${inv}" data-field="owner" />
+        </label>
+        <label class="dlg-field">Owner email (for calendar)
+          <input type="email" maxlength="200" value="${escapeHtml(f.ownerEmail)}" placeholder="name@company.com" data-fu="${inv}" data-field="ownerEmail" />
+        </label>
+      </div>
+      <div class="fu-grid">
+        <label class="dlg-field">Action / install date
+          <input type="date" value="${escapeHtml(f.actionDate || "")}" data-fu="${inv}" data-field="actionDate" />
+        </label>
+        <div class="fu-cal">${
+          f.actionDate
+            ? `<a class="btn-export" target="_blank" rel="noopener" href="${gcalUrl(f)}">📅 Add to owner's calendar</a>`
+            : `<span class="hint">Set a date to create a calendar event.</span>`
+        }</div>
+      </div>
+      <div class="fu-note-row">
+        <input type="text" maxlength="1000" placeholder="This week's update…" data-note-for="${inv}" />
+        <button type="button" class="btn-export" data-act="fu-note" data-fu="${inv}">Add update</button>
+      </div>
+      ${updates ? `<div class="mtg-updates">${updates}</div>` : ""}
+      <div class="fu-actions">
+        ${
+          f.status === "open"
+            ? `<button type="button" class="btn btn-primary" data-act="fu-resolve" data-fu="${inv}">Resolved — collected/closed ✓</button>`
+            : `<button type="button" class="btn btn-secondary" data-act="fu-reopen" data-fu="${inv}">Reopen</button>`
+        }
+      </div>
+    </div>
+  </details>`;
+}
+
+/** Google Calendar event link for a follow-up's action date (all-day). */
+function gcalUrl(f) {
+  const start = f.actionDate.replace(/-/g, "");
+  const endDate = new Date(f.actionDate + "T00:00:00Z");
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  const end = endDate.toISOString().slice(0, 10).replace(/-/g, "");
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: `Past due: ${f.client} — ${fmtMoney0(f.balance)} (Inv #${f.invoiceNumber})`,
+    dates: `${start}/${end}`,
+    details:
+      `${f.projectName || ""}\nReason past due: ${f.reason || "—"}\nOwner: ${f.owner || "—"}` +
+      `\nClass: ${f.className}\n\nFrom the Friday Production Meeting checklist.`,
+  });
+  if (f.ownerEmail) params.set("add", f.ownerEmail);
+  return "https://calendar.google.com/calendar/render?" + params.toString();
+}
+
+// ── §2 Work orders ──
+function renderWorkOrdersSection(v) {
+  const wo = v.workOrders;
+  let html = `
+  <p class="card-help">Work orders come from the <b>Export data</b> upload on the
+  Schedule tab${wo.uploadedAt ? ` (last upload ${fmtDate(wo.uploadedAt)})` : ""}.
+  Tag each open warranty with the <b>lead</b> whose crew caused it and <b>why</b>.</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      wo.uploadedAt
+        ? `<strong>${wo.totalOpen + wo.totalCompleted} work orders</strong> loaded`
+        : "No work orders loaded yet."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload wo-btn"><span>Upload WOs</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="workorders" hidden />
+      </label>
+    </div>
+  </div>`;
+
+  if (wo.classes.length) {
+    html += `<table class="mtg-table"><thead><tr><th>Location</th><th>Open</th><th>Open warranty</th><th>Completed</th></tr></thead><tbody>`;
+    for (const c of wo.classes) {
+      html += `<tr><td>${escapeHtml(c.className)}</td><td>${c.open}</td><td>${
+        c.openWarranties
+      }</td><td>${c.completed}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if (wo.byLead.length) {
+    html += `<h3 class="mtg-h3">Warranties by lead</h3>`;
+    for (const l of wo.byLead) {
+      html += `<div class="mtg-lead-row"><b>${escapeHtml(l.lead)}</b><span class="mtg-lead-count">${
+        l.count
+      }</span><span class="mtg-lead-causes">${escapeHtml(l.causes.join(" · "))}</span></div>`;
+    }
+  }
+  if (wo.untaggedWarranties > 0) {
+    html += `<p class="hint">${wo.untaggedWarranties} warranty WO${
+      wo.untaggedWarranties === 1 ? "" : "s"
+    } not yet tagged with a lead.</p>`;
+  }
+
+  const open = wo.warranties.filter((w) => w.open);
+  const closed = wo.warranties.filter((w) => !w.open).slice(0, 30);
+  if (open.length) {
+    html += `<h3 class="mtg-h3">Open warranty / callback work orders</h3>`;
+    html += open.map(renderWarrantyRow).join("");
+  } else if (wo.uploadedAt) {
+    html += `<div class="empty small">No open warranty work orders. 🎉</div>`;
+  }
+  if (closed.length) {
+    const openKey = "wo:closed";
+    html += `
+    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+      <summary><span class="mtg-class-name">Recently completed warranties</span>
+        <span class="mtg-class-info">last ${closed.length}</span></summary>
+      ${closed.map(renderWarrantyRow).join("")}
+    </details>`;
+  }
+  return html;
+}
+
+function renderWarrantyRow(w) {
+  const id = escapeHtml(w.id);
+  return `
+  <div class="mtg-wo${w.open ? "" : " closed"}">
+    <div class="mtg-wo-top">
+      <span class="mtg-wo-who">#${escapeHtml(w.woNumber)} · ${escapeHtml(w.client)}${
+        w.city ? " · " + escapeHtml(w.city) : ""
+      }</span>
+      <span class="mtg-wo-meta">${escapeHtml(w.className)} · ${escapeHtml(w.type)} · ${escapeHtml(
+        w.status || "OPEN"
+      )} · ${fmtMsDate(w.createdDate)}</span>
+    </div>
+    <div class="mtg-wo-tag">
+      <input type="text" maxlength="120" list="roster-list-dl" placeholder="Lead responsible" value="${escapeHtml(
+        w.lead
+      )}" data-wo="${id}" data-field="lead" />
+      <input type="text" maxlength="500" placeholder="Why did this happen?" value="${escapeHtml(
+        w.cause
+      )}" data-wo="${id}" data-field="cause" />
+    </div>
+  </div>`;
+}
+
+// ── §3 Pipeline ──
+function renderPipelineSection(v) {
+  const p = v.pipeline;
+  if (!p.available) {
+    return `<p class="card-help">Upload the <b>Production Pipeline Report</b> on the
+      Schedule tab to check start dates, labor assignment, and how full the week is.</p>`;
+  }
+  let html = `<p class="card-help">Checks: jobs with <b>no start date</b>, scheduled
+  jobs with <b>no crew assigned</b>, and whether each day this week is under- or
+  over-scheduled.</p>`;
+
+  if (p.week.length) {
+    html += `<h3 class="mtg-h3">This week's schedule load</h3>`;
+    for (const cls of p.week) {
+      html += `<div class="mtg-load">
+        <div class="mtg-load-head"><b>${escapeHtml(cls.className)}</b>
+          <span>${cls.jobsThisWeek} jobs · ${fmtMoney0(cls.totalThisWeek)}</span></div>
+        <div class="mtg-days">
+          ${cls.days
+            .map(
+              (d) => `<span class="mtg-day load-${d.load}" title="${escapeHtml(d.date)}">
+                <i>${fmtDay(d.date).split(" ")[0]}</i>${d.jobs ? `${d.jobs} · ${fmtMoney0(d.total)}` : "—"}
+              </span>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+    }
+  } else {
+    html += `<div class="empty small">Nothing scheduled to start this week.</div>`;
+  }
+
+  const urgentNoCrew = p.noCrew.filter((j) => j.thisWeek);
+  html += renderPipelineList(
+    "nocrew",
+    `No labor assigned (${p.noCrew.length})`,
+    urgentNoCrew.length ? `${urgentNoCrew.length} starting THIS week` : "",
+    p.noCrew,
+    (j) =>
+      `${j.thisWeek ? "🔴 " : ""}#${escapeHtml(j.jobNumber)} · ${escapeHtml(
+        j.className
+      )} · ${fmtMoney0(j.soldAmount)} · starts ${fmtMsDate(j.startDate)}`
+  );
+  html += renderPipelineList(
+    "nostart",
+    `No start date (${p.noStartDate.length})`,
+    "",
+    p.noStartDate,
+    (j) =>
+      `#${escapeHtml(j.jobNumber)} · ${escapeHtml(j.className)} · ${fmtMoney0(
+        j.soldAmount
+      )}${j.salesPerson ? " · " + escapeHtml(j.salesPerson) : ""}`
+  );
+  return html;
+}
+
+function renderPipelineList(key, title, warn, jobs, line) {
+  if (!jobs.length) return `<div class="empty small">${escapeHtml(title)}: none 🎉</div>`;
+  const openKey = `pl:${key}`;
+  const MAX = 60;
+  return `
+  <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+    <summary><span class="mtg-class-name">${escapeHtml(title)}</span>
+      <span class="mtg-class-info warn">${escapeHtml(warn)}</span></summary>
+    ${jobs
+      .slice(0, MAX)
+      .map((j) => `<div class="mtg-line">${line(j)}${j.description ? `<span class="mtg-line-desc">${escapeHtml(j.description)}</span>` : ""}</div>`)
+      .join("")}
+    ${jobs.length > MAX ? `<div class="hint">…and ${jobs.length - MAX} more.</div>` : ""}
+  </details>`;
+}
+
+// ── §4 Labor rates ──
+function renderLaborSection(v) {
+  const lab = v.labor;
+  let html = `
+  <p class="card-help">Labor rate for <b>last week (${fmtDay(lab.weekStart)} – ${fmtDay(
+    lab.weekEnd
+  )})</b> = <b>completed revenue ÷ (production payroll × ${lab.multiplier})</b>.
+  Upload the <b>Completed Projects</b> report, then enter (or pull from the
+  payroll workbook) each location's production payroll for that pay period.</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      lab.uploadedAt
+        ? `<strong>${escapeHtml(lab.sourceLabel || "Completed projects")}</strong> · uploaded ${fmtDate(lab.uploadedAt)}`
+        : "No completed-projects report uploaded."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload completed</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="completed" hidden />
+      </label>
+      <label class="btn-upload wo-btn"><span>Upload payroll</span>
+        <input type="file" accept=".xlsx,.xlsm,.xls" data-upload="payroll" hidden />
+      </label>
+    </div>
+  </div>`;
+
+  if (meeting.payroll) {
+    html += `<div class="mtg-payroll-pick">
+      <b>Payroll workbook read.</b> Pick the location and the pay-period sheet:
+      <select id="mtg-payroll-class">${(v.labor.rows.length
+        ? v.labor.rows.map((r) => r.className)
+        : ["Austin", "Corpus Christi", "Dallas", "Houston", "San Antonio"]
+      )
+        .map((c) => `<option>${escapeHtml(c)}</option>`)
+        .join("")}</select>
+      ${meeting.payroll.sheets
+        .slice(0, 8)
+        .map(
+          (s, i) => `<div class="mtg-resolve-row">
+          <span><b>${escapeHtml(s.sheetName)}</b>${
+            s.periodStart ? ` · ${escapeHtml(s.periodStart)} → ${escapeHtml(s.periodEnd || "?")}` : ""
+          } · ${fmtMoney0(s.productionTotal)} production (${s.employeeCount} ppl)</span>
+          <button type="button" class="btn-export" data-act="payroll-use" data-idx="${i}">Use</button>
+        </div>`
+        )
+        .join("")}
+      <button type="button" class="btn-clear" data-act="payroll-cancel">Cancel</button>
+    </div>`;
+  }
+
+  if (!lab.rows.length) {
+    html += `<div class="empty small">Upload the completed-projects report to see revenue per location.</div>`;
+    return html;
+  }
+
+  html += `<div class="mtg-labor">`;
+  for (const r of lab.rows) {
+    const cls = escapeHtml(r.className);
+    const rateHtml =
+      r.rate === null
+        ? `<span class="hint">enter payroll</span>`
+        : `<b class="mtg-rate ${r.rate >= 4 ? "good" : r.rate >= 2.5 ? "mid" : "bad"}">${r.rate.toFixed(2)}×</b>
+           <span class="mtg-rate-pct">labor ${(100 / r.rate).toFixed(0)}% of revenue</span>`;
+    html += `
+    <div class="mtg-labor-row">
+      <div class="mtg-labor-head"><b>${cls}</b>${rateHtml}</div>
+      <div class="fu-grid">
+        <label class="dlg-field">Completed revenue (${r.completedJobs} jobs)
+          <input type="number" min="0" step="0.01" inputmode="decimal"
+            placeholder="${r.completedRevenue}" value="${r.revenueOverride ?? ""}"
+            data-labor="${cls}" data-field="revenueOverride" />
+        </label>
+        <label class="dlg-field">Production payroll${r.sheetName ? ` <i>(${escapeHtml(r.sheetName)})</i>` : ""}
+          <input type="number" min="0" step="0.01" inputmode="decimal"
+            placeholder="from payroll sheet" value="${r.productionPayroll ?? ""}"
+            data-labor="${cls}" data-field="productionPayroll" />
+        </label>
+      </div>
+    </div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// ── §5–7 Dashboard checks ──
+const CHECK_COPY = {
+  reviews: {
+    help: "Log in to the review dashboard and check this week's new reviews.",
+    link: "Open review dashboard",
+  },
+  lytx: {
+    help: "Log in to Lytx and review this week's driving incidents.",
+    link: "Open Lytx",
+  },
+  ramp: {
+    help: "Log in to Ramp and review this week's spend incidents / flagged transactions.",
+    link: "Open Ramp",
+  },
+};
+
+function renderCheckSection(v, key) {
+  const check = v.checks[key];
+  const url = v.links[key];
+  const copy = CHECK_COPY[key];
+  return `
+  <p class="card-help">${escapeHtml(copy.help)}</p>
+  ${
+    url
+      ? `<a class="btn-export mtg-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">🔗 ${escapeHtml(copy.link)}</a>`
+      : `<p class="hint">Set the dashboard URL in the environment (see README) to get a one-tap link.</p>`
+  }
+  <label class="dlg-field">What did you find? (incidents, counts, actions)
+    <textarea rows="3" maxlength="2000" data-check-notes="${key}" placeholder="e.g. 2 hard-braking events — coached both drivers.">${escapeHtml(
+      check.notes
+    )}</textarea>
+  </label>
+  <div class="fu-actions">
+    ${
+      check.status === "done"
+        ? `<button type="button" class="btn btn-secondary" data-act="check-toggle" data-check="${key}">Reviewed ✓ ${
+            check.by ? "by " + escapeHtml(check.by) : ""
+          } — undo</button>`
+        : `<button type="button" class="btn btn-primary" data-act="check-toggle" data-check="${key}">Mark reviewed ✓</button>`
+    }
+  </div>`;
+}
+
+// ── Event handling ──
+function meetingToggle(e) {
+  const key = e.target?.dataset?.open;
+  if (!key) return;
+  if (e.target.open) meeting.open.add(key);
+  else meeting.open.delete(key);
+}
+
+async function meetingChange(e) {
+  const t = e.target;
+  try {
+    if (t.dataset.upload) {
+      await handleMeetingUpload(t.dataset.upload, t.files[0]);
+      t.value = "";
+      return;
+    }
+    if (t.dataset.fu && t.dataset.field) {
+      await meetingApi(`/api/meeting/followups/${encodeURIComponent(t.dataset.fu)}`, "PATCH", {
+        week: meeting.week,
+        [t.dataset.field]: t.dataset.field === "actionDate" ? t.value || null : t.value,
+        by: meetingUser() || undefined,
+      });
+      await loadMeeting();
+      return;
+    }
+    if (t.dataset.wo && t.dataset.field) {
+      const row = t.closest(".mtg-wo");
+      const lead = row.querySelector('[data-field="lead"]').value.trim();
+      const cause = row.querySelector('[data-field="cause"]').value.trim();
+      await meetingApi("/api/meeting/wonote", "PATCH", {
+        woId: t.dataset.wo,
+        lead,
+        cause,
+        by: meetingUser() || null,
+      });
+      await loadMeeting();
+      return;
+    }
+    if (t.dataset.labor && t.dataset.field) {
+      const value = t.value === "" ? null : Number(t.value);
+      await meetingApi("/api/meeting/labor", "PATCH", {
+        week: meeting.week,
+        className: t.dataset.labor,
+        [t.dataset.field]: value,
+        by: meetingUser() || null,
+      });
+      await loadMeeting();
+      return;
+    }
+    if (t.dataset.checkNotes) {
+      await meetingApi("/api/meeting/check", "PATCH", {
+        week: meeting.week,
+        key: t.dataset.checkNotes,
+        notes: t.value,
+        by: meetingUser() || undefined,
+      });
+      return; // no re-render needed for notes
+    }
+    if (t.dataset.sec) {
+      await meetingApi("/api/meeting/section", "PATCH", {
+        week: meeting.week,
+        key: t.dataset.sec,
+        done: t.checked,
+        by: meetingUser() || null,
+      });
+      await loadMeeting();
+      return;
+    }
+  } catch (err) {
+    toast(err.message || "Couldn't save.", "error");
+  }
+}
+
+async function meetingClick(e) {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const act = btn.dataset.act;
+  try {
+    if (act === "fu-resolve" || act === "fu-reopen") {
+      await meetingApi(`/api/meeting/followups/${encodeURIComponent(btn.dataset.fu)}`, "PATCH", {
+        week: meeting.week,
+        status: act === "fu-resolve" ? "resolved" : "open",
+        by: meetingUser() || undefined,
+      });
+      toast(act === "fu-resolve" ? "Marked resolved ✓" : "Reopened.", "success");
+      await loadMeeting();
+    } else if (act === "fu-note") {
+      const input = document.querySelector(`[data-note-for="${CSS.escape(btn.dataset.fu)}"]`);
+      const note = input?.value.trim();
+      if (!note) return toast("Type the update first.", "error");
+      await meetingApi(`/api/meeting/followups/${encodeURIComponent(btn.dataset.fu)}`, "PATCH", {
+        week: meeting.week,
+        note,
+        by: meetingUser() || undefined,
+      });
+      toast("Update added ✓", "success");
+      await loadMeeting();
+    } else if (act === "check-toggle") {
+      const key = btn.dataset.check;
+      const current = meeting.view.checks[key].status;
+      await meetingApi("/api/meeting/check", "PATCH", {
+        week: meeting.week,
+        key,
+        status: current === "done" ? "pending" : "done",
+        by: meetingUser() || undefined,
+      });
+      await loadMeeting();
+    } else if (act === "payroll-use") {
+      const sheet = meeting.payroll.sheets[Number(btn.dataset.idx)];
+      const className = $("mtg-payroll-class").value;
+      await meetingApi("/api/meeting/labor", "PATCH", {
+        week: meeting.week,
+        className,
+        productionPayroll: sheet.productionTotal,
+        sheetName: sheet.sheetName,
+        by: meetingUser() || null,
+      });
+      meeting.payroll = null;
+      toast(`Payroll set for ${className} ✓`, "success");
+      await loadMeeting();
+    } else if (act === "payroll-cancel") {
+      meeting.payroll = null;
+      renderMeeting();
+    }
+  } catch (err) {
+    toast(err.message || "Couldn't save.", "error");
+  }
+}
+
+async function handleMeetingUpload(kind, file) {
+  if (!file) return;
+  if (typeof XLSX === "undefined") {
+    toast("Spreadsheet reader didn't load — check your connection.", "error");
+    return;
+  }
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  const firstRows = () =>
+    XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {
+      header: 1,
+      raw: true,
+      blankrows: false,
+    });
+
+  if (kind === "pastdue") {
+    const data = await meetingApi("/api/meeting/pastdue", "POST", {
+      filename: file.name,
+      week: meeting.week,
+      rows: firstRows(),
+    });
+    toast(
+      `${data.count} invoices loaded · ${data.newCount} new${
+        data.missingCount ? ` · ${data.missingCount} likely paid` : ""
+      } ✓`,
+      "success"
+    );
+  } else if (kind === "completed") {
+    const data = await meetingApi("/api/meeting/completed", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    toast(`${data.count} completed jobs loaded ✓`, "success");
+  } else if (kind === "workorders") {
+    const data = await meetingApi("/api/workorders", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    toast(`${data.count} work orders loaded ✓`, "success");
+  } else if (kind === "payroll") {
+    // Payroll workbooks have one sheet per pay period — send them all and let
+    // the user pick the right week.
+    const sheets = wb.SheetNames.map((name) => ({
+      name,
+      rows: XLSX.utils.sheet_to_json(wb.Sheets[name], {
+        header: 1,
+        raw: true,
+        blankrows: false,
+      }),
+    }));
+    const data = await meetingApi("/api/meeting/payroll", "POST", {
+      week: meeting.week,
+      sheets,
+    });
+    meeting.payroll = { sheets: data.sheets };
+    meeting.open.add("sec:labor");
+  }
+  await loadMeeting();
+}
+
 // ─────────────────────────── Navigation ───────────────────────────
 const TITLES = {
   schedule: "Weekly Schedule",
+  meeting: "Friday Meeting",
   report: "Weekly Report",
   pay: "Performance Pay",
   roster: "Roster",
@@ -1677,7 +2452,7 @@ const TITLES = {
 let reportLoaded = false;
 
 function showScreen(name) {
-  for (const s of ["schedule", "report", "pay", "roster", "projects"]) {
+  for (const s of ["schedule", "meeting", "report", "pay", "roster", "projects"]) {
     $(`screen-${s}`).hidden = s !== name;
   }
   $("screen-title").textContent = TITLES[name];
@@ -1687,6 +2462,7 @@ function showScreen(name) {
     t.classList.toggle("active", t.dataset.screen === name)
   );
   if (name === "projects" && !allProjects.length) loadProjects();
+  if (name === "meeting") loadMeeting();
   if (name === "report") {
     if (!reportLoaded) {
       reportLoaded = true;
@@ -1759,6 +2535,24 @@ async function init() {
   });
   $("pay-export").addEventListener("click", exportPay);
   $("roster-form").addEventListener("submit", submitRosterForm);
+
+  // Friday meeting.
+  $("meeting-prev").addEventListener("click", () =>
+    loadMeeting(shiftWeekIso(meeting.week || currentWeekStartIso(), -1))
+  );
+  $("meeting-next").addEventListener("click", () =>
+    loadMeeting(shiftWeekIso(meeting.week || currentWeekStartIso(), 1))
+  );
+  $("meeting-today").addEventListener("click", () => loadMeeting(currentWeekStartIso()));
+  $("meeting-user").value = localStorage.getItem("meetingUser") || "";
+  $("meeting-user").addEventListener("change", () =>
+    localStorage.setItem("meetingUser", meetingUser())
+  );
+  const meetingRoot = $("meeting-sections");
+  meetingRoot.addEventListener("change", meetingChange);
+  meetingRoot.addEventListener("click", meetingClick);
+  // "toggle" doesn't bubble — listen in the capture phase.
+  meetingRoot.addEventListener("toggle", meetingToggle, true);
   loadRoster(); // also fills crew-name suggestions on the schedule
 
   // Week navigation.

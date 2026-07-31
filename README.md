@@ -47,7 +47,7 @@ Then `npm start` again — the banner disappears and real projects load.
 
 ## What the manager sees
 
-Three tabs, all built for a thumb:
+Tabs, all built for a thumb:
 
 - **Schedule** *(default)* — the weekly production schedule that replaces the
   spreadsheet. Jobs are pulled from Builder Prime, grouped by **class**, each
@@ -59,8 +59,52 @@ Three tabs, all built for a thumb:
   revenue, QTD rollups) updates live as you type. Save a draft or submit.
 - **Projects** — active projects with client, address, value, status, and who's
   assigned (PM / foreman / salesperson). Search and a "show cancelled" toggle.
+- **Meeting** — the Friday Production Meeting checklist (below).
 
 No report names, no formulas, no Builder Prime login — the app does that work.
+
+---
+
+## Friday Production Meeting (Meeting tab)
+
+A 7-item weekly checklist that the owner, production manager, or an admin can
+run from a phone or desktop. Each section shows a progress ring; the header
+tracks "N of 7 done". Enter your name once at the top — it's stamped on every
+sign-off, note, and update so next week you know who owns what.
+
+1. **Past due balances** — upload the Builder Prime **Unpaid Invoices** export.
+   Invoices group by class/location. Each one gets a **reason** it's past due
+   and an **owner**; open items **carry over automatically** to next week's
+   meeting, where they're badged *carryover — needs update* until the owner
+   records an update or resolves them. Items that disappear from a fresh upload
+   are flagged "probably paid — confirm" for one-tap resolution. Setting an
+   **action/install date** produces an *Add to owner's calendar* button — a
+   Google Calendar event pre-filled with the client, balance, reason, and the
+   owner invited by email.
+2. **Work orders & warranties** — uses the **Export data** (work orders)
+   upload, shared with the Schedule tab. Open vs completed counts per
+   location, and every warranty/callback/redo WO can be tagged with the
+   **lead responsible** and **why it happened** — the "Warranties by lead"
+   rollup shows who is causing warranties and the causes.
+3. **Production pipeline** — uses the **Production Pipeline Report** upload,
+   shared with the Schedule tab. Flags jobs with **no start date**, scheduled
+   jobs with **no crew/labor assigned** (jobs starting this week are marked
+   🔴), and a per-day load view (Mon–Sat) per location so you can spot under-
+   and over-scheduled days at a glance.
+4. **Labor rates** — for the **previous week** (whose pay date lands on the
+   meeting Friday): `completed revenue ÷ (production payroll × 1.2)`, per
+   location. Upload the **Completed Projects** report for the revenue side;
+   for payroll either type the number or upload the location's payroll
+   workbook — the app reads every sheet, totals the **Production** department,
+   and suggests the sheet whose pay period matches the week.
+5. **Reviews** · 6. **Lytx** · 7. **Ramp** — one-tap links to each dashboard
+   (configurable via `REVIEWS_DASHBOARD_URL`, `LYTX_DASHBOARD_URL`,
+   `RAMP_DASHBOARD_URL`), a notes box for what you found (incidents, counts,
+   actions taken), and a *Mark reviewed* sign-off.
+
+Every section also has a manual **sign-off** row recording who completed it
+and when. Follow-ups, tags, and per-week state persist in the shared database,
+so the meeting history builds week over week.
 
 ---
 

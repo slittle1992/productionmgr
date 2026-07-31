@@ -21,6 +21,13 @@ import { pipelineRouter } from "./routes/pipeline.js";
 import { workOrdersRouter } from "./routes/workOrders.js";
 import { rosterRouter } from "./routes/roster.js";
 import { payRouter } from "./routes/pay.js";
+import { meetingRouter } from "./routes/meeting.js";
+import { MeetingService } from "./services/meetingService.js";
+import {
+  JsonMeetingStore,
+  KvMeetingStore,
+  type MeetingStore,
+} from "./storage/meetingStore.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
 import { ScheduleService } from "./services/scheduleService.js";
@@ -82,6 +89,7 @@ export interface BuildAppOptions {
   pipelineStore?: PipelineStore;
   workOrderStore?: WorkOrderStore;
   rosterStore?: RosterStore;
+  meetingStore?: MeetingStore;
   now?: () => number;
 }
 
@@ -150,6 +158,9 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const rosterStore =
     options.rosterStore ??
     (kv ? new KvRosterStore(kv) : new JsonRosterStore(config.dataDir));
+  const meetingStore =
+    options.meetingStore ??
+    (kv ? new KvMeetingStore(kv) : new JsonMeetingStore(config.dataDir));
 
   const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
@@ -200,7 +211,16 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+  const meetingService = new MeetingService(
+    meetingStore,
+    workOrderStore,
+    provider,
+    config,
+    now
+  );
+
   app.use("/api", pipelineRouter(pipelineStore, now));
+  app.use("/api", meetingRouter(meetingService));
   app.use("/api", workOrdersRouter(workOrderStore, now));
   app.use("/api", rosterRouter(rosterStore, now));
   app.use("/api", payRouter(scheduleService, rosterStore));

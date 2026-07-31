@@ -312,6 +312,32 @@
         </div>
       </section>
 
+      <!-- ───────────────────────── Friday Meeting ───────────────────────── -->
+      <section id="screen-meeting" class="screen" hidden>
+        <div class="week-bar">
+          <button id="meeting-prev" class="week-arrow" type="button" aria-label="Previous week">◀</button>
+          <div class="week-display"><span id="meeting-week-range">Loading…</span></div>
+          <button id="meeting-next" class="week-arrow" type="button" aria-label="Next week">▶</button>
+          <button id="meeting-today" class="week-today" type="button">This week</button>
+        </div>
+        <div class="meeting-topbar">
+          <div id="meeting-progress" class="meeting-progress">
+            <div class="meeting-progress-bar"><div id="meeting-progress-fill"></div></div>
+            <span id="meeting-progress-label">0 of 7</span>
+          </div>
+          <input
+            id="meeting-user"
+            type="text"
+            maxlength="60"
+            placeholder="Your name (for sign-offs)"
+            aria-label="Your name"
+          />
+        </div>
+        <div id="meeting-sections">
+          <div class="loading">Loading meeting…</div>
+        </div>
+      </section>
+
       <!-- ───────────────────────── Projects ───────────────────────── -->
       <section id="screen-projects" class="screen" hidden>
         <div class="filter-bar">
@@ -340,6 +366,9 @@
     <nav class="tabbar">
       <button class="tab active" data-screen="schedule" type="button">
         <span class="tab-icon">📅</span><span>Schedule</span>
+      </button>
+      <button class="tab" data-screen="meeting" type="button">
+        <span class="tab-icon">✅</span><span>Meeting</span>
       </button>
       <button class="tab" data-screen="report" type="button">
         <span class="tab-icon">📋</span><span>Report</span>
