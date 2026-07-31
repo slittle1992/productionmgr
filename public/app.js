@@ -2011,23 +2011,47 @@ function renderWorkOrdersSection(v) {
   }
 
   const open = wo.warranties.filter((w) => w.open);
-  const closed = wo.warranties.filter((w) => !w.open).slice(0, 30);
+  const closed = wo.warranties.filter((w) => !w.open);
   if (open.length) {
     html += `<h3 class="mtg-h3">Open warranty / callback work orders</h3>`;
-    html += open.map(renderWarrantyRow).join("");
+    html += renderWarrantyGroups("woopen", open, Infinity);
   } else if (wo.uploadedAt) {
     html += `<div class="empty small">No open warranty work orders. 🎉</div>`;
   }
   if (closed.length) {
-    const openKey = "wo:closed";
-    html += `
-    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
-      <summary><span class="mtg-class-name">Recently completed warranties</span>
-        <span class="mtg-class-info">last ${closed.length}</span></summary>
-      ${closed.map(renderWarrantyRow).join("")}
-    </details>`;
+    html += `<h3 class="mtg-h3">Recently completed warranties</h3>`;
+    html += renderWarrantyGroups("wodone", closed, 15);
   }
   return html;
+}
+
+/** Warranty WOs grouped by class/location, mirroring the past-due groups. */
+function renderWarrantyGroups(prefix, warranties, maxPerClass) {
+  const byClass = new Map();
+  for (const w of warranties) {
+    const cls = w.className || "Unassigned";
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(w);
+  }
+  return [...byClass.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([cls, rows]) => {
+      const openKey = `${prefix}:${cls}`;
+      const shown = rows.slice(0, maxPerClass);
+      const untagged = rows.filter((w) => !w.lead || !w.cause).length;
+      return `
+      <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+        <summary>
+          <span class="mtg-class-name">${escapeHtml(cls)}</span>
+          <span class="mtg-class-info${untagged && prefix === "woopen" ? " warn" : ""}">${rows.length} WO${
+            rows.length === 1 ? "" : "s"
+          }${untagged && prefix === "woopen" ? ` · ${untagged} untagged` : ""}</span>
+        </summary>
+        ${shown.map(renderWarrantyRow).join("")}
+        ${rows.length > shown.length ? `<div class="hint">…and ${rows.length - shown.length} more.</div>` : ""}
+      </details>`;
+    })
+    .join("");
 }
 
 function renderWarrantyRow(w) {
@@ -2038,7 +2062,7 @@ function renderWarrantyRow(w) {
       <span class="mtg-wo-who">#${escapeHtml(w.woNumber)} · ${escapeHtml(w.client)}${
         w.city ? " · " + escapeHtml(w.city) : ""
       }</span>
-      <span class="mtg-wo-meta">${escapeHtml(w.className)} · ${escapeHtml(w.type)} · ${escapeHtml(
+      <span class="mtg-wo-meta">${escapeHtml(w.type)} · ${escapeHtml(
         w.status || "OPEN"
       )} · ${fmtMsDate(w.createdDate)}</span>
     </div>
@@ -2056,11 +2080,22 @@ function renderWarrantyRow(w) {
 // ── §3 Pipeline ──
 function renderPipelineSection(v) {
   const p = v.pipeline;
-  if (!p.available) {
-    return `<p class="card-help">Upload the <b>Production Pipeline Report</b> on the
-      Schedule tab to check start dates, labor assignment, and how full the week is.</p>`;
-  }
-  let html = `<p class="card-help">Checks: jobs with <b>no start date</b>, scheduled
+  const uploadBar = `
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      p.available
+        ? `<strong>${p.totalJobs} jobs</strong> in the pipeline`
+        : "Upload the Builder Prime <strong>Production Pipeline Report</strong> to run these checks."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload pipeline</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="pipeline" hidden />
+      </label>
+    </div>
+  </div>`;
+  if (!p.available) return uploadBar;
+  let html = `${uploadBar}
+  <p class="card-help">Checks: jobs with <b>no start date</b>, scheduled
   jobs with <b>no crew assigned</b>, and whether each day this week is under- or
   over-scheduled.</p>`;
 
@@ -2419,6 +2454,13 @@ async function handleMeetingUpload(kind, file) {
       rows: firstRows(),
     });
     toast(`${data.count} work orders loaded ✓`, "success");
+  } else if (kind === "pipeline") {
+    const data = await meetingApi("/api/pipeline", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
+    refreshPipelineStatus(); // keep the Schedule tab's status bar in sync
   } else if (kind === "payroll") {
     // Payroll workbooks have one sheet per pay period — send them all and let
     // the user pick the right week.
