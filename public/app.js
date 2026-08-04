@@ -2231,7 +2231,7 @@ function renderLeadsSection(v) {
     (w) => `<button type="button" class="chip-btn ${
       meeting.leadsDays === w.days ? "active" : ""
     }" data-act="leads-window" data-days="${w.days}">${w.label}</button>`
-  ).join("")}</div>`;
+  ).join("")}<button type="button" class="chip-btn map-open-btn" data-act="open-map">🗺 Heat map + all zips</button></div>`;
 
   const a = meeting.leadsView;
   if (!a || meeting.leadsKey !== `${v.leads.uploadedAt}|${meeting.leadsDays}`) {
@@ -2457,6 +2457,8 @@ async function meetingClick(e) {
     } else if (act === "leads-window") {
       meeting.leadsDays = Number(btn.dataset.days);
       renderMeeting(); // triggers fetchLeadsAnalysis for the new window
+    } else if (act === "open-map") {
+      await openLeadMap();
     }
   } catch (err) {
     toast(err.message || "Couldn't save.", "error");
@@ -3077,6 +3079,389 @@ async function uploadLeadsChunked(filename, rows) {
   return last;
 }
 
+// ─────────────────────────── Lead heat map (zip choropleth) ───────────────────────────
+// A dedicated screen: every zip colored by lead volume (or jobs), with the
+// full per-zip table underneath. Zip polygons are Census ZCTA boundaries,
+// vendored at /vendor/tx-zips.json and loaded only when the map opens.
+
+const leadmap = {
+  days: 28,
+  mode: "leads", // "leads" (window) | "jobs" (sold, all-time)
+  className: null,
+  table: null, // /api/leads/zips payload for current days
+  tableKey: null,
+  geo: null, // zip → rings
+  centroids: null, // zip → [x, y]
+  sort: { col: "current", dir: -1 },
+  search: "",
+  selected: null,
+};
+
+// Sequential ramps (light → dark), one hue per measure.
+const MAP_RAMPS = {
+  leads: ["#dbe6f6", "#b3c9e9", "#7fa3d6", "#4a77b8", "#15396b"],
+  jobs: ["#d9f2e3", "#a9e0bf", "#6fc493", "#3aa268", "#1f8a4c"],
+};
+const MAP_ZERO = "#f0f1f4";
+
+const MAP_MODES = [
+  { key: "leads", label: "Leads (window)" },
+  { key: "jobs", label: "Jobs (all-time)" },
+];
+const MAP_WINDOWS = [
+  { days: 7, label: "Week" },
+  { days: 28, label: "4 weeks" },
+  { days: 91, label: "Quarter" },
+  { days: 3650, label: "All time" },
+];
+
+async function openLeadMap() {
+  showScreen("leadsmap");
+  try {
+    if (!leadmap.geo) {
+      $("map-holder").innerHTML = `<div class="loading">Loading zip boundaries…</div>`;
+      const res = await fetch("/vendor/tx-zips.json");
+      if (!res.ok) throw new Error("Couldn't load zip boundaries.");
+      leadmap.geo = await res.json();
+      leadmap.centroids = {};
+      for (const [zip, rings] of Object.entries(leadmap.geo)) {
+        const r = rings[0];
+        let sx = 0;
+        let sy = 0;
+        for (const [x, y] of r) {
+          sx += x;
+          sy += y;
+        }
+        leadmap.centroids[zip] = [sx / r.length, sy / r.length];
+      }
+    }
+    await loadLeadZips();
+  } catch (err) {
+    $("map-holder").innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadLeadZips() {
+  const key = String(leadmap.days);
+  if (leadmap.tableKey !== key) {
+    const data = await meetingApi(`/api/leads/zips?days=${leadmap.days}`, "GET");
+    if (!data.table) {
+      $("map-holder").innerHTML = `<div class="empty">Upload the Clients List export
+        on the Meeting tab first.</div>`;
+      return;
+    }
+    leadmap.table = data.table;
+    leadmap.tableKey = key;
+  }
+  const classes = leadmap.table.classes.map((c) => c.className);
+  if (!leadmap.className || !classes.includes(leadmap.className)) {
+    leadmap.className = classes[0] ?? null;
+  }
+  renderLeadMap();
+}
+
+function mapMeasure(row) {
+  return leadmap.mode === "jobs" ? row.jobs : row.current;
+}
+
+function renderLeadMap() {
+  const cls = leadmap.table?.classes.find((c) => c.className === leadmap.className);
+  // Controls.
+  $("map-class-chips").innerHTML = (leadmap.table?.classes ?? [])
+    .map(
+      (c) => `<button type="button" class="chip-btn ${
+        c.className === leadmap.className ? "active" : ""
+      }" data-map-class="${escapeHtml(c.className)}">${escapeHtml(c.className)}</button>`
+    )
+    .join("");
+  $("map-mode-chips").innerHTML = MAP_MODES.map(
+    (m) => `<button type="button" class="chip-btn ${
+      leadmap.mode === m.key ? "active" : ""
+    }" data-map-mode="${m.key}">${m.label}</button>`
+  ).join("");
+  $("map-window-chips").innerHTML = MAP_WINDOWS.map(
+    (w) => `<button type="button" class="chip-btn ${
+      leadmap.days === w.days ? "active" : ""
+    }" data-map-days="${w.days}">${w.label}</button>`
+  ).join("");
+  if (!cls) return;
+
+  drawLeadMapSvg(cls);
+  renderLeadMapLegend(cls);
+  renderLeadMapTable(cls);
+  renderLeadMapInfo(cls);
+}
+
+function drawLeadMapSvg(cls) {
+  const geo = leadmap.geo;
+  const cent = leadmap.centroids;
+  const byZip = new Map(cls.rows.map((r) => [r.zip, r]));
+
+  // Service area = zips with any all-time leads that we have geometry for.
+  const active = cls.rows.filter((r) => r.zip !== "?" && r.allTime > 0 && geo[r.zip]);
+  if (!active.length) {
+    $("map-holder").innerHTML = `<div class="empty">No mappable zips for ${escapeHtml(
+      cls.className
+    )}.</div>`;
+    return;
+  }
+  // Trim outliers (remote one-off leads) with a 2–98 percentile bounding box.
+  const xs = active.map((r) => cent[r.zip][0]).sort((a, b) => a - b);
+  const ys = active.map((r) => cent[r.zip][1]).sort((a, b) => a - b);
+  const pct = (arr, p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  const pad = 0.15;
+  let minX = pct(xs, 0.02);
+  let maxX = pct(xs, 0.98);
+  let minY = pct(ys, 0.02);
+  let maxY = pct(ys, 0.98);
+  const spanX = Math.max(maxX - minX, 0.2);
+  const spanY = Math.max(maxY - minY, 0.2);
+  minX -= spanX * pad;
+  maxX += spanX * pad;
+  minY -= spanY * pad;
+  maxY += spanY * pad;
+
+  const midLat = (minY + maxY) / 2;
+  const cos = Math.cos((midLat * Math.PI) / 180);
+  const W = 800;
+  let k = W / ((maxX - minX) * cos);
+  let H = (maxY - minY) * k;
+  if (H > 900) {
+    k *= 900 / H;
+    H = 900;
+  }
+  const px = (x) => (x - minX) * cos * k;
+  const py = (y) => (maxY - y) * k;
+  const inView = (zip) => {
+    const c = cent[zip];
+    return c && c[0] >= minX && c[0] <= maxX && c[1] >= minY && c[1] <= maxY;
+  };
+
+  const max = Math.max(1, ...active.map((r) => mapMeasure(r)));
+  const ramp = MAP_RAMPS[leadmap.mode];
+  const bucket = (v) => {
+    if (v <= 0) return -1;
+    return Math.min(ramp.length - 1, Math.floor((v / max) * ramp.length));
+  };
+
+  let paths = "";
+  for (const zip of Object.keys(geo)) {
+    if (!inView(zip)) continue;
+    const row = byZip.get(zip);
+    const v = row ? mapMeasure(row) : 0;
+    const b = bucket(v);
+    const d = geo[zip]
+      .map(
+        (ring) =>
+          "M" + ring.map(([x, y]) => `${px(x).toFixed(1)} ${py(y).toFixed(1)}`).join("L") + "Z"
+      )
+      .join("");
+    const sel = leadmap.selected === zip;
+    paths += `<path d="${d}" data-zip="${zip}" fill="${b < 0 ? MAP_ZERO : ramp[b]}"
+      stroke="${sel ? "#c0392b" : "#ffffff"}" stroke-width="${sel ? 2.5 : 0.6}"
+      ${sel ? 'class="map-selected"' : ""}></path>`;
+  }
+
+  // Label the biggest cities (by window leads) for orientation.
+  const cityBest = new Map();
+  for (const r of active) {
+    if (!r.city || !inView(r.zip)) continue;
+    const cur = cityBest.get(r.city);
+    const score = r.current + r.allTime / 100;
+    if (!cur || score > cur.score) cityBest.set(r.city, { zip: r.zip, score });
+  }
+  // Place up to 6 city labels, skipping any that would collide with one
+  // already placed (they'd be unreadable at phone scale).
+  const placed = [];
+  const labels = [...cityBest.entries()]
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, 12)
+    .map(([city, { zip }]) => {
+      if (placed.length >= 6) return "";
+      const [cx, cy] = cent[zip];
+      const x = px(cx);
+      const y = py(cy);
+      if (placed.some(([ox, oy]) => Math.abs(ox - x) < 170 && Math.abs(oy - y) < 40)) {
+        return "";
+      }
+      placed.push([x, y]);
+      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="map-city">${escapeHtml(city)}</text>`;
+    })
+    .join("");
+
+  $("map-holder").innerHTML = `
+    <svg id="map-svg" viewBox="0 0 ${W} ${Math.round(H)}" role="img"
+      aria-label="Lead heat map for ${escapeHtml(cls.className)}">${paths}${labels}</svg>`;
+}
+
+function renderLeadMapLegend(cls) {
+  const active = cls.rows.filter((r) => r.zip !== "?" && r.allTime > 0);
+  const max = Math.max(1, ...active.map((r) => mapMeasure(r)));
+  const ramp = MAP_RAMPS[leadmap.mode];
+  const step = max / ramp.length;
+  const label = leadmap.mode === "jobs" ? "jobs (all-time)" : "leads in window";
+  $("map-legend").innerHTML =
+    `<span class="map-legend-title">${label}:</span>` +
+    `<span class="map-swatch" style="background:${MAP_ZERO}"></span><span class="map-range">0</span>` +
+    ramp
+      .map((c, i) => {
+        const lo = Math.floor(i * step) + 1;
+        const hi = Math.floor((i + 1) * step);
+        return `<span class="map-swatch" style="background:${c}"></span><span class="map-range">${
+          i === ramp.length - 1 ? `${lo}+` : `${lo}–${Math.max(hi, lo)}`
+        }</span>`;
+      })
+      .join("");
+}
+
+function renderLeadMapInfo(cls) {
+  if (!leadmap.selected) {
+    $("map-info").textContent =
+      `${cls.className}: ${cls.totals.current} leads in window · ` +
+      `${cls.totals.jobs} jobs all-time. Tap a zip for details.`;
+    return;
+  }
+  const r = cls.rows.find((x) => x.zip === leadmap.selected);
+  if (!r) {
+    $("map-info").textContent = `${leadmap.selected}: no leads recorded.`;
+    return;
+  }
+  $("map-info").innerHTML = `<b>${escapeHtml(r.zip)}${
+    r.city ? " " + escapeHtml(r.city) : ""
+  }</b> — ${r.current} leads (prior ${r.previous}) · ${r.allTime} all-time · ${r.jobs} job${
+    r.jobs === 1 ? "" : "s"
+  } · ${r.conversion !== null ? Math.round(r.conversion * 100) + "% conv." : "not enough data"}`;
+}
+
+const MAP_COLS = [
+  { col: "zip", label: "Zip" },
+  { col: "city", label: "City" },
+  { col: "current", label: "Leads" },
+  { col: "previous", label: "Prior" },
+  { col: "allTime", label: "All-time" },
+  { col: "jobs", label: "Jobs" },
+  { col: "conversion", label: "Conv." },
+];
+
+function renderLeadMapTable(cls) {
+  const q = leadmap.search.trim().toLowerCase();
+  let rows = cls.rows;
+  if (q) {
+    rows = rows.filter(
+      (r) => r.zip.includes(q) || (r.city ?? "").toLowerCase().includes(q)
+    );
+  }
+  const { col, dir } = leadmap.sort;
+  rows = [...rows].sort((a, b) => {
+    const av = a[col];
+    const bv = b[col];
+    if (typeof av === "string" || typeof bv === "string") {
+      return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
+    }
+    return ((av ?? -1) - (bv ?? -1)) * dir;
+  });
+
+  $("map-table").innerHTML = `
+  <table class="mtg-table zip-table">
+    <thead><tr>${MAP_COLS.map(
+      (c) => `<th data-sort="${c.col}" class="${
+        col === c.col ? "sorted" : ""
+      }">${c.label}${col === c.col ? (dir < 0 ? " ↓" : " ↑") : ""}</th>`
+    ).join("")}</tr></thead>
+    <tbody>
+      ${rows
+        .map(
+          (r) => `<tr data-zip="${escapeHtml(r.zip)}" class="${
+            leadmap.selected === r.zip ? "zip-selected" : ""
+          }${r.allTime >= 10 && r.jobs === 0 ? " zip-never" : ""}">
+          <td>${escapeHtml(r.zip)}</td>
+          <td>${escapeHtml(r.city ?? "—")}</td>
+          <td><b>${r.current}</b></td>
+          <td>${r.previous}</td>
+          <td>${r.allTime}</td>
+          <td>${r.jobs}</td>
+          <td>${r.conversion !== null ? Math.round(r.conversion * 100) + "%" : "—"}</td>
+        </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>
+  <p class="hint">${rows.length} zips · red rows = 10+ leads, zero jobs ever.</p>`;
+}
+
+function exportLeadMapTable() {
+  const cls = leadmap.table?.classes.find((c) => c.className === leadmap.className);
+  if (!cls || typeof XLSX === "undefined") {
+    toast("Load the map first.", "error");
+    return;
+  }
+  const t = leadmap.table;
+  const wb = XLSX.utils.book_new();
+  for (const c of t.classes) {
+    const rows = [
+      [`${c.className} — leads by zip, ${t.from} to ${t.to} (window ${t.windowDays}d)`],
+      [],
+      ["Zip", "City", "Leads (window)", "Prior window", "All-time leads", "Jobs (all-time)", "Conversion"],
+      ...c.rows.map((r) => [
+        r.zip,
+        r.city ?? "",
+        r.current,
+        r.previous,
+        r.allTime,
+        r.jobs,
+        r.conversion !== null ? Math.round(r.conversion * 1000) / 1000 : "",
+      ]),
+      [],
+      ["Totals", "", c.totals.current, c.totals.previous, c.totals.allTime, c.totals.jobs, ""],
+    ];
+    sheetFromRows(wb, c.className, rows, [8, 20, 13, 12, 13, 12, 11]);
+  }
+  XLSX.writeFile(wb, `leads-by-zip-${t.to}.xlsx`);
+  toast("Zip table exported ✓", "success");
+}
+
+function initLeadMapEvents() {
+  $("map-back").addEventListener("click", () => showScreen("meeting"));
+  $("map-export").addEventListener("click", exportLeadMapTable);
+  $("map-search").addEventListener("input", (e) => {
+    leadmap.search = e.target.value;
+    const cls = leadmap.table?.classes.find((c) => c.className === leadmap.className);
+    if (cls) renderLeadMapTable(cls);
+  });
+  $("screen-leadsmap").addEventListener("click", async (e) => {
+    const cls = e.target.closest("[data-map-class]");
+    const mode = e.target.closest("[data-map-mode]");
+    const days = e.target.closest("[data-map-days]");
+    const path = e.target.closest("path[data-zip]");
+    const rowEl = e.target.closest("tr[data-zip]");
+    const th = e.target.closest("th[data-sort]");
+    if (cls) {
+      leadmap.className = cls.dataset.mapClass;
+      leadmap.selected = null;
+      renderLeadMap();
+    } else if (mode) {
+      leadmap.mode = mode.dataset.mapMode;
+      renderLeadMap();
+    } else if (days) {
+      leadmap.days = Number(days.dataset.mapDays);
+      try {
+        await loadLeadZips();
+      } catch (err) {
+        toast(err.message || "Couldn't load.", "error");
+      }
+    } else if (path || rowEl) {
+      leadmap.selected = (path ?? rowEl).dataset.zip;
+      renderLeadMap();
+    } else if (th) {
+      const col = th.dataset.sort;
+      if (leadmap.sort.col === col) leadmap.sort.dir *= -1;
+      else leadmap.sort = { col, dir: col === "zip" || col === "city" ? 1 : -1 };
+      const c = leadmap.table?.classes.find((x) => x.className === leadmap.className);
+      if (c) renderLeadMapTable(c);
+    }
+  });
+}
+
 // ─────────────────────────── Weekly snapshots ───────────────────────────
 // "Save snapshot" freezes the computed meeting, next week's staging list, and
 // the inventory position server-side, so the week's record survives the next
@@ -3155,16 +3540,21 @@ const TITLES = {
   pay: "Performance Pay",
   roster: "Roster",
   projects: "Projects",
+  leadsmap: "Lead Heat Map",
 };
 
 function showScreen(name) {
-  for (const s of ["meeting", "schedule", "staging", "inventory", "pay", "roster", "projects"]) {
+  for (const s of ["meeting", "schedule", "staging", "inventory", "pay", "roster", "projects", "leadsmap"]) {
     $(`screen-${s}`).hidden = s !== name;
   }
   $("screen-title").textContent = TITLES[name];
   $("week-label").hidden = name !== "schedule";
   document.querySelectorAll(".tab").forEach((t) =>
-    t.classList.toggle("active", t.dataset.screen === name)
+    // The map is a drill-down from the meeting; keep that tab lit.
+    t.classList.toggle(
+      "active",
+      t.dataset.screen === (name === "leadsmap" ? "meeting" : name)
+    )
   );
   if (name === "projects" && !allProjects.length) loadProjects();
   if (name === "meeting") {
@@ -3261,6 +3651,7 @@ async function init() {
   $("inv-next").addEventListener("click", () => loadInventory(shiftWeekIso(inventory.week, 1)));
   $("inv-nextweek").addEventListener("click", () => loadInventory(nextWeekStartIso()));
   $("inventory-list").addEventListener("change", inventoryChange);
+  initLeadMapEvents();
   loadRoster(); // also fills crew-name suggestions on the schedule
 
   // Week navigation.

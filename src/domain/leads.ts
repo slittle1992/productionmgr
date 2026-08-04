@@ -177,6 +177,103 @@ const MAX_CLUSTERS = 12;
 const MAX_ZIPS = 10;
 const MAX_NEVER = 12;
 
+// ── Full per-zip table (heat map + drill-down; nothing capped) ──
+
+export interface ZipTableRow {
+  zip: string;
+  city: string | null;
+  /** Leads created in the selected window / the equal window before it. */
+  current: number;
+  previous: number;
+  allTime: number;
+  /** Sold (jobs), all time. */
+  jobs: number;
+  /** All-time conversion 0–1; null under 10 leads (not enough data). */
+  conversion: number | null;
+}
+
+export interface ZipTableClass {
+  className: string;
+  rows: ZipTableRow[];
+  totals: { current: number; previous: number; allTime: number; jobs: number };
+}
+
+export interface ZipTable {
+  windowDays: number;
+  from: string;
+  to: string;
+  classes: ZipTableClass[];
+}
+
+/** Every zip for every location — the data behind the heat map + zip table. */
+export function buildZipTable(
+  leads: CompactLead[],
+  nowMs: number,
+  windowDays: number
+): ZipTable {
+  const DAY = 86_400_000;
+  const curFrom = nowMs - windowDays * DAY;
+  const prevFrom = nowMs - 2 * windowDays * DAY;
+
+  interface Acc {
+    current: number;
+    previous: number;
+    allTime: number;
+    jobs: number;
+    cities: Map<string, number>;
+  }
+  const byClass = new Map<string, Map<string, Acc>>();
+  for (const l of leads) {
+    const cls = l.className || "Unassigned";
+    let zips = byClass.get(cls);
+    if (!zips) {
+      zips = new Map();
+      byClass.set(cls, zips);
+    }
+    let a = zips.get(l.zip);
+    if (!a) {
+      a = { current: 0, previous: 0, allTime: 0, jobs: 0, cities: new Map() };
+      zips.set(l.zip, a);
+    }
+    a.allTime++;
+    if (l.cat === "sold") a.jobs++;
+    if (l.city) a.cities.set(l.city, (a.cities.get(l.city) ?? 0) + 1);
+    if (l.created >= curFrom && l.created < nowMs + DAY) a.current++;
+    else if (l.created >= prevFrom && l.created < curFrom) a.previous++;
+  }
+
+  const classes: ZipTableClass[] = [...byClass.entries()].map(([className, zips]) => {
+    const rows: ZipTableRow[] = [...zips.entries()].map(([zip, a]) => ({
+      zip,
+      city: [...a.cities.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? null,
+      current: a.current,
+      previous: a.previous,
+      allTime: a.allTime,
+      jobs: a.jobs,
+      conversion: a.allTime >= NEVER_SELL_MIN ? a.jobs / a.allTime : null,
+    }));
+    rows.sort((a, b) => b.current - a.current || b.allTime - a.allTime);
+    return {
+      className,
+      rows,
+      totals: {
+        current: rows.reduce((s, r) => s + r.current, 0),
+        previous: rows.reduce((s, r) => s + r.previous, 0),
+        allTime: rows.reduce((s, r) => s + r.allTime, 0),
+        jobs: rows.reduce((s, r) => s + r.jobs, 0),
+      },
+    };
+  });
+  classes.sort((a, b) => b.totals.current - a.totals.current);
+
+  return {
+    windowDays,
+    from: new Date(curFrom).toISOString().slice(0, 10),
+    to: new Date(nowMs).toISOString().slice(0, 10),
+    classes,
+  };
+}
+
 export function buildLeadsAnalysis(
   leads: CompactLead[],
   nowMs: number,

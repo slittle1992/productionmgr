@@ -200,6 +200,28 @@
         </div>
       </section>
 
+      <!-- ─────────────────── Lead heat map (opened from the Meeting) ─────────────────── -->
+      <section id="screen-leadsmap" class="screen" hidden>
+        <div class="map-topbar">
+          <button id="map-back" class="week-arrow map-back" type="button">← Back</button>
+          <div id="map-class-chips" class="class-chips map-chips"></div>
+        </div>
+        <div class="class-chips map-controls">
+          <span id="map-mode-chips"></span>
+          <span id="map-window-chips"></span>
+        </div>
+        <div id="map-info" class="map-info">Tap a zip for details.</div>
+        <div id="map-holder" class="map-holder">
+          <div class="loading">Loading map…</div>
+        </div>
+        <div id="map-legend" class="map-legend"></div>
+        <div class="filter-bar">
+          <input id="map-search" type="search" placeholder="Filter zip or city…" aria-label="Filter zips" />
+          <button id="map-export" class="btn-export" type="button">⬇ Export table</button>
+        </div>
+        <div id="map-table" class="map-table"></div>
+      </section>
+
       <!-- ───────────────────────── Projects ───────────────────────── -->
       <section id="screen-projects" class="screen" hidden>
         <div class="filter-bar">

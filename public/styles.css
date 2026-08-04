@@ -1850,3 +1850,108 @@ tr.totals[data-class="__all__"] td {
   padding: 3px 8px;
   border-bottom: none;
 }
+
+/* ─────────────────────────── Lead heat map ─────────────────────────── */
+.map-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.map-back {
+  width: auto;
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.map-chips {
+  flex: 1;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+.map-controls {
+  gap: 6px;
+}
+.map-info {
+  font-size: 14px;
+  color: var(--muted);
+  padding: 6px 2px;
+  min-height: 30px;
+}
+.map-holder {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.map-holder svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: manipulation;
+}
+.map-holder path {
+  cursor: pointer;
+}
+.map-holder path.map-selected {
+  filter: drop-shadow(0 0 3px rgba(192, 57, 43, 0.6));
+}
+.map-city {
+  /* viewBox is 800 wide but renders ~390px on a phone — size up to compensate. */
+  font-size: 26px;
+  font-weight: 700;
+  fill: var(--ink);
+  paint-order: stroke;
+  stroke: #ffffff;
+  stroke-width: 5px;
+  pointer-events: none;
+}
+.map-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 2px;
+}
+.map-legend-title {
+  font-weight: 700;
+  margin-right: 4px;
+}
+.map-swatch {
+  width: 18px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  display: inline-block;
+}
+.map-range {
+  margin-right: 6px;
+}
+.map-table {
+  overflow-x: auto;
+}
+.zip-table th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.zip-table th.sorted {
+  color: var(--brand);
+}
+.zip-table tr {
+  cursor: pointer;
+}
+.zip-table tr.zip-selected td {
+  background: var(--brand-light);
+}
+.zip-table tr.zip-never td {
+  color: var(--danger);
+}
+.map-open-btn {
+  border-color: var(--brand);
+  color: var(--brand);
+  font-weight: 700;
+}

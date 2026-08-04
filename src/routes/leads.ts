@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
-import { buildLeadsAnalysis, parseClientsExport } from "../domain/leads.js";
+import {
+  buildLeadsAnalysis,
+  buildZipTable,
+  parseClientsExport,
+} from "../domain/leads.js";
 import { PipelineFormatError } from "../domain/pipeline.js";
 import type { LeadsStore } from "../storage/leadsStore.js";
 import { asyncHandler } from "./asyncHandler.js";
@@ -110,6 +114,26 @@ export function leadsRouter(
         return;
       }
       res.json({ meta, analysis: buildLeadsAnalysis(leads, now(), days) });
+    })
+  );
+
+  // GET /api/leads/zips?days= — every zip per location (heat map + table).
+  router.get(
+    "/leads/zips",
+    asyncHandler(async (req, res) => {
+      const days = z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(3650)
+        .optional()
+        .parse(req.query.days || undefined) ?? 28;
+      const [meta, leads] = await Promise.all([store.getMeta(), store.getLeads()]);
+      if (!meta) {
+        res.json({ meta: null, table: null });
+        return;
+      }
+      res.json({ meta, table: buildZipTable(leads, now(), days) });
     })
   );
 

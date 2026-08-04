@@ -116,6 +116,12 @@ sign-off, note, and update so next week you know who owns what.
    in points, with ▲/▼ movement chips per location ("leads moving toward
    Plano, away from Fort Worth"). Zips with 10+ all-time leads and **zero
    sales ever** are flagged. Included in the meeting export and snapshots.
+   The **🗺 Heat map + all zips** button opens a full-screen choropleth —
+   every zip shaded by lead volume (or jobs, all-time), tap a zip for its
+   numbers — above a sortable, searchable table of **every zip** (leads,
+   prior window, all-time, jobs, conversion) with its own .xlsx export.
+   Zip boundaries are vendored US Census ZCTA polygons
+   (`public/vendor/tx-zips.json`, public-domain TIGER/Line data, simplified).
 
 Every section also has a manual **sign-off** row recording who completed it
 and when. Follow-ups, tags, and per-week state persist in the shared database,

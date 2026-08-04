@@ -212,3 +212,33 @@ describe("chunked leads upload", () => {
     expect(stale.status).toBe(409);
   });
 });
+
+describe("zip table (heat map data)", () => {
+  it("returns every zip per location with jobs and conversion", async () => {
+    const config = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    const app = buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore: new MemoryPipelineStore(),
+      scheduleStore: new MemoryScheduleStore(),
+      leadsStore: new MemoryLeadsStore(),
+      now: () => NOW,
+    }).app;
+    await request(app).post("/api/leads").send({ rows: GRID }).expect(200);
+
+    const res = await request(app).get("/api/leads/zips?days=7");
+    expect(res.status).toBe(200);
+    const dallas = res.body.table.classes.find(
+      (c: { className: string }) => c.className === "Dallas"
+    );
+    // 3 zips: 75201 (2 leads, 1 job), 76102, and "?" for the missing zip.
+    expect(dallas.rows).toHaveLength(3);
+    const z75201 = dallas.rows.find((r: { zip: string }) => r.zip === "75201");
+    expect(z75201).toMatchObject({ allTime: 2, jobs: 1, current: 2 });
+    expect(z75201.conversion).toBeNull(); // under 10 leads → not enough data
+    expect(dallas.totals.jobs).toBe(1);
+    expect(dallas.totals.allTime).toBe(4);
+  });
+});
