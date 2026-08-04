@@ -306,7 +306,8 @@ export class MeetingService {
     const pastDue = this.buildPastDue(followUps, pastDueMeta, week);
     const workOrders = buildWorkOrderReview(
       [...storedWo.uploaded, ...storedWo.manual],
-      woNotes
+      woNotes,
+      this.now()
     );
     // The Friday meeting looks AHEAD: check that the next two weeks are full
     // and evenly scheduled (on Fri 7/31 that's 8/2–8/8 and 8/9–8/15).

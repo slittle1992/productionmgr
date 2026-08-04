@@ -1571,9 +1571,11 @@ function renderMeeting() {
   };
   const subs = {
     pastdue: pastDueSubtitle(v.pastDue),
-    workorders: `${v.workOrders.totalOpen} open · ${v.workOrders.totalCompleted} done`,
+    workorders: `${v.workOrders.totalOpen} open${
+      v.workOrders.attention?.length ? ` · ${v.workOrders.attention.length} need scheduling` : ""
+    } · ${v.workOrders.totalCompleted} done`,
     pipeline: v.pipeline.available
-      ? `${v.pipeline.noStartDate.length} no date · ${v.pipeline.noCrew.length} no crew`
+      ? `${v.pipeline.unscheduled.length} missing dates · ${v.pipeline.noCrew.length} no crew`
       : "no pipeline loaded",
     labor: v.labor.rows.length
       ? v.labor.rows
@@ -1805,13 +1807,59 @@ function renderWorkOrdersSection(v) {
   </div>`;
 
   if (wo.classes.length) {
-    html += `<table class="mtg-table"><thead><tr><th>Location</th><th>Open</th><th>Open warranty</th><th>Completed</th></tr></thead><tbody>`;
+    html += `<table class="mtg-table"><thead><tr><th>Location</th><th>Open</th><th>Open warranty</th><th>⚠ Attention</th><th>Completed</th></tr></thead><tbody>`;
     for (const c of wo.classes) {
       html += `<tr><td>${escapeHtml(c.className)}</td><td>${c.open}</td><td>${
         c.openWarranties
+      }</td><td>${
+        c.needsAttention ? `<b class="wo-attn">${c.needsAttention}</b>` : "0"
       }</td><td>${c.completed}</td></tr>`;
     }
     html += `</tbody></table>`;
+  }
+
+  // Pinned to the top: open WOs that were never scheduled, or whose date
+  // already passed without being closed out.
+  if (wo.attention.length) {
+    html += `<h3 class="mtg-h3 wo-attn">⚠ Needs scheduling — unscheduled or past date, still open (${wo.attention.length})</h3>`;
+    const byClass = new Map();
+    for (const a of wo.attention) {
+      if (!byClass.has(a.className)) byClass.set(a.className, []);
+      byClass.get(a.className).push(a);
+    }
+    html += [...byClass.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([cls, rows]) => {
+        const openKey = `woattn:${cls}`;
+        const unsched = rows.filter((a) => a.reason === "unscheduled").length;
+        return `
+        <details class="mtg-class attn" data-open="${openKey}" ${
+          meeting.open.has(openKey) ? "open" : ""
+        }>
+          <summary>
+            <span class="mtg-class-name">${escapeHtml(cls)}</span>
+            <span class="mtg-class-info warn">${rows.length} WO${
+              rows.length === 1 ? "" : "s"
+            } · ${unsched} unscheduled · ${rows.length - unsched} past date</span>
+          </summary>
+          ${rows
+            .map(
+              (a) => `<div class="mtg-line attn-line">
+                <span class="mtg-badge warn">${
+                  a.reason === "unscheduled" ? "unscheduled" : "past " + fmtMsDate(a.startDate)
+                }</span>
+                #${escapeHtml(a.woNumber)} · ${escapeHtml(a.client)}${
+                  a.city ? " · " + escapeHtml(a.city) : ""
+                }
+                <span class="mtg-line-desc">${escapeHtml(a.type)} · ${escapeHtml(
+                  a.status || "OPEN"
+                )}</span>
+              </div>`
+            )
+            .join("")}
+        </details>`;
+      })
+      .join("");
   }
 
   if (wo.byLead.length) {
@@ -1953,12 +2001,21 @@ function renderPipelineSection(v) {
   );
   html += renderPipelineList(
     "nostart",
-    `No start date (${p.noStartDate.length})`,
-    p.noStartDate,
-    (j) =>
-      `#${escapeHtml(j.jobNumber)} · ${fmtMoney0(j.soldAmount)}${
-        j.salesPerson ? " · " + escapeHtml(j.salesPerson) : ""
-      }`
+    `Missing start / finish date (${p.unscheduled.length})`,
+    p.unscheduled,
+    (j) => {
+      const missing =
+        j.missingStart && j.missingFinish
+          ? "no start + finish"
+          : j.missingStart
+          ? "no start"
+          : "no finish";
+      return `<span class="mtg-badge warn">${missing}</span> #${escapeHtml(
+        j.jobNumber
+      )} · ${fmtMoney0(j.soldAmount)}${
+        j.startDate ? ` · starts ${fmtMsDate(j.startDate)}` : ""
+      }${j.salesPerson ? " · " + escapeHtml(j.salesPerson) : ""}`;
+    }
   );
   return html;
 }
@@ -2701,6 +2758,21 @@ function buildMeetingXlsx(v) {
   const wo = [
     [`Warranties — ${v.workOrders.totalOpen} open work orders`],
     [],
+    ["NEEDS SCHEDULING — UNSCHEDULED OR PAST DATE, STILL OPEN"],
+    ["Location", "WO #", "Client", "Type", "Status", "Why", "Scheduled"],
+    ...(v.workOrders.attention || [])
+      .slice()
+      .sort((a, b) => a.className.localeCompare(b.className))
+      .map((a) => [
+        a.className,
+        a.woNumber,
+        a.client,
+        a.type,
+        a.status || "",
+        a.reason === "unscheduled" ? "unscheduled" : "past date",
+        a.startDate ? new Date(a.startDate).toISOString().slice(0, 10) : "",
+      ]),
+    [],
     ["WARRANTIES BY LEAD"],
     ["Lead", "Count", "Causes"],
     ...v.workOrders.byLead.map((l) => [l.lead, l.count, l.causes.join("; ")]),
@@ -2752,12 +2824,20 @@ function buildMeetingXlsx(v) {
     ]);
   }
   pl.push([]);
-  pl.push(["NO START DATE"]);
-  pl.push(["Location", "Job #", "Sold $", "Sales person", "Description"]);
-  for (const j of [...v.pipeline.noStartDate].sort(byLocation)) {
-    pl.push([j.className, j.jobNumber, j.soldAmount, j.salesPerson || "", j.description || ""]);
+  pl.push(["MISSING START / FINISH DATE"]);
+  pl.push(["Location", "Job #", "Sold $", "Missing", "Starts", "Sales person", "Description"]);
+  for (const j of [...v.pipeline.unscheduled].sort(byLocation)) {
+    pl.push([
+      j.className,
+      j.jobNumber,
+      j.soldAmount,
+      j.missingStart && j.missingFinish ? "start + finish" : j.missingStart ? "start" : "finish",
+      j.startDate ? new Date(j.startDate).toISOString().slice(0, 10) : "",
+      j.salesPerson || "",
+      j.description || "",
+    ]);
   }
-  sheetFromRows(wb, "Pipeline", pl, [16, 12, 11, 12, 10, 34]);
+  sheetFromRows(wb, "Pipeline", pl, [16, 12, 11, 14, 12, 12, 34]);
 
   XLSX.writeFile(wb, `friday-meeting-${v.week.weekStart}.xlsx`);
   toast("Meeting exported ✓", "success");

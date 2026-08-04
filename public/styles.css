@@ -1798,3 +1798,13 @@ tr.totals[data-class="__all__"] td {
   display: flex;
   gap: 6px;
 }
+.wo-attn {
+  color: var(--danger);
+}
+.mtg-class.attn {
+  border-color: #f5c9c4;
+  background: #fdf3f2;
+}
+.attn-line .mtg-badge {
+  margin-right: 4px;
+}

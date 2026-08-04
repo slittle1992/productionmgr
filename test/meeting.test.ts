@@ -162,17 +162,19 @@ describe("work-order review", () => {
   });
 
   it("splits open/completed and rolls warranties up by tagged lead", () => {
+    const future = Date.parse("2026-08-10T09:00:00Z");
     const review = buildWorkOrderReview(
       [
-        wo({ woNumber: "1", type: "Warranty Repair", status: "SCHEDULED" }),
+        wo({ woNumber: "1", type: "Warranty Repair", status: "SCHEDULED", startDate: future }),
         wo({ woNumber: "2", type: "Craftsmanship Call Back", status: "COMPLETE" }),
-        wo({ woNumber: "3", type: "Inspection", status: "SCHEDULED" }),
+        wo({ woNumber: "3", type: "Inspection", status: "SCHEDULED", startDate: future }),
         wo({ woNumber: "4", type: "Full Redo", status: "UNSCHEDULED", className: "Dallas" }),
       ],
       {
         "wo-1": { woId: "wo-1", lead: "Dan", cause: "Edges lifted", by: null, at: "" },
         "wo-4": { woId: "wo-4", lead: "Dan", cause: "Bad prep", by: null, at: "" },
-      }
+      },
+      NOW
     );
     expect(review.totalOpen).toBe(3);
     expect(review.totalCompleted).toBe(1);
@@ -185,6 +187,27 @@ describe("work-order review", () => {
     const austin = review.classes.find((c) => c.className === "Austin")!;
     expect(austin.open).toBe(2);
     expect(austin.openWarranties).toBe(1);
+  });
+
+  it("surfaces unscheduled and past-dated-but-open WOs to the top", () => {
+    const past = Date.parse("2026-07-20T09:00:00Z"); // before NOW (7/31)
+    const future = Date.parse("2026-08-10T09:00:00Z");
+    const review = buildWorkOrderReview(
+      [
+        wo({ woNumber: "1", status: "SCHEDULED", startDate: future }), // fine
+        wo({ woNumber: "2", status: "SCHEDULED", startDate: past }), // overdue
+        wo({ woNumber: "3", status: "UNSCHEDULED", startDate: null }), // unscheduled
+        wo({ woNumber: "4", status: "SCHEDULED", startDate: null }), // no date → unscheduled
+        wo({ woNumber: "5", status: "COMPLETE", startDate: past }), // closed — ignored
+      ],
+      {},
+      NOW
+    );
+    expect(review.attention.map((a) => a.woNumber)).toEqual(["3", "4", "2"]);
+    expect(review.attention[0]!.reason).toBe("unscheduled");
+    expect(review.attention[2]!.reason).toBe("overdue");
+    const austin = review.classes.find((c) => c.className === "Austin")!;
+    expect(austin.needsAttention).toBe(3);
   });
 });
 
@@ -203,28 +226,36 @@ describe("pipeline checks", () => {
     const nextWeek = getReportingWeekFromStart("2026-08-02");
     const weekAfter = getReportingWeekFromStart("2026-08-09");
     const config = loadConfig({} as NodeJS.ProcessEnv);
+    const finish = (iso: string) => Date.parse(iso);
     const checks = buildPipelineChecks(
       [
-        project({ jobNumber: "1" }), // no start date
+        project({ jobNumber: "1" }), // no start OR finish date
         project({
           jobNumber: "2",
           estimatedStartDate: Date.parse("2026-08-04T12:00:00Z"),
+          estimatedFinishDate: finish("2026-08-04T17:00:00Z"),
         }), // next week, no crew → urgent
         project({
           jobNumber: "3",
           estimatedStartDate: Date.parse("2026-08-04T12:00:00Z"),
+          estimatedFinishDate: finish("2026-08-04T17:00:00Z"),
           customFields: { Crew: "Trailer 1" },
           estimatedValue: 9000,
         }),
         project({
           jobNumber: "4",
           estimatedStartDate: Date.parse("2026-09-10T12:00:00Z"),
-        }), // further out, no crew
+        }), // has a start but NO finish, and no crew
       ],
       [nextWeek, weekAfter],
       config.customFields
     );
-    expect(checks.noStartDate.map((j) => j.jobNumber)).toEqual(["1"]);
+    // Job 1 is missing both dates; job 4 has a start but no finish.
+    expect(checks.unscheduled.map((j) => j.jobNumber)).toEqual(["1", "4"]);
+    expect(checks.unscheduled[0]!.missingStart).toBe(true);
+    expect(checks.unscheduled[0]!.missingFinish).toBe(true);
+    expect(checks.unscheduled[1]!.missingStart).toBe(false);
+    expect(checks.unscheduled[1]!.missingFinish).toBe(true);
     expect(checks.noCrew.map((j) => j.jobNumber)).toEqual(["2", "4"]);
     expect(checks.noCrew[0]!.startsSoon).toBe(true);
     expect(checks.noCrew[1]!.startsSoon).toBe(false);

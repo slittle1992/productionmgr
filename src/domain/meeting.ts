@@ -107,6 +107,22 @@ export interface WorkOrderClassSummary {
   open: number;
   completed: number;
   openWarranties: number;
+  /** Open WOs that are unscheduled or whose date already passed. */
+  needsAttention: number;
+}
+
+/** An open WO that needs scheduling attention, surfaced to the top. */
+export interface AttentionWo {
+  id: string;
+  woNumber: string;
+  client: string;
+  city: string | null;
+  type: string;
+  status: string | null;
+  startDate: number | null;
+  className: string;
+  /** "unscheduled" (no date / UNSCHEDULED status) or "past date, still open". */
+  reason: "unscheduled" | "overdue";
 }
 
 export interface WarrantyRow {
@@ -132,6 +148,8 @@ export interface LeadWarrantySummary {
 
 export interface WorkOrderReview {
   classes: WorkOrderClassSummary[];
+  /** Open WOs needing scheduling attention — unscheduled or past-dated. */
+  attention: AttentionWo[];
   /** Warranty-type WOs, open first then newest first, with lead/cause tags. */
   warranties: WarrantyRow[];
   /** Warranties grouped by tagged lead — "who causes warranties and why". */
@@ -143,10 +161,12 @@ export interface WorkOrderReview {
 
 export function buildWorkOrderReview(
   workOrders: WorkOrder[],
-  notes: Record<string, WoNote>
+  notes: Record<string, WoNote>,
+  nowMs: number
 ): WorkOrderReview {
   const classes = new Map<string, WorkOrderClassSummary>();
   const warranties: WarrantyRow[] = [];
+  const attention: AttentionWo[] = [];
   let totalOpen = 0;
   let totalCompleted = 0;
 
@@ -154,7 +174,13 @@ export function buildWorkOrderReview(
     const cls = wo.className || "Unassigned";
     let sum = classes.get(cls);
     if (!sum) {
-      sum = { className: cls, open: 0, completed: 0, openWarranties: 0 };
+      sum = {
+        className: cls,
+        open: 0,
+        completed: 0,
+        openWarranties: 0,
+        needsAttention: 0,
+      };
       classes.set(cls, sum);
     }
     const closed = isClosedStatus(wo.status);
@@ -166,6 +192,26 @@ export function buildWorkOrderReview(
       sum.open++;
       totalOpen++;
       if (warranty) sum.openWarranties++;
+
+      // Surface open WOs that were never scheduled, or whose scheduled date
+      // already passed without the WO being closed out.
+      const unscheduled =
+        wo.startDate === null || wo.status?.toUpperCase() === "UNSCHEDULED";
+      const overdue = !unscheduled && wo.startDate !== null && wo.startDate < nowMs;
+      if (unscheduled || overdue) {
+        sum.needsAttention++;
+        attention.push({
+          id: wo.id,
+          woNumber: wo.woNumber,
+          client: wo.client,
+          city: wo.city,
+          type: wo.type,
+          status: wo.status,
+          startDate: wo.startDate,
+          className: cls,
+          reason: unscheduled ? "unscheduled" : "overdue",
+        });
+      }
     }
     if (warranty) {
       const note = notes[wo.id];
@@ -191,6 +237,12 @@ export function buildWorkOrderReview(
     return (b.createdDate ?? 0) - (a.createdDate ?? 0);
   });
 
+  // Unscheduled first, then most-overdue first.
+  attention.sort((a, b) => {
+    if (a.reason !== b.reason) return a.reason === "unscheduled" ? -1 : 1;
+    return (a.startDate ?? 0) - (b.startDate ?? 0);
+  });
+
   const byLeadMap = new Map<string, LeadWarrantySummary>();
   let untagged = 0;
   for (const w of warranties) {
@@ -211,6 +263,7 @@ export function buildWorkOrderReview(
     classes: [...classes.values()].sort((a, b) =>
       a.className.localeCompare(b.className)
     ),
+    attention,
     warranties,
     byLead: [...byLeadMap.values()].sort((a, b) => b.count - a.count),
     untaggedWarranties: untagged,
@@ -227,9 +280,13 @@ export interface PipelineJobFlag {
   className: string;
   soldAmount: number;
   startDate: number | null;
+  finishDate: number | null;
   salesPerson: string | null;
   /** True when the job starts inside the first look-ahead week (urgent). */
   startsSoon: boolean;
+  /** Which dates are missing (for the not-fully-scheduled list). */
+  missingStart: boolean;
+  missingFinish: boolean;
 }
 
 export interface DayLoad {
@@ -257,8 +314,8 @@ export interface PipelineWeekLoad {
 }
 
 export interface PipelineChecks {
-  /** Jobs with no start date at all (unscheduled backlog), by class. */
-  noStartDate: PipelineJobFlag[];
+  /** Jobs missing a scheduled start and/or finish date, by class. */
+  unscheduled: PipelineJobFlag[];
   /** Jobs scheduled (any date) but with no crew/labor assigned. */
   noCrew: PipelineJobFlag[];
   /**
@@ -347,7 +404,7 @@ export function buildPipelineChecks(
   weeks: ReportingWeek[],
   fields: CustomFieldNames
 ): PipelineChecks {
-  const noStartDate: PipelineJobFlag[] = [];
+  const unscheduled: PipelineJobFlag[] = [];
   const noCrew: PipelineJobFlag[] = [];
   const soonWeek = weeks[0];
 
@@ -357,30 +414,41 @@ export function buildPipelineChecks(
     className: p.className ?? "Unassigned",
     soldAmount: p.estimatedValue ?? 0,
     startDate: p.estimatedStartDate ?? null,
+    finishDate: p.estimatedFinishDate ?? null,
     salesPerson: p.salesPersonFirstName ?? null,
     startsSoon,
+    missingStart: p.estimatedStartDate === undefined || p.estimatedStartDate === null,
+    missingFinish: p.estimatedFinishDate === undefined || p.estimatedFinishDate === null,
   });
 
   for (const p of projects) {
     if (p.projectStatusIsCancelled || p.projectStatusIsComplete) continue;
     const start = p.estimatedStartDate;
-    if (start === undefined || start === null) {
-      noStartDate.push(flag(p, false));
-    } else if (!crewOf(p, fields)) {
+    const hasStart = start !== undefined && start !== null;
+    const hasFinish = p.estimatedFinishDate !== undefined && p.estimatedFinishDate !== null;
+
+    // A job isn't fully scheduled until it has BOTH a start and a finish date.
+    if (!hasStart || !hasFinish) {
+      unscheduled.push(flag(p, hasStart ? isWithinWeek(start, soonWeek!) : false));
+    }
+    if (hasStart && !crewOf(p, fields)) {
       noCrew.push(flag(p, soonWeek ? isWithinWeek(start, soonWeek) : false));
     }
   }
 
-  noStartDate.sort(
-    (a, b) => a.className.localeCompare(b.className) || b.soldAmount - a.soldAmount
-  );
+  // Missing both dates first, then soonest-starting missing-finish jobs.
+  unscheduled.sort((a, b) => {
+    if (a.missingStart !== b.missingStart) return a.missingStart ? -1 : 1;
+    if (a.missingStart) return b.soldAmount - a.soldAmount;
+    return (a.startDate ?? 0) - (b.startDate ?? 0);
+  });
   noCrew.sort((a, b) => {
     if (a.startsSoon !== b.startsSoon) return a.startsSoon ? -1 : 1;
     return (a.startDate ?? 0) - (b.startDate ?? 0);
   });
 
   return {
-    noStartDate,
+    unscheduled,
     noCrew,
     weeks: weeks.map((w) => buildWeekLoad(projects, w)),
     totalJobs: projects.length,
