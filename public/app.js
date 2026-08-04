@@ -2510,10 +2510,7 @@ async function handleMeetingUpload(kind, file, className) {
     toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
     refreshPipelineStatus(); // keep the Schedule tab's status bar in sync
   } else if (kind === "leads") {
-    const data = await meetingApi("/api/leads", "POST", {
-      filename: file.name,
-      rows: firstRows(),
-    });
+    const data = await uploadLeadsChunked(file.name, firstRows());
     toast(`${data.count.toLocaleString()} leads loaded ✓`, "success");
     meeting.leadsKey = null; // force a fresh analysis
     meeting.open.add("sec:leads");
@@ -3023,6 +3020,61 @@ function buildMeetingXlsx(v, leadsView) {
 
   XLSX.writeFile(wb, `friday-meeting-${v.week.weekStart}.xlsx`);
   toast("Meeting exported ✓", "success");
+}
+
+/**
+ * The clients export is ~35k rows — far past serverless request limits as one
+ * JSON post (Vercel caps bodies at 4.5MB). Trim to the columns the analysis
+ * needs and send in chunks; every chunk repeats the header so the server can
+ * parse each piece independently.
+ */
+async function uploadLeadsChunked(filename, rows) {
+  const NEEDED = {
+    name: ["name", "client", "customer"],
+    state: ["state"],
+    city: ["city"],
+    zip: ["zip", "zip code", "zipcode"],
+    class: ["class"],
+    created: ["created"],
+    status: ["lead status", "status"],
+  };
+  const hdrIdx = rows.findIndex((r) =>
+    (r || []).some((c) => {
+      const t = String(c ?? "").trim().toLowerCase();
+      return t === "lead status" || t === "zip";
+    })
+  );
+  // No recognisable header — send as-is and let the server explain the format.
+  if (hdrIdx < 0) return meetingApi("/api/leads", "POST", { filename, rows });
+
+  const lower = rows[hdrIdx].map((c) => String(c ?? "").trim().toLowerCase());
+  const cols = Object.values(NEEDED).map((names) =>
+    lower.findIndex((c) => names.includes(c))
+  );
+  const pick = (row) => cols.map((i) => (i >= 0 ? row?.[i] ?? null : null));
+
+  // Keep the tiny title rows (they carry the "Data as of…" label).
+  const preamble = rows.slice(0, hdrIdx).map((r) => [r?.[0] ?? null, r?.[1] ?? null]);
+  const header = pick(rows[hdrIdx]);
+  const data = rows.slice(hdrIdx + 1).map(pick);
+
+  const CHUNK = 6000;
+  const chunks = Math.max(1, Math.ceil(data.length / CHUNK));
+  const uploadId = `u${Date.now()}`;
+  const label = document.querySelector('.mtg-section[data-open="sec:leads"] .btn-upload span');
+  let last;
+  for (let i = 0; i < chunks; i++) {
+    if (label && chunks > 1) label.textContent = `Uploading ${i + 1}/${chunks}…`;
+    last = await meetingApi("/api/leads", "POST", {
+      filename,
+      uploadId,
+      seq: i,
+      chunks,
+      rows: [...preamble, header, ...data.slice(i * CHUNK, (i + 1) * CHUNK)],
+    });
+  }
+  if (label) label.textContent = "Upload leads";
+  return last;
 }
 
 // ─────────────────────────── Weekly snapshots ───────────────────────────

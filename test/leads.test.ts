@@ -148,3 +148,67 @@ describe("leads API", () => {
     expect(leadsSection.autoDone).toBe(true);
   });
 });
+
+describe("chunked leads upload", () => {
+  function makeApp(store: MemoryLeadsStore) {
+    const config = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    return buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore: new MemoryPipelineStore(),
+      scheduleStore: new MemoryScheduleStore(),
+      leadsStore: store,
+      now: () => NOW,
+    }).app;
+  }
+
+  const HEADER = GRID.slice(0, 3);
+  const chunkRows = (dataRows: unknown[][]) => [...HEADER, ...dataRows];
+
+  it("assembles chunks in order and finalises the meta", async () => {
+    const store = new MemoryLeadsStore();
+    const app = makeApp(store);
+    const id = "u-test-1";
+
+    await request(app)
+      .post("/api/leads")
+      .send({ filename: "clients.xlsx", uploadId: id, seq: 0, chunks: 3, rows: chunkRows([GRID[3]!, GRID[4]!]) })
+      .expect(200);
+    // Mid-upload: meta is cleared so a half-finished upload never looks done.
+    expect(await store.getMeta()).toBeNull();
+
+    await request(app)
+      .post("/api/leads")
+      .send({ filename: "clients.xlsx", uploadId: id, seq: 1, chunks: 3, rows: chunkRows([GRID[5]!]) })
+      .expect(200);
+    const final = await request(app)
+      .post("/api/leads")
+      .send({ filename: "clients.xlsx", uploadId: id, seq: 2, chunks: 3, rows: chunkRows([GRID[6]!]) });
+    expect(final.status).toBe(200);
+    expect(final.body.done).toBe(true);
+    expect(final.body.count).toBe(4);
+    expect((await store.getMeta())!.count).toBe(4);
+    expect(await store.getLeads()).toHaveLength(4);
+  });
+
+  it("rejects a stale chunk after a competing upload restarts", async () => {
+    const store = new MemoryLeadsStore();
+    const app = makeApp(store);
+    await request(app)
+      .post("/api/leads")
+      .send({ uploadId: "old", seq: 0, chunks: 2, rows: chunkRows([GRID[3]!]) })
+      .expect(200);
+    // A second uploader starts over…
+    await request(app)
+      .post("/api/leads")
+      .send({ uploadId: "new", seq: 0, chunks: 2, rows: chunkRows([GRID[4]!]) })
+      .expect(200);
+    // …so the old upload's next chunk conflicts instead of corrupting data.
+    const stale = await request(app)
+      .post("/api/leads")
+      .send({ uploadId: "old", seq: 1, chunks: 2, rows: chunkRows([GRID[5]!]) });
+    expect(stale.status).toBe(409);
+  });
+});
