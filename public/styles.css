@@ -1808,3 +1808,45 @@ tr.totals[data-class="__all__"] td {
 .attn-line .mtg-badge {
   margin-right: 4px;
 }
+
+/* Leads by area */
+.leads-windows {
+  margin: 10px 0 4px;
+}
+.lead-moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+.lead-move {
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 20px;
+  padding: 3px 10px;
+}
+.lead-move.up {
+  background: #e6f6ec;
+  color: var(--accent);
+}
+.lead-move.down {
+  background: #fdecea;
+  color: var(--danger);
+}
+.leads-table {
+  margin: 8px 0 4px;
+}
+.leads-table td.lead-up {
+  color: var(--accent);
+  font-weight: 700;
+}
+.leads-table td.lead-down {
+  color: var(--danger);
+  font-weight: 700;
+}
+.leads-ziprow td {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 3px 8px;
+  border-bottom: none;
+}

@@ -35,6 +35,12 @@ import {
   type InventoryStore,
 } from "./storage/inventoryStore.js";
 import { snapshotRouter } from "./routes/snapshot.js";
+import { leadsRouter } from "./routes/leads.js";
+import {
+  JsonLeadsStore,
+  KvLeadsStore,
+  type LeadsStore,
+} from "./storage/leadsStore.js";
 import {
   JsonSnapshotStore,
   KvSnapshotStore,
@@ -104,6 +110,7 @@ export interface BuildAppOptions {
   meetingStore?: MeetingStore;
   inventoryStore?: InventoryStore;
   snapshotStore?: SnapshotStore;
+  leadsStore?: LeadsStore;
   now?: () => number;
 }
 
@@ -181,6 +188,9 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const snapshotStore =
     options.snapshotStore ??
     (kv ? new KvSnapshotStore(kv) : new JsonSnapshotStore(config.dataDir));
+  const leadsStore =
+    options.leadsStore ??
+    (kv ? new KvLeadsStore(kv) : new JsonLeadsStore(config.dataDir));
 
   const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
@@ -236,15 +246,24 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
     workOrderStore,
     provider,
     config,
-    now
+    now,
+    leadsStore
   );
 
   app.use("/api", pipelineRouter(pipelineStore, now));
   app.use("/api", meetingRouter(meetingService));
   app.use("/api", stagingRouter(scheduleService, inventoryStore, now));
+  app.use("/api", leadsRouter(leadsStore, now));
   app.use(
     "/api",
-    snapshotRouter(meetingService, scheduleService, inventoryStore, snapshotStore, now)
+    snapshotRouter(
+      meetingService,
+      scheduleService,
+      inventoryStore,
+      snapshotStore,
+      now,
+      leadsStore
+    )
   );
   app.use("/api", workOrdersRouter(workOrderStore, now));
   app.use("/api", rosterRouter(rosterStore, now));

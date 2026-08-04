@@ -24,6 +24,8 @@ export interface WeeklySnapshot extends SnapshotMeta {
   meeting: unknown;
   staging: unknown;
   inventory: unknown;
+  /** Leads-by-area analysis at save time (null if no leads upload yet). */
+  leads?: unknown;
 }
 
 export interface SnapshotStore {

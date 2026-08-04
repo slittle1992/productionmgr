@@ -1496,6 +1496,7 @@ const MEETING_SECTIONS = [
   { key: "reviews", n: 5, title: "Reviews dashboard" },
   { key: "lytx", n: 6, title: "Lytx incidents" },
   { key: "ramp", n: 7, title: "Ramp spend" },
+  { key: "leads", n: 8, title: "Leads by area" },
 ];
 
 const meeting = {
@@ -1506,6 +1507,10 @@ const meeting = {
   // Pending payroll-workbook uploads awaiting a "use this sheet" pick,
   // keyed by class — each market uploads its own payroll workbook.
   payroll: {},
+  // Leads analysis: window in days + cached analysis keyed by upload+window.
+  leadsDays: 28,
+  leadsView: null,
+  leadsKey: null,
 };
 
 const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
@@ -1568,6 +1573,7 @@ function renderMeeting() {
     reviews: renderCheckSection(v, "reviews"),
     lytx: renderCheckSection(v, "lytx"),
     ramp: renderCheckSection(v, "ramp"),
+    leads: renderLeadsSection(v),
   };
   const subs = {
     pastdue: pastDueSubtitle(v.pastDue),
@@ -1586,6 +1592,9 @@ function renderMeeting() {
     reviews: v.checks.reviews.status === "done" ? "reviewed" : "needs review",
     lytx: v.checks.lytx.status === "done" ? "reviewed" : "needs review",
     ramp: v.checks.ramp.status === "done" ? "reviewed" : "needs review",
+    leads: v.leads
+      ? `${v.leads.count.toLocaleString()} leads loaded`
+      : "upload the clients export",
   };
 
   $("meeting-sections").innerHTML = MEETING_SECTIONS.map((s) => {
@@ -2190,6 +2199,138 @@ function renderCheckSection(v, key) {
   </div>`;
 }
 
+// ── §8 Leads by area ──
+const LEAD_WINDOWS = [
+  { days: 7, label: "Last week" },
+  { days: 28, label: "Last 4 weeks" },
+  { days: 91, label: "Last quarter" },
+];
+
+function renderLeadsSection(v) {
+  let html = `
+  <p class="card-help">Where leads come from, per location — clustered by ZIP
+  prefix (761 = Fort Worth, 752 = Dallas…). <b>Share shift</b> compares this
+  window against the equal window before it, so you can see leads moving
+  toward or away from an area. Zips with volume but <b>zero sales ever</b> are
+  flagged.</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      v.leads
+        ? `<strong>${escapeHtml(v.leads.sourceLabel || v.leads.filename || "Clients list")}</strong> · ${v.leads.count.toLocaleString()} leads · uploaded ${fmtDate(v.leads.uploadedAt)}`
+        : "Upload the Builder Prime <strong>Clients List</strong> export."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload leads</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="leads" hidden />
+      </label>
+    </div>
+  </div>`;
+  if (!v.leads) return html;
+
+  html += `<div class="class-chips leads-windows">${LEAD_WINDOWS.map(
+    (w) => `<button type="button" class="chip-btn ${
+      meeting.leadsDays === w.days ? "active" : ""
+    }" data-act="leads-window" data-days="${w.days}">${w.label}</button>`
+  ).join("")}</div>`;
+
+  const a = meeting.leadsView;
+  if (!a || meeting.leadsKey !== `${v.leads.uploadedAt}|${meeting.leadsDays}`) {
+    fetchLeadsAnalysis();
+    return html + `<div class="loading">Crunching ${v.leads.count.toLocaleString()} leads…</div>`;
+  }
+
+  html += `<p class="hint">Window: ${escapeHtml(a.from)} → ${escapeHtml(a.to)} vs the ${a.windowDays} days before.</p>`;
+
+  for (const cls of a.classes) {
+    const openKey = `leads:${cls.className}`;
+    const trend =
+      cls.previous > 0
+        ? Math.round(((cls.current - cls.previous) / cls.previous) * 100)
+        : null;
+    const moveChips = [
+      ...cls.gaining.map(
+        (c) => `<span class="lead-move up">▲ ${escapeHtml(clusterLabel(c))} +${c.shareShiftPts}pts</span>`
+      ),
+      ...cls.fading.map(
+        (c) => `<span class="lead-move down">▼ ${escapeHtml(clusterLabel(c))} ${c.shareShiftPts}pts</span>`
+      ),
+    ].join("");
+
+    html += `
+    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+      <summary>
+        <span class="mtg-class-name">${escapeHtml(cls.className)}</span>
+        <span class="mtg-class-info">${cls.current} leads${
+          trend !== null ? ` · ${trend >= 0 ? "▲" : "▼"}${Math.abs(trend)}% vs prior` : ""
+        } · ${cls.soldCurrentCohort} sold</span>
+      </summary>
+      ${moveChips ? `<div class="lead-moves">${moveChips}</div>` : ""}
+      ${
+        cls.neverSells.length
+          ? `<div class="stg-warn">🕳 Leads but <b>zero sales ever</b>: ${cls.neverSells
+              .map(
+                (z) => `${escapeHtml(z.zip)}${z.city ? " " + escapeHtml(z.city) : ""} (${z.allTime})`
+              )
+              .join(" · ")}</div>`
+          : ""
+      }
+      <table class="mtg-table leads-table">
+        <thead><tr><th>Area</th><th>Leads</th><th>Prior</th><th>Shift</th><th>Conv.</th></tr></thead>
+        <tbody>
+        ${cls.clusters
+          .map(
+            (c) => `<tr>
+              <td>${escapeHtml(clusterLabel(c))}</td>
+              <td><b>${c.current}</b></td>
+              <td>${c.previous}</td>
+              <td class="${c.shareShiftPts > 0.5 ? "lead-up" : c.shareShiftPts < -0.5 ? "lead-down" : ""}">${
+                c.shareShiftPts > 0 ? "+" : ""
+              }${c.shareShiftPts}pts</td>
+              <td>${c.allTime >= 10 ? Math.round(c.conversion * 100) + "%" : "—"}</td>
+            </tr>
+            ${c.zips
+              .filter((z) => z.current > 0)
+              .slice(0, 5)
+              .map(
+                (z) => `<tr class="leads-ziprow">
+                  <td>· ${escapeHtml(z.zip)}${z.city ? " " + escapeHtml(z.city) : ""}</td>
+                  <td>${z.current}</td><td>${z.previous}</td><td></td>
+                  <td>${z.allTime >= 10 ? Math.round((z.soldAllTime / z.allTime) * 100) + "%" : "—"}</td>
+                </tr>`
+              )
+              .join("")}`
+          )
+          .join("")}
+        </tbody>
+      </table>
+    </details>`;
+  }
+  return html;
+}
+
+function clusterLabel(c) {
+  const cities = c.cities?.length ? ` ${c.cities.join("/")}` : "";
+  return c.cluster === "?" ? "No zip" : `${c.cluster}xx${cities}`;
+}
+
+async function fetchLeadsAnalysis() {
+  const v = meeting.view;
+  if (!v?.leads) return;
+  const key = `${v.leads.uploadedAt}|${meeting.leadsDays}`;
+  if (meeting.leadsKey === key || fetchLeadsAnalysis._busy === key) return;
+  fetchLeadsAnalysis._busy = key;
+  try {
+    const data = await meetingApi(`/api/leads?days=${meeting.leadsDays}`, "GET");
+    meeting.leadsView = data.analysis;
+    meeting.leadsKey = key;
+    renderMeeting();
+  } catch {
+    /* leave the loading state; a re-open retries */
+  } finally {
+    fetchLeadsAnalysis._busy = null;
+  }
+}
+
 // ── Event handling ──
 function meetingToggle(e) {
   const key = e.target?.dataset?.open;
@@ -2313,6 +2454,9 @@ async function meetingClick(e) {
     } else if (act === "payroll-cancel") {
       delete meeting.payroll[btn.dataset.class];
       renderMeeting();
+    } else if (act === "leads-window") {
+      meeting.leadsDays = Number(btn.dataset.days);
+      renderMeeting(); // triggers fetchLeadsAnalysis for the new window
     }
   } catch (err) {
     toast(err.message || "Couldn't save.", "error");
@@ -2365,6 +2509,14 @@ async function handleMeetingUpload(kind, file, className) {
     });
     toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
     refreshPipelineStatus(); // keep the Schedule tab's status bar in sync
+  } else if (kind === "leads") {
+    const data = await meetingApi("/api/leads", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    toast(`${data.count.toLocaleString()} leads loaded ✓`, "success");
+    meeting.leadsKey = null; // force a fresh analysis
+    meeting.open.add("sec:leads");
   } else if (kind === "payroll") {
     // One payroll workbook per market. Each has one sheet per pay period —
     // send them all and let the user pick the right week on that market's row.
@@ -2689,7 +2841,7 @@ function exportMeeting() {
 }
 
 /** Build + download the meeting workbook from a meeting view (live or snapshot). */
-function buildMeetingXlsx(v) {
+function buildMeetingXlsx(v, leadsView) {
   const wb = XLSX.utils.book_new();
   const secTitle = Object.fromEntries(MEETING_SECTIONS.map((s) => [s.key, s.title]));
 
@@ -2839,6 +2991,36 @@ function buildMeetingXlsx(v) {
   }
   sheetFromRows(wb, "Pipeline", pl, [16, 12, 11, 14, 12, 12, 34]);
 
+  // Leads by area — from the live analysis or a snapshot's frozen copy.
+  const leads = leadsView ?? (v === meeting.view ? meeting.leadsView : null);
+  if (leads) {
+    const ld = [
+      [`Leads by area — ${leads.from} to ${leads.to} (vs the ${leads.windowDays} days before)`],
+      [],
+    ];
+    for (const cls of leads.classes) {
+      ld.push([`${cls.className.toUpperCase()} — ${cls.current} leads (prior ${cls.previous}), ${cls.soldCurrentCohort} sold`]);
+      ld.push(["Area", "Cities", "Leads", "Prior", "Share shift (pts)", "All-time leads", "All-time sold", "Conversion"]);
+      for (const c of cls.clusters) {
+        ld.push([
+          c.cluster === "?" ? "No zip" : c.cluster + "xx",
+          c.cities.join(" / "),
+          c.current,
+          c.previous,
+          c.shareShiftPts,
+          c.allTime,
+          c.soldAllTime,
+          c.allTime >= 10 ? Math.round(c.conversion * 100) / 100 : "",
+        ]);
+      }
+      if (cls.neverSells.length) {
+        ld.push(["Zero sales ever:", cls.neverSells.map((z) => `${z.zip} ${z.city || ""} (${z.allTime})`).join(", ")]);
+      }
+      ld.push([]);
+    }
+    sheetFromRows(wb, "Leads", ld, [12, 24, 8, 8, 14, 12, 12, 11]);
+  }
+
   XLSX.writeFile(wb, `friday-meeting-${v.week.weekStart}.xlsx`);
   toast("Meeting exported ✓", "success");
 }
@@ -2904,7 +3086,7 @@ async function snapshotClick(e) {
       "GET"
     );
     if (btn.dataset.kind === "staging") buildStagingXlsx(snap.staging);
-    else buildMeetingXlsx(snap.meeting);
+    else buildMeetingXlsx(snap.meeting, snap.leads ?? null);
   } catch (err) {
     toast(err.message || "Couldn't download that snapshot.", "error");
   } finally {

@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { buildInventoryView, buildStaging } from "../domain/staging.js";
+import { buildLeadsAnalysis } from "../domain/leads.js";
 import type { MeetingService } from "../services/meetingService.js";
 import type { ScheduleService } from "../services/scheduleService.js";
 import type { InventoryStore } from "../storage/inventoryStore.js";
+import type { LeadsStore } from "../storage/leadsStore.js";
 import type { SnapshotStore, WeeklySnapshot } from "../storage/snapshotStore.js";
 import { asyncHandler } from "./asyncHandler.js";
 
@@ -17,7 +19,8 @@ export function snapshotRouter(
   scheduleService: ScheduleService,
   inventoryStore: InventoryStore,
   store: SnapshotStore,
-  now: () => number = () => Date.now()
+  now: () => number = () => Date.now(),
+  leadsStore?: LeadsStore
 ): Router {
   const router = Router();
   const isoWeek = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -44,6 +47,12 @@ export function snapshotRouter(
       ]);
       const staging = buildStaging(schedule);
 
+      // Freeze the leads-by-area analysis too (4-week window), when uploaded.
+      let leads: unknown = null;
+      if (leadsStore && (await leadsStore.getMeta())) {
+        leads = buildLeadsAnalysis(await leadsStore.getLeads(), now(), 28);
+      }
+
       const snapshot: WeeklySnapshot = {
         weekStart: meeting.week.weekStart,
         weekEnd: meeting.week.weekEnd,
@@ -52,6 +61,7 @@ export function snapshotRouter(
         meeting,
         staging,
         inventory: buildInventoryView(staging, inventory),
+        leads,
       };
       await store.save(snapshot);
       res.json({

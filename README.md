@@ -73,9 +73,9 @@ endpoints still exist server-side.)
 
 ## Friday Production Meeting (Meeting tab)
 
-A 7-item weekly checklist that the owner, production manager, or an admin can
+An 8-item weekly checklist that the owner, production manager, or an admin can
 run from a phone or desktop. Each section shows a progress ring; the header
-tracks "N of 7 done". Enter your name once at the top — it's stamped on every
+tracks "N of 8 done". Enter your name once at the top — it's stamped on every
 sign-off, note, and update so next week you know who owns what.
 
 1. **Past due balances** — upload the Builder Prime **Unpaid Invoices** export.
@@ -109,6 +109,13 @@ sign-off, note, and update so next week you know who owns what.
    (configurable via `REVIEWS_DASHBOARD_URL`, `LYTX_DASHBOARD_URL`,
    `RAMP_DASHBOARD_URL`), a notes box for what you found (incidents, counts,
    actions taken), and a *Mark reviewed* sign-off.
+8. **Leads by area** — upload the **Clients List** export. Leads group per
+   location, then by **ZIP cluster** (first three digits ≈ a metro: 752xx
+   Dallas, 761xx Fort Worth). Pick a window (last week / 4 weeks / quarter):
+   each cluster shows leads vs the prior equal window and its **share shift**
+   in points, with ▲/▼ movement chips per location ("leads moving toward
+   Plano, away from Fort Worth"). Zips with 10+ all-time leads and **zero
+   sales ever** are flagged. Included in the meeting export and snapshots.
 
 Every section also has a manual **sign-off** row recording who completed it
 and when. Follow-ups, tags, and per-week state persist in the shared database,

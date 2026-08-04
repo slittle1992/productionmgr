@@ -22,6 +22,7 @@ import type { RawGrid } from "../domain/pipeline.js";
 import { getReportingWeek, getReportingWeekFromStart, type ReportingWeek } from "../domain/week.js";
 import type { MeetingStore, StoredUploadMeta } from "../storage/meetingStore.js";
 import type { WorkOrderStore } from "../storage/workOrderStore.js";
+import type { LeadsMeta, LeadsStore } from "../storage/leadsStore.js";
 import type { PayrollSheet } from "../domain/payroll.js";
 import { summarisePayrollWorkbook } from "../domain/payroll.js";
 
@@ -81,6 +82,8 @@ export interface MeetingView {
   };
   checks: Record<CheckKey, ManualCheck>;
   links: { reviews: string | null; lytx: string | null; ramp: string | null };
+  /** Leads upload status; the analysis itself is served by GET /api/leads. */
+  leads: LeadsMeta | null;
   sections: SectionProgress[];
   doneCount: number;
   sectionCount: number;
@@ -92,7 +95,8 @@ export class MeetingService {
     private readonly workOrderStore: WorkOrderStore,
     private readonly provider: ProjectProvider,
     private readonly config: AppConfig,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly leadsStore?: LeadsStore
   ) {}
 
   resolveWeek(weekStart?: string): ReportingWeek {
@@ -285,7 +289,7 @@ export class MeetingService {
   /** The whole meeting for a week, every agenda item assembled. */
   async getMeeting(weekStart?: string): Promise<MeetingView> {
     const week = this.resolveWeek(weekStart);
-    const [followUps, pastDueMeta, woNotes, completed, doc, storedWo] =
+    const [followUps, pastDueMeta, woNotes, completed, doc, storedWo, leadsMeta] =
       await Promise.all([
         this.store.getFollowUps(),
         this.store.getPastDueMeta(),
@@ -293,6 +297,7 @@ export class MeetingService {
         this.store.getCompleted(),
         this.store.getWeek(week.weekStart),
         this.workOrderStore.get(),
+        this.leadsStore?.getMeta() ?? Promise.resolve(null),
       ]);
 
     let projects: Awaited<ReturnType<ProjectProvider["listAllProjects"]>> = [];
@@ -328,7 +333,8 @@ export class MeetingService {
       pastDue,
       workOrders,
       pipeline.totalJobs > 0,
-      laborRows
+      laborRows,
+      leadsMeta !== null
     );
     const doneCount = sections.filter((s) => s.done).length;
 
@@ -351,6 +357,7 @@ export class MeetingService {
       },
       checks: doc.checks,
       links: this.config.meetingLinks,
+      leads: leadsMeta,
       sections,
       doneCount,
       sectionCount: SECTION_KEYS.length,
@@ -422,7 +429,8 @@ export class MeetingService {
     pastDue: PastDueSection,
     workOrders: WorkOrderReview,
     pipelineLoaded: boolean,
-    labor: LaborRateRow[]
+    labor: LaborRateRow[],
+    leadsLoaded: boolean
   ): SectionProgress[] {
     const auto: Record<SectionKey, boolean> = {
       // Every open item has a reason + owner, and every carryover got an update.
@@ -449,6 +457,7 @@ export class MeetingService {
       reviews: doc.checks.reviews.status === "done",
       lytx: doc.checks.lytx.status === "done",
       ramp: doc.checks.ramp.status === "done",
+      leads: leadsLoaded,
     };
 
     return SECTION_KEYS.map((key) => {
