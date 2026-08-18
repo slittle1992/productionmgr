@@ -21,6 +21,7 @@ import { pipelineRouter } from "./routes/pipeline.js";
 import { workOrdersRouter } from "./routes/workOrders.js";
 import { rosterRouter } from "./routes/roster.js";
 import { payRouter } from "./routes/pay.js";
+import { inventoryRouter } from "./routes/inventory.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
 import { ScheduleService } from "./services/scheduleService.js";
@@ -46,6 +47,11 @@ import {
   KvRosterStore,
   type RosterStore,
 } from "./storage/rosterStore.js";
+import {
+  JsonInventoryStore,
+  KvInventoryStore,
+  type InventoryStore,
+} from "./storage/inventoryStore.js";
 
 /**
  * Resolve the static `public/` directory. Works both when running from source
@@ -82,6 +88,7 @@ export interface BuildAppOptions {
   pipelineStore?: PipelineStore;
   workOrderStore?: WorkOrderStore;
   rosterStore?: RosterStore;
+  inventoryStore?: InventoryStore;
   now?: () => number;
 }
 
@@ -150,6 +157,9 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const rosterStore =
     options.rosterStore ??
     (kv ? new KvRosterStore(kv) : new JsonRosterStore(config.dataDir));
+  const inventoryStore =
+    options.inventoryStore ??
+    (kv ? new KvInventoryStore(kv) : new JsonInventoryStore(config.dataDir));
 
   const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
@@ -203,6 +213,7 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   app.use("/api", pipelineRouter(pipelineStore, now));
   app.use("/api", workOrdersRouter(workOrderStore, now));
   app.use("/api", rosterRouter(rosterStore, now));
+  app.use("/api", inventoryRouter(inventoryStore, config.weekStartDay, now));
   app.use("/api", payRouter(scheduleService, rosterStore));
   app.use("/api", scheduleRouter(scheduleService));
   app.use("/api", reportsRouter(reportService));

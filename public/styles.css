@@ -321,6 +321,10 @@ input:focus {
   font-weight: 600;
   cursor: pointer;
 }
+.tab[hidden] {
+  /* `display: flex` above would override the hidden attribute. */
+  display: none;
+}
 .tab .tab-icon {
   font-size: 22px;
 }
@@ -1187,4 +1191,95 @@ tr.totals[data-class="__all__"] td {
 }
 .toast.success {
   background: var(--accent);
+}
+
+/* Inventory & material cost (Production Management tab) */
+.inv-bar {
+  margin-bottom: 12px;
+}
+.inv-source {
+  font-size: 12px;
+  color: var(--muted);
+}
+.inv-usage {
+  margin-top: 12px;
+}
+.inv-table-wrap {
+  max-height: 340px;
+}
+table.inv-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 13px;
+}
+table.inv-table th,
+table.inv-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: middle;
+}
+table.inv-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f0f3f8;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+table.inv-table th.num,
+table.inv-table td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+td.inv-item {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inv-cat {
+  font-size: 11px;
+  color: var(--muted);
+}
+table.inv-table input.js-price {
+  width: 72px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+  text-align: right;
+}
+.inv-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+}
+.inv-actions .btn {
+  flex: 1;
+}
+
+/* Paste-counts dialog */
+dialog#inv-dialog {
+  border: none;
+  border-radius: 14px;
+  padding: 18px;
+  width: min(480px, 92vw);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+}
+dialog#inv-dialog::backdrop {
+  background: rgba(15, 25, 45, 0.45);
+}
+#inv-text {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
 }

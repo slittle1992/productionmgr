@@ -47,18 +47,45 @@ Then `npm start` again — the banner disappears and real projects load.
 
 ## What the manager sees
 
-Three tabs, all built for a thumb:
+Two visible tabs, all built for a thumb (Schedule, Pay and Roster are hidden
+for now — their code is intact, just un-hide the buttons in
+`public/index.html` to bring them back):
 
-- **Schedule** *(default)* — the weekly production schedule that replaces the
+- **Production Management** *(default)* — the weekly report. Builder Prime
+  fields arrive pre-filled and badged `auto`; every derived value (×1.2 labor,
+  sundries ratio, installed revenue, QTD rollups) updates live as you type.
+  Under the Labor card sits **Inventory & material cost**: upload (or paste)
+  this week's ReVamp Material Tracker count and the app compares it with last
+  week's count to compute what was used, prices it from an editable unit-cost
+  catalog, and can fill the report's *Actual materials* field with one tap.
+  Save a draft or submit.
+- **Projects** — active projects with client, address, value, status, and who's
+  assigned (PM / foreman / salesperson). Search and a "show cancelled" toggle.
+- *(hidden)* **Schedule** — the weekly production schedule that replaces the
   spreadsheet. Jobs are pulled from Builder Prime, grouped by **class**, each
   showing Customer, Job #, project type, scheduled day, SQFT, and Color — and
   the **material to use auto-populates from SQFT and color**. Assign a crew and
   fix any color/sqft inline; it saves as you type.
-- **Report** — the weekly report. Builder Prime fields arrive pre-filled and
-  badged `auto`; every derived value (×1.2 labor, sundries ratio, installed
-  revenue, QTD rollups) updates live as you type. Save a draft or submit.
-- **Projects** — active projects with client, address, value, status, and who's
-  assigned (PM / foreman / salesperson). Search and a "show cancelled" toggle.
+
+### Inventory counts → material cost
+
+The Material Tracker export has **no dollar amounts** — only item counts per
+category (EPDM COLOR, FLAKE BASE COAT, FLAKE COLOR, …). So the app works out
+cost as:
+
+1. Upload each week's count (xlsx/csv file, or copy-paste the table straight
+   from the tracker page — the trailing number on each line is the count).
+2. **Used = last week's count − this week's count**, floored at 0. Counts that
+   went *up* (shipments, returns) are flagged "restocked" and count as 0 used,
+   since the tracker doesn't report shipment sizes separately.
+3. Each used item is priced from the **unit-cost catalog** — editable right in
+   the usage table, saved per item, and remembered week to week. Items used
+   but unpriced are called out so the total is never silently understated.
+4. **Material cost this week = Σ used × unit cost** — one tap copies it into
+   the report's *Actual materials* field.
+
+Item names are normalised (⚠ warning notes and "— Finale: …" blend recipes are
+stripped) so the same item matches across weeks even when annotations change.
 
 No report names, no formulas, no Builder Prime login — the app does that work.
 

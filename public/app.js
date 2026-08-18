@@ -1666,10 +1666,194 @@ function exportPay() {
   toast("Pay sheet exported ✓", "success");
 }
 
+// ──────────────────── Inventory & material cost ────────────────────
+let invData = null;
+
+async function loadInventory() {
+  try {
+    const res = await fetch("/api/inventory");
+    if (!res.ok) throw new Error();
+    invData = await res.json();
+  } catch {
+    invData = null;
+  }
+  renderInventory();
+}
+
+function renderInventory() {
+  const status = $("inv-status");
+  const note = $("inv-note");
+  if (!invData || !invData.current) {
+    status.textContent = "No inventory count uploaded for this week yet.";
+    $("inv-used-count").textContent = "—";
+    $("inv-total").textContent = "—";
+    $("inv-apply").hidden = true;
+    $("inv-clear").hidden = true;
+    $("inv-usage").hidden = true;
+    note.hidden = true;
+    return;
+  }
+  const { current, previous, usage, week } = invData;
+  status.innerHTML =
+    `Count for week of <strong>${fmtWeekDay(week.weekStart)}</strong> — ${current.itemCount} items` +
+    (current.sourceLabel
+      ? `<br><span class="inv-source">${escapeHtml(current.sourceLabel)}</span>`
+      : "");
+  $("inv-clear").hidden = false;
+
+  if (!previous) {
+    $("inv-used-count").textContent = "—";
+    $("inv-total").textContent = "—";
+    note.textContent =
+      "First count on record — upload next week's count and usage and cost " +
+      "will be worked out from the difference.";
+    note.hidden = false;
+    $("inv-usage").hidden = true;
+    $("inv-apply").hidden = true;
+    return;
+  }
+
+  $("inv-used-count").textContent = String(usage.usedCount);
+  $("inv-total").textContent = fmtMoney(usage.totalCost);
+  const unpriced = usage.unpricedItems.length;
+  note.textContent =
+    `Compared with the count from the week of ${fmtWeekDay(previous.weekStart)}.` +
+    (unpriced
+      ? ` ${unpriced} used item${unpriced === 1 ? " has" : "s have"} no unit cost yet — enter unit costs below to include them.`
+      : "");
+  note.hidden = false;
+  renderInvUsageTable(usage);
+  $("inv-usage").hidden = false;
+  $("inv-apply").hidden = false;
+}
+
+function renderInvUsageTable(usage) {
+  const rows = usage.lines.filter((l) => (l.used ?? 0) > 0);
+  const restocked = usage.lines.filter((l) => l.restocked).length;
+  const box = $("inv-usage");
+  if (!rows.length) {
+    box.innerHTML = `<p class="hint">Nothing was used this week — no counts went down.</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="table-wrap inv-table-wrap">
+      <table class="inv-table">
+        <thead><tr>
+          <th>Item used</th><th class="num">Last wk</th><th class="num">Now</th>
+          <th class="num">Used</th><th class="num">Unit cost $</th><th class="num">Cost</th>
+        </tr></thead>
+        <tbody>
+          ${rows
+            .map(
+              (l) => `
+            <tr>
+              <td class="inv-item">${escapeHtml(l.item)}${l.category ? `<span class="inv-cat"> · ${escapeHtml(l.category)}</span>` : ""}</td>
+              <td class="num">${fmtN(l.prevCount)}</td>
+              <td class="num">${fmtN(l.count)}</td>
+              <td class="num"><strong>${fmtN(l.used)}</strong></td>
+              <td class="num"><input class="js-price" data-item="${escapeHtml(l.item)}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.unitCost ?? ""}" placeholder="—" /></td>
+              <td class="num">${l.cost === null ? "—" : fmtMoney(l.cost)}</td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+    ${restocked ? `<p class="hint">${restocked} item${restocked === 1 ? "" : "s"} restocked this week (count went up) — counted as 0 used.</p>` : ""}
+  `;
+  box.querySelectorAll(".js-price").forEach((input) =>
+    input.addEventListener("change", () => {
+      const item = input.dataset.item;
+      const value = input.value === "" ? 0 : Number(input.value);
+      debounce(
+        `price:${item}`,
+        async () => {
+          try {
+            const res = await fetch("/api/inventory/prices", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                prices: { [item]: Number.isFinite(value) && value > 0 ? value : 0 },
+              }),
+            });
+            if (!res.ok) throw new Error();
+            await loadInventory();
+            toast("Unit cost saved ✓", "success");
+          } catch {
+            toast("Couldn't save that unit cost.", "error");
+          }
+        },
+        400
+      );
+    })
+  );
+}
+
+async function postInventory(rows, filename) {
+  const res = await fetch("/api/inventory", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(filename ? { filename, rows } : { rows }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || "Upload failed.");
+  invData = data;
+  renderInventory();
+  toast(`Saved ${data.current.itemCount} inventory counts ✓`, "success");
+}
+
+async function handleInvFile(file) {
+  if (!file) return;
+  if (typeof XLSX === "undefined") {
+    toast("Spreadsheet reader didn't load — check your connection.", "error");
+    return;
+  }
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+    await postInventory(rows, file.name);
+  } catch (err) {
+    toast(err.message || "Couldn't read that file.", "error");
+  } finally {
+    $("inv-file").value = "";
+  }
+}
+
+/** Pasted counts → rows: the trailing number on each line is the count. */
+function invTextToRows(textVal) {
+  return String(textVal || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^(.*?)[\s ]+(-?\d[\d,]*(?:\.\d+)?)$/);
+      return m ? [m[1], m[2]] : [line];
+    });
+}
+
+async function clearInventory() {
+  if (!confirm("Remove this week's inventory count?")) return;
+  try {
+    await fetch("/api/inventory", { method: "DELETE" });
+  } catch {
+    /* reload below shows the real state */
+  }
+  await loadInventory();
+}
+
+function applyInventoryCost() {
+  if (!invData?.usage) return;
+  $("actualMaterials").value = invData.usage.totalCost;
+  recalc();
+  toast(`Actual materials set to ${fmtMoney(invData.usage.totalCost)} ✓`, "success");
+}
+
 // ─────────────────────────── Navigation ───────────────────────────
 const TITLES = {
   schedule: "Weekly Schedule",
-  report: "Weekly Report",
+  report: "Production Management",
   pay: "Performance Pay",
   roster: "Roster",
   projects: "Projects",
@@ -1694,6 +1878,7 @@ function showScreen(name) {
     } else {
       loadReport();
     }
+    loadInventory();
   }
   if (name === "schedule") loadSchedule();
   if (name === "pay") {
@@ -1761,6 +1946,29 @@ async function init() {
   $("roster-form").addEventListener("submit", submitRosterForm);
   loadRoster(); // also fills crew-name suggestions on the schedule
 
+  // Inventory counts (Production Management tab).
+  $("inv-file").addEventListener("change", (e) => handleInvFile(e.target.files[0]));
+  $("inv-paste").addEventListener("click", () => {
+    $("inv-text").value = "";
+    $("inv-dialog").showModal();
+  });
+  $("inv-cancel").addEventListener("click", () => $("inv-dialog").close());
+  $("inv-form").addEventListener("submit", async (e) => {
+    const rows = invTextToRows($("inv-text").value);
+    if (rows.length < 3) {
+      e.preventDefault();
+      toast("Paste the counts first.", "error");
+      return;
+    }
+    try {
+      await postInventory(rows, null);
+    } catch (err) {
+      toast(err.message || "Couldn't read those counts.", "error");
+    }
+  });
+  $("inv-clear").addEventListener("click", clearInventory);
+  $("inv-apply").addEventListener("click", applyInventoryCost);
+
   // Week navigation.
   $("week-prev").addEventListener("click", () =>
     goToWeek(shiftWeekIso(schedule.weekStart || currentWeekStartIso(), -1))
@@ -1773,9 +1981,10 @@ async function init() {
     if (e.target.value) goToWeek(e.target.value); // server snaps to that week's Sunday
   });
 
-  // Schedule is the default screen.
+  // Production Management (the report) is the default screen; the Schedule,
+  // Pay and Roster tabs are hidden for now but their code stays wired up.
   await loadColors();
-  showScreen("schedule");
+  showScreen("report");
 }
 
 init();

@@ -166,6 +166,42 @@
             </div>
           </fieldset>
 
+          <!-- Inventory & material cost (weekly counts from the Material Tracker) -->
+          <fieldset class="card" id="inventory-card">
+            <legend>Inventory &amp; material cost</legend>
+            <p class="card-help">
+              Upload this week's inventory count (ReVamp Material Tracker
+              export). We compare it with last week's count to work out what was
+              used and what it cost.
+            </p>
+            <div class="pipeline-bar inv-bar">
+              <div id="inv-status" class="pipeline-status">Loading…</div>
+              <div class="pipeline-actions">
+                <label class="btn-upload">
+                  <span>Upload count</span>
+                  <input id="inv-file" type="file" accept=".xlsx,.xls,.csv" hidden />
+                </label>
+                <button id="inv-paste" class="btn-export" type="button">Paste counts</button>
+                <button id="inv-clear" class="btn-clear" type="button" hidden>Clear</button>
+              </div>
+            </div>
+            <div class="derived-row">
+              <span>Items used this week</span>
+              <strong id="inv-used-count">—</strong>
+            </div>
+            <div class="derived-row">
+              <span>Material cost this week</span>
+              <strong id="inv-total">—</strong>
+            </div>
+            <p class="hint" id="inv-note" hidden></p>
+            <div id="inv-usage" class="inv-usage" hidden></div>
+            <div class="inv-actions">
+              <button id="inv-apply" class="btn btn-secondary" type="button" hidden>
+                Use as actual materials
+              </button>
+            </div>
+          </fieldset>
+
           <!-- Warranties & leads -->
           <fieldset class="card">
             <legend>Warranties &amp; leads</legend>
@@ -338,16 +374,17 @@
 
     <!-- Bottom tabs -->
     <nav class="tabbar">
-      <button class="tab active" data-screen="schedule" type="button">
+      <!-- Schedule, Pay and Roster are hidden for now (code kept intact). -->
+      <button class="tab" data-screen="schedule" type="button" hidden>
         <span class="tab-icon">📅</span><span>Schedule</span>
       </button>
-      <button class="tab" data-screen="report" type="button">
-        <span class="tab-icon">📋</span><span>Report</span>
+      <button class="tab active" data-screen="report" type="button">
+        <span class="tab-icon">📋</span><span>Production Management</span>
       </button>
-      <button class="tab" data-screen="pay" type="button">
+      <button class="tab" data-screen="pay" type="button" hidden>
         <span class="tab-icon">💵</span><span>Pay</span>
       </button>
-      <button class="tab" data-screen="roster" type="button">
+      <button class="tab" data-screen="roster" type="button" hidden>
         <span class="tab-icon">👷</span><span>Roster</span>
       </button>
       <button class="tab" data-screen="projects" type="button">
@@ -382,6 +419,25 @@
         <div class="dlg-actions">
           <button type="button" class="btn btn-secondary" id="wo-cancel">Cancel</button>
           <button type="submit" class="btn btn-primary">Add</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="inv-dialog">
+      <form id="inv-form" method="dialog">
+        <h3>Paste inventory counts</h3>
+        <p class="card-help">
+          Copy the count table from the Material Tracker page (item names with
+          the count at the end of each line) and paste it here.
+        </p>
+        <textarea
+          id="inv-text"
+          rows="10"
+          placeholder="EPDM - BEIGE - CH02&#9;14.5&#10;FLAKE COLOR  Count&#10;Autumn Brown  36&#10;…"
+        ></textarea>
+        <div class="dlg-actions">
+          <button type="button" class="btn btn-secondary" id="inv-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save counts</button>
         </div>
       </form>
     </dialog>
