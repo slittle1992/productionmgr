@@ -212,12 +212,16 @@ tomorrow.
    freshness note nudges "upload today's Clients List" whenever the
    newest lead is older than today — making the upload itself part of
    the daily habit.
-2. **Review sold contracts** — the last 3 days of contracts (date, rep,
+2. **Appointments per day** — the stacked flake/rubber column chart
+   spanning every stored Meetings week, filterable by **market chips or
+   a rep selector** (rep overrides market); cancellations show in the
+   tap readout. Fed by the Weekly Meetings upload.
+3. **Review sold contracts** — the last 3 days of contracts (date, rep,
    client, type, sale $) from the Sold Contracts upload, to catch
    mispriced or mistyped deals while they're fresh.
-3. **Listen to Rilla recordings** — one-tap link (set `RILLA_URL`), with
+4. **Listen to Rilla recordings** — one-tap link (set `RILLA_URL`), with
    a note to rotate through the reps.
-4. **Call the no-sales (rehash)** — every DEMO NO SALE / STILL INTERESTED
+5. **Call the no-sales (rehash)** — every DEMO NO SALE / STILL INTERESTED
    appointment from the latest Meetings upload, with tap-to-call phone
    numbers and the rep who ran the demo.
 
@@ -240,12 +244,10 @@ tomorrow.
    title pins which week it saves to, so past weeks can be backfilled).
    Rows with a client count as appointments; OFF / UNAVAILABLE / TRAINING
    blockers are skipped; **Cancelled** comes from the Meeting Status
-   column. Each upload replaces its week. The step shows an
-   **appointments-per-day chart** spanning every stored week — stacked
-   flake/rubber columns (each meeting's Project Type), filterable by
-   **market chips or a rep selector** (zips from the meeting titles map
-   to markets via the leads upload; cancellations show in the tap
-   readout) — plus the **cancellation rate week over week** (with the
+   column. Each upload replaces its week and also feeds the Daily
+   section's **appointments-per-day chart** (zips from the meeting
+   titles map to markets via the leads upload). This step keeps the
+   weekly rollups: the **cancellation rate week over week** (with the
    points-change vs the prior week), the split **by market**, and
    **appointments per rep** alongside the prior week's count, high
    per-rep cancel rates flagged.

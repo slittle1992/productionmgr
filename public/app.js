@@ -2677,7 +2677,9 @@ function renderApptsStep() {
   </div>`;
   if (!weeks.length) return html;
 
-  html += renderApptDayChart();
+  html += `<p class="hint">The <b>appointments-per-day chart</b> (by market and
+  by rep) lives in the Daily section up top — this step keeps the weekly
+  rollups.</p>`;
 
   // Week-over-week cancellation trend.
   html += `
@@ -3015,8 +3017,11 @@ function renderLeadBarChart(d) {
 function renderApptDayChart() {
   const days = sales.appts?.days || [];
   if (!days.length) {
-    return `<p class="hint">Re-upload the weekly Meetings exports to build the
-      per-day chart (older uploads didn't store the day-by-day counts).</p>`;
+    return `<p class="hint">${
+      sales.appts?.weeks?.length
+        ? "Re-upload the weekly Meetings exports (Weekly step 2) — older uploads didn't store the day-by-day counts."
+        : "Upload the weekly Meetings export in Weekly step 2 to build the per-day chart."
+    }</p>`;
   }
 
   const clsSet = new Set();
@@ -3204,11 +3209,25 @@ function renderSales() {
   const onPace =
     Boolean(sales.meta) && co && (co.leadsDelta ?? 0) >= 0 && (co.volDelta ?? 0) >= 0;
 
+  const apptDays = sales.appts?.days || [];
+  const lastApptDay = apptDays[apptDays.length - 1] || null;
+  const apptDaySub = lastApptDay
+    ? `${fmtDay(lastApptDay.date)}: ${lastApptDay.t} appts${lastApptDay.c ? ` · ${lastApptDay.c} cancelled` : ""}`
+    : "needs the meetings export (Weekly step 2)";
+
   $("sales-sections").innerHTML = `
     <div class="sales-group">Daily</div>
     ${step(1, "ssec:daily", "Lead flow vs goal — rubber & flake", dailySub, onPace, renderDailyStep())}
     ${step(
       2,
+      "ssec:apptday",
+      "Appointments per day",
+      apptDaySub,
+      Boolean(apptDays.length),
+      renderApptDayChart()
+    )}
+    ${step(
+      3,
       "ssec:contracts",
       "Review sold contracts",
       sales.dailyTasks?.recentSold?.length
@@ -3218,7 +3237,7 @@ function renderSales() {
       renderContractsReviewStep() + checkRow("contracts", "Contracts reviewed")
     )}
     ${step(
-      3,
+      4,
       "ssec:rilla",
       "Listen to Rilla recordings",
       dailyDone("rilla") ? "done today" : "pick 2–3 reps' calls",
@@ -3226,7 +3245,7 @@ function renderSales() {
       renderRillaStep() + checkRow("rilla", "Rilla recordings reviewed")
     )}
     ${step(
-      4,
+      5,
       "ssec:rehash",
       "Call the no-sales (rehash)",
       sales.dailyTasks?.rehash?.length
