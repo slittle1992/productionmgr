@@ -7,12 +7,20 @@ import {
 } from "../domain/leads.js";
 import { PipelineFormatError } from "../domain/pipeline.js";
 import type { LeadsStore } from "../storage/leadsStore.js";
+import {
+  computeRepScorecard,
+  computeWeeklyFlow,
+  parseLeadPerformance,
+  parseSoldContracts,
+  salesByCluster,
+} from "../domain/sales.js";
 import { asyncHandler } from "./asyncHandler.js";
 
 /** Upload + analyse the Clients List (leads) export by location and zip cluster. */
 export function leadsRouter(
   store: LeadsStore,
-  now: () => number = () => Date.now()
+  now: () => number = () => Date.now(),
+  weekStartDay = 0
 ): Router {
   const router = Router();
 
@@ -97,6 +105,58 @@ export function leadsRouter(
     })
   );
 
+  const gridBody = z.object({
+    filename: z.string().max(260).optional(),
+    rows: z.array(z.array(z.unknown())).min(2),
+  });
+
+  // POST /api/leads/sold — the Total Sales (Contracts) detail export.
+  router.post(
+    "/leads/sold",
+    asyncHandler(async (req, res) => {
+      const body = gridBody.parse(req.body);
+      try {
+        const parsed = parseSoldContracts(body.rows);
+        await store.setSold({
+          rows: parsed.rows,
+          uploadedAt: new Date(now()).toISOString(),
+          filename: body.filename ?? null,
+          sourceLabel: parsed.sourceLabel,
+        });
+        res.json({ ok: true, count: parsed.rows.length });
+      } catch (err) {
+        if (err instanceof PipelineFormatError) {
+          res.status(400).json({ error: "invalid_sold", message: err.message });
+          return;
+        }
+        throw err;
+      }
+    })
+  );
+
+  // POST /api/leads/perf — the Lead Performance Summary (by Sales Person).
+  router.post(
+    "/leads/perf",
+    asyncHandler(async (req, res) => {
+      const body = gridBody.parse(req.body);
+      try {
+        const parsed = parseLeadPerformance(body.rows);
+        await store.setPerf({
+          ...parsed,
+          uploadedAt: new Date(now()).toISOString(),
+          filename: body.filename ?? null,
+        });
+        res.json({ ok: true, reps: parsed.byRep.length });
+      } catch (err) {
+        if (err instanceof PipelineFormatError) {
+          res.status(400).json({ error: "invalid_perf", message: err.message });
+          return;
+        }
+        throw err;
+      }
+    })
+  );
+
   // GET /api/leads?days=7|28|91 — analysis by location → zip cluster.
   router.get(
     "/leads",
@@ -108,12 +168,50 @@ export function leadsRouter(
         .max(365)
         .optional()
         .parse(req.query.days || undefined) ?? 28;
-      const [meta, leads] = await Promise.all([store.getMeta(), store.getLeads()]);
+      const [meta, leads, sold, perf] = await Promise.all([
+        store.getMeta(),
+        store.getLeads(),
+        store.getSold(),
+        store.getPerf(),
+      ]);
       if (!meta) {
-        res.json({ meta: null, analysis: null });
+        res.json({ meta: null, analysis: null, sales: null });
         return;
       }
-      res.json({ meta, analysis: buildLeadsAnalysis(leads, now(), days) });
+      const nowMs = now();
+      const soldRows = sold?.rows ?? [];
+      const named = leads.filter((l) => l.name).length;
+      const area = sold
+        ? salesByCluster(leads, soldRows, nowMs - days * 86400000, nowMs)
+        : null;
+      res.json({
+        meta,
+        analysis: buildLeadsAnalysis(leads, nowMs, days),
+        sales: {
+          soldMeta: sold
+            ? {
+                uploadedAt: sold.uploadedAt,
+                filename: sold.filename,
+                sourceLabel: sold.sourceLabel,
+                count: sold.rows.length,
+              }
+            : null,
+          perfMeta: perf
+            ? {
+                uploadedAt: perf.uploadedAt,
+                filename: perf.filename,
+                sourceLabel: perf.sourceLabel,
+                reps: perf.byRep.length,
+              }
+            : null,
+          weeklyFlow: computeWeeklyFlow(leads, soldRows, weekStartDay, nowMs),
+          repScorecard: perf ? computeRepScorecard(perf, soldRows) : null,
+          byCluster: area?.clusters ?? null,
+          joinInfo: area ? { joined: area.joined, total: area.total } : null,
+          /** True when the stored leads predate the name field (re-upload). */
+          leadsNeedReupload: leads.length > 0 && named === 0,
+        },
+      });
     })
   );
 

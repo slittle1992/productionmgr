@@ -2269,6 +2269,7 @@ function renderLaborSection(v) {
           <input type="number" min="0" step="0.01" inputmode="decimal"
             placeholder="from payroll sheet" value="${r.productionPayroll ?? ""}"
             data-labor="${cls}" data-field="productionPayroll" />
+          ${r.productionPayroll ? `<span class="inv-dim">fully burdened ×${v.labor.multiplier}: ${fmtMoney(r.productionPayroll * v.labor.multiplier)} — used in the rate</span>` : `<span class="inv-dim">pure payroll — the rate adds the ×${v.labor.multiplier} taxes/benefits burden automatically</span>`}
         </label>
       </div>
     </div>`;
@@ -2352,6 +2353,12 @@ function renderLeadsSection(v) {
       <label class="btn-upload"><span>Upload leads</span>
         <input type="file" accept=".xlsx,.xls" data-upload="leads" hidden />
       </label>
+      <label class="btn-upload"><span>Sold contracts</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="sold" hidden />
+      </label>
+      <label class="btn-upload"><span>Lead perf.</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="perf" hidden />
+      </label>
     </div>
   </div>`;
   if (!v.leads) return html;
@@ -2369,7 +2376,9 @@ function renderLeadsSection(v) {
   }
 
   html += `<p class="hint">Window: ${escapeHtml(a.from)} → ${escapeHtml(a.to)} vs the ${a.windowDays} days before.</p>`;
+  html += renderLeadsSales(meeting.leadsSales);
 
+  const areaSales = meeting.leadsSales?.byCluster || null;
   for (const cls of a.classes) {
     const openKey = `leads:${cls.className}`;
     const trend =
@@ -2404,7 +2413,7 @@ function renderLeadsSection(v) {
           : ""
       }
       <table class="mtg-table leads-table">
-        <thead><tr><th>Area</th><th>Leads</th><th>Prior</th><th>Shift</th><th>Conv.</th></tr></thead>
+        <thead><tr><th>Area</th><th>Leads</th><th>Prior</th><th>Shift</th><th>Conv.</th>${areaSales ? "<th>Sold $</th><th>$/lead</th>" : ""}</tr></thead>
         <tbody>
         ${cls.clusters
           .map(
@@ -2416,6 +2425,11 @@ function renderLeadsSection(v) {
                 c.shareShiftPts > 0 ? "+" : ""
               }${c.shareShiftPts}pts</td>
               <td>${c.allTime >= 10 ? Math.round(c.conversion * 100) + "%" : "—"}</td>
+              ${areaSales ? (() => {
+                const sale = areaSales[`${cls.className}|${c.cluster}`];
+                const nsli = sale && c.current > 0 ? sale.net / c.current : null;
+                return `<td>${sale ? fmtMoney0(sale.net) : "—"}</td><td>${nsli !== null ? fmtMoney0(nsli) : "—"}</td>`;
+              })() : ""}
             </tr>
             ${c.zips
               .filter((z) => z.current > 0)
@@ -2425,6 +2439,7 @@ function renderLeadsSection(v) {
                   <td>· ${escapeHtml(z.zip)}${z.city ? " " + escapeHtml(z.city) : ""}</td>
                   <td>${z.current}</td><td>${z.previous}</td><td></td>
                   <td>${z.allTime >= 10 ? Math.round((z.soldAllTime / z.allTime) * 100) + "%" : "—"}</td>
+                  ${areaSales ? "<td></td><td></td>" : ""}
                 </tr>`
               )
               .join("")}`
@@ -2433,6 +2448,105 @@ function renderLeadsSection(v) {
         </tbody>
       </table>
     </details>`;
+  }
+  return html;
+}
+
+/** Weekly lead flow + rep scorecard, fed by the sold/perf uploads. */
+function renderLeadsSales(sales) {
+  if (!sales) return "";
+  let html = "";
+
+  if (sales.leadsNeedReupload) {
+    html += `<p class="hint">⚠ Re-upload the Clients List once — the stored copy
+      predates name matching, so sold contracts can't be tied to areas yet.</p>`;
+  }
+
+  const wf = sales.weeklyFlow || [];
+  if (wf.length) {
+    const haveSold = Boolean(sales.soldMeta);
+    html += `
+    <details class="mtg-class" data-open="leads:flow" ${meeting.open.has("leads:flow") ? "open" : ""}>
+      <summary><span class="mtg-class-name">Weekly flow</span>
+        <span class="mtg-class-info">leads week to week vs last year${haveSold ? " · sold $ + mix" : ""}</span>
+      </summary>
+      <table class="mtg-table leads-table">
+        <thead><tr><th>Week</th><th>Leads</th><th>Last yr</th><th>Δ</th>${haveSold ? "<th>Sold</th><th>Sold $</th><th>Flake $</th><th>Rubber $</th>" : ""}</tr></thead>
+        <tbody>
+          ${wf
+            .map((w) => {
+              const delta =
+                w.leadsLastYear > 0
+                  ? Math.round(((w.leads - w.leadsLastYear) / w.leadsLastYear) * 100)
+                  : null;
+              return `<tr>
+                <td>${fmtDay(w.weekStart)}</td>
+                <td><b>${w.leads}</b></td>
+                <td>${w.leadsLastYear || "—"}</td>
+                <td class="${delta !== null && delta >= 0 ? "lead-up" : delta !== null ? "lead-down" : ""}">${delta !== null ? (delta >= 0 ? "+" : "") + delta + "%" : "—"}</td>
+                ${haveSold ? `<td>${w.soldCount || "—"}</td><td>${w.soldNet ? fmtMoney0(w.soldNet) : "—"}</td><td>${w.flakeNet ? fmtMoney0(w.flakeNet) : "—"}</td><td>${w.rubberNet ? fmtMoney0(w.rubberNet) : "—"}</td>` : ""}
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+      ${sales.soldMeta ? "" : `<p class="hint">Upload the <b>Sold Contracts</b> detail export to add sold $ and the flake/rubber mix.</p>`}
+    </details>`;
+  }
+
+  if (sales.repScorecard) {
+    const rangeLabel = sales.perfMeta?.sourceLabel || "";
+    html += `
+    <details class="mtg-class" data-open="leads:reps" ${meeting.open.has("leads:reps") ? "open" : ""}>
+      <summary><span class="mtg-class-name">Rep scorecard</span>
+        <span class="mtg-class-info">close rate = sold ÷ issued · NSLI = net $ ÷ issued</span>
+      </summary>
+      ${rangeLabel ? `<p class="hint">${escapeHtml(rangeLabel)}${sales.soldMeta ? "" : " — upload the Sold Contracts export for NSLI dollars"}</p>` : ""}
+      <table class="mtg-table leads-table">
+        <thead><tr><th>Rep</th><th>Issued</th><th>Demos</th><th>Sold</th><th>Close</th><th>Net $</th><th>NSLI</th></tr></thead>
+        <tbody>
+          ${sales.repScorecard
+            .map((r) => {
+              const close = r.closeRate !== null ? Math.round(r.closeRate * 100) : null;
+              return `<tr>
+                <td>${escapeHtml(r.rep)}</td>
+                <td>${r.issued}</td>
+                <td>${r.demos}</td>
+                <td><b>${r.sold}</b></td>
+                <td class="${close !== null && close >= 25 ? "lead-up" : close !== null && close < 15 ? "lead-down" : ""}">${close !== null ? close + "%" : "—"}</td>
+                <td>${r.net ? fmtMoney0(r.net) : "—"}</td>
+                <td><b>${r.nsli !== null ? fmtMoney0(r.nsli) : "—"}</b></td>
+              </tr>`;
+            })
+            .join("")}
+          ${(() => {
+            const t = sales.repScorecard.reduce(
+              (acc, r) => ({
+                issued: acc.issued + r.issued,
+                demos: acc.demos + r.demos,
+                sold: acc.sold + r.sold,
+                net: acc.net + r.net,
+              }),
+              { issued: 0, demos: 0, sold: 0, net: 0 }
+            );
+            const close = t.issued > 0 ? Math.round((t.sold / t.issued) * 100) : null;
+            const nsli = t.issued > 0 ? t.net / t.issued : null;
+            return `<tr class="score-footer">
+              <td><b>Company</b></td><td><b>${t.issued}</b></td><td><b>${t.demos}</b></td><td><b>${t.sold}</b></td>
+              <td><b>${close !== null ? close + "%" : "—"}</b></td>
+              <td><b>${fmtMoney0(t.net)}</b></td><td><b>${nsli !== null ? fmtMoney0(nsli) : "—"}</b></td>
+            </tr>`;
+          })()}
+        </tbody>
+      </table>
+    </details>`;
+  } else if (sales.soldMeta) {
+    html += `<p class="hint">Upload the <b>Lead Performance Summary</b> (by Sales Person) to add close rate and NSLI per rep.</p>`;
+  }
+
+  if (sales.joinInfo && sales.joinInfo.total > 0) {
+    const pct = Math.round((sales.joinInfo.joined / sales.joinInfo.total) * 100);
+    html += `<p class="hint">Area sold-$ join: ${sales.joinInfo.joined}/${sales.joinInfo.total} contracts (${pct}%) matched to a lead's zip by client name.</p>`;
   }
   return html;
 }
@@ -2451,6 +2565,7 @@ async function fetchLeadsAnalysis() {
   try {
     const data = await meetingApi(`/api/leads?days=${meeting.leadsDays}`, "GET");
     meeting.leadsView = data.analysis;
+    meeting.leadsSales = data.sales;
     meeting.leadsKey = key;
     renderMeeting();
   } catch {
@@ -2627,6 +2742,20 @@ async function handleMeetingUpload(kind, file, className) {
       rows: firstRows(),
     });
     toast(`${data.count} completed jobs loaded ✓`, "success");
+  } else if (kind === "sold") {
+    const data = await meetingApi("/api/leads/sold", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    meeting.leadsKey = null; // sales feed into the leads analysis
+    toast(`${data.count.toLocaleString()} sold contracts loaded ✓`, "success");
+  } else if (kind === "perf") {
+    const data = await meetingApi("/api/leads/perf", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    meeting.leadsKey = null;
+    toast(`Lead performance loaded — ${data.reps} reps ✓`, "success");
   } else if (kind === "workorders") {
     const data = await meetingApi("/api/workorders", "POST", {
       filename: file.name,

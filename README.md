@@ -165,6 +165,20 @@ sign-off, note, and update so next week you know who owns what.
    prior window, all-time, jobs, conversion) with its own .xlsx export.
    Zip boundaries are vendored US Census ZCTA polygons
    (`public/vendor/tx-zips.json`, public-domain TIGER/Line data, simplified).
+   Two more Builder Prime exports make the section actionable:
+   **Total Sales (Contracts)** detail and the **Lead Performance Summary by
+   Sales Person** (upload buttons next to the Clients List). Together they add:
+   - **Weekly flow** — leads and sold $ per week with last-year comparison
+     (52 weeks back) and the **rubber vs flake mix** from each contract's
+     Project Type.
+   - **Rep scorecard** — close rate (**jobs sold ÷ leads issued**, Builder
+     Prime's true funnel, not per-appointment) and **NSLI** (net sold $ ÷
+     leads issued) per rep over the performance report's range, with a
+     computed company footer row.
+   - **Area sales** — sold $ and NSLI-per-lead per zip cluster, joined from
+     contracts to leads by client name (the exports carry no zip). By-area
+     close rate is per-lead conversion — Builder Prime doesn't report
+     issued-by-zip. Cancelled contracts are excluded everywhere.
 10. **VIP Lead — To-Dos & Crews** — the closing check: open VIP Lead
     (one-tap link via `VIP_LEAD_URL`), clear the Production To-Do bucket
     (nothing unclaimed or stale), and check each VIP Crew channel against

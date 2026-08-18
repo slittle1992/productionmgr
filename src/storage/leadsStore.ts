@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { CompactLead } from "../domain/leads.js";
+import type { PerfParseResult, SoldContract } from "../domain/sales.js";
 import type { KvClient } from "./kv/kvClient.js";
 
 /**
@@ -16,7 +17,23 @@ export interface LeadsMeta {
   count: number;
 }
 
+export interface StoredSold {
+  rows: SoldContract[];
+  uploadedAt: string;
+  filename: string | null;
+  sourceLabel: string | null;
+}
+
+export interface StoredPerf extends PerfParseResult {
+  uploadedAt: string;
+  filename: string | null;
+}
+
 export interface LeadsStore {
+  getSold(): Promise<StoredSold | null>;
+  setSold(sold: StoredSold): Promise<void>;
+  getPerf(): Promise<StoredPerf | null>;
+  setPerf(perf: StoredPerf): Promise<void>;
   getMeta(): Promise<LeadsMeta | null>;
   getLeads(): Promise<CompactLead[]>;
   set(leads: CompactLead[], meta: LeadsMeta): Promise<void>;
@@ -75,6 +92,48 @@ export class JsonLeadsStore implements LeadsStore {
     return result;
   }
 
+  private get salesFile(): string {
+    return this.file.replace(/leads\.json$/, "sales.json");
+  }
+  private async readSales(): Promise<{ sold: StoredSold | null; perf: StoredPerf | null }> {
+    try {
+      return JSON.parse(await fs.readFile(this.salesFile, "utf8"));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT")
+        return { sold: null, perf: null };
+      throw err;
+    }
+  }
+  private async writeSales(
+    mutate: (s: { sold: StoredSold | null; perf: StoredPerf | null }) => void
+  ): Promise<void> {
+    const run = async () => {
+      const current = await this.readSales();
+      mutate(current);
+      await fs.mkdir(path.dirname(this.salesFile), { recursive: true });
+      const tmp = `${this.salesFile}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(current), "utf8");
+      await fs.rename(tmp, this.salesFile);
+    };
+    this.writeChain = this.writeChain.then(run, run);
+    await this.writeChain;
+  }
+  async getSold() {
+    return (await this.readSales()).sold;
+  }
+  async setSold(sold: StoredSold) {
+    await this.writeSales((s) => {
+      s.sold = sold;
+    });
+  }
+  async getPerf() {
+    return (await this.readSales()).perf;
+  }
+  async setPerf(perf: StoredPerf) {
+    await this.writeSales((s) => {
+      s.perf = perf;
+    });
+  }
   async getMeta() {
     return (await this.read()).meta;
   }
@@ -123,7 +182,22 @@ export class KvLeadsStore implements LeadsStore {
   private static readonly META = "leads:meta";
   private static readonly ROWS = "leads:rows";
   private static readonly PENDING = "leads:pending";
+  private static readonly SOLD = "sales:sold";
+  private static readonly PERF = "sales:perf";
   constructor(private readonly kv: KvClient) {}
+
+  async getSold() {
+    return await this.kv.get<StoredSold>(KvLeadsStore.SOLD);
+  }
+  async setSold(sold: StoredSold) {
+    await this.kv.set(KvLeadsStore.SOLD, sold);
+  }
+  async getPerf() {
+    return await this.kv.get<StoredPerf>(KvLeadsStore.PERF);
+  }
+  async setPerf(perf: StoredPerf) {
+    await this.kv.set(KvLeadsStore.PERF, perf);
+  }
 
   async getMeta() {
     return await this.kv.get<LeadsMeta>(KvLeadsStore.META);
@@ -161,6 +235,21 @@ export class KvLeadsStore implements LeadsStore {
 
 export class MemoryLeadsStore implements LeadsStore {
   private meta: LeadsMeta | null = null;
+  private sold: StoredSold | null = null;
+  private perf: StoredPerf | null = null;
+
+  async getSold() {
+    return structuredClone(this.sold);
+  }
+  async setSold(sold: StoredSold) {
+    this.sold = structuredClone(sold);
+  }
+  async getPerf() {
+    return structuredClone(this.perf);
+  }
+  async setPerf(perf: StoredPerf) {
+    this.perf = structuredClone(perf);
+  }
   private leads: CompactLead[] = [];
   private pendingId: string | null = null;
 

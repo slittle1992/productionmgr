@@ -21,6 +21,9 @@ export interface CompactLead {
   city: string | null;
   created: number;
   cat: LeadCategory;
+  /** Normalised client name — joins sold contracts to areas (may be absent
+   * on uploads stored before this field existed). */
+  name?: string | null;
 }
 
 /** Statuses that count as a sale for conversion purposes. */
@@ -108,6 +111,7 @@ export function parseClientsExport(grid: RawGrid): LeadsParseResult {
       city: text(cell(row, "city")),
       created,
       cat: categorize(text(cell(row, "status"))),
+      name: name.toLowerCase().replace(/\s+/g, " ").trim(),
     });
   }
   return { leads, sourceLabel };
