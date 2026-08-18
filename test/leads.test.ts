@@ -267,7 +267,9 @@ describe("lead goals API", () => {
       .expect(200);
 
     const bare = await request(app).get("/api/leads");
-    expect(bare.body.goals).toEqual({ flakeMonthly: 600, rubberMonthly: 120 });
+    expect(bare.body.goals).toMatchObject({ flakeMonthly: 600, rubberMonthly: 120 });
+    // Per-location goals are seeded from the pacing tracker until edited.
+    expect(bare.body.goals.classGoals.Dallas).toEqual({ leads: 664, volume: 600000 });
     expect(bare.body.daily).toBeNull(); // no leads yet
 
     await request(app)

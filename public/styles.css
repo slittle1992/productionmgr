@@ -2596,3 +2596,17 @@ details.inv-loc[open] {
   font-size: 14px;
   font-weight: 700;
 }
+.goal-table input.goal-cell {
+  width: 64px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.goal-table input.goal-cell.wide {
+  width: 92px;
+}
+.goal-table td {
+  white-space: nowrap;
+}

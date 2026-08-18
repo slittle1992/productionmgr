@@ -192,8 +192,14 @@ Clients List upload. Set a monthly lead goal for flake and one for rubber
 vs where you should be by today** (goal spread evenly over the month, ▲/▼
 badge with the lead count ahead/behind), the **per-day rate needed** to
 still hit the goal, the trailing-7-day rate actually being run, and where
-the month **lands** at that rate — red when the projection misses. Below
-it, a **daily table of the last 14 days** split flake vs rubber. The split
+the month **lands** at that rate — red when the projection misses. A
+**By location** table paces each market's month against its **monthly
+leads goal and sold-$ quota** (`src/data/defaultGoals.ts` seeds the
+numbers from the company's Quick Pacing tracker; edit any cell inline
+when the month's goals change — edits persist and win). Leads per
+location are exact; per-location sold $ joins contracts to leads by
+client name (the Company row is exact regardless). Below it, a **daily
+table of the last 14 days** split flake vs rubber. The split
 needs the **Project Type** column included in the Clients List export
 (the card says so if it's missing; totals work regardless), and a freshness
 note nudges "upload today's Clients List" whenever the newest lead in the

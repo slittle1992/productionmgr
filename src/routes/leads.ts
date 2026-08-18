@@ -6,6 +6,7 @@ import {
   parseClientsExport,
 } from "../domain/leads.js";
 import { parseMeetingsExport } from "../domain/appointments.js";
+import { DEFAULT_CLASS_GOALS } from "../data/defaultGoals.js";
 import { PipelineFormatError } from "../domain/pipeline.js";
 import { getReportingWeek } from "../domain/week.js";
 import type { LeadsStore } from "../storage/leadsStore.js";
@@ -240,16 +241,31 @@ export function leadsRouter(
     })
   );
 
-  // POST /api/leads/goals — the monthly lead goals for the Daily pacing view.
+  // POST /api/leads/goals — the monthly goals for the Daily pacing view:
+  // company-wide flake/rubber lead goals, and per-location leads + sold-$
+  // quota (which start from the seeded pacing-tracker defaults).
   const goalsBody = z.object({
     flakeMonthly: z.number().int().min(0).max(100000).nullable().optional(),
     rubberMonthly: z.number().int().min(0).max(100000).nullable().optional(),
+    className: z.string().max(60).optional(),
+    leads: z.number().int().min(0).max(100000).nullable().optional(),
+    volume: z.number().min(0).max(100000000).nullable().optional(),
   });
   router.post(
     "/leads/goals",
     asyncHandler(async (req, res) => {
       const body = goalsBody.parse(req.body);
       const current = await store.getGoals();
+      const classGoals = { ...(current.classGoals ?? {}) };
+      if (body.className) {
+        const base =
+          classGoals[body.className] ??
+          DEFAULT_CLASS_GOALS[body.className] ?? { leads: null, volume: null };
+        classGoals[body.className] = {
+          leads: body.leads !== undefined ? body.leads : base.leads,
+          volume: body.volume !== undefined ? body.volume : base.volume,
+        };
+      }
       const next = {
         flakeMonthly:
           body.flakeMonthly !== undefined ? body.flakeMonthly : current.flakeMonthly,
@@ -257,6 +273,7 @@ export function leadsRouter(
           body.rubberMonthly !== undefined
             ? body.rubberMonthly
             : current.rubberMonthly,
+        classGoals,
       };
       await store.setGoals(next);
       res.json({ ok: true, goals: next });
@@ -274,7 +291,7 @@ export function leadsRouter(
         .max(365)
         .optional()
         .parse(req.query.days || undefined) ?? 28;
-      const [meta, leads, sold, perf, appts, goals] = await Promise.all([
+      const [meta, leads, sold, perf, appts, storedGoals] = await Promise.all([
         store.getMeta(),
         store.getLeads(),
         store.getSold(),
@@ -282,6 +299,11 @@ export function leadsRouter(
         store.getAppts(),
         store.getGoals(),
       ]);
+      // Seeded per-location goals show until an edit stores an override.
+      const goals = {
+        ...storedGoals,
+        classGoals: { ...DEFAULT_CLASS_GOALS, ...(storedGoals.classGoals ?? {}) },
+      };
       const appointments = {
         weeks: Object.values(appts)
           .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
@@ -312,7 +334,7 @@ export function leadsRouter(
         meta,
         appointments,
         goals,
-        daily: computeDailyLeadFlow(leads, goals, nowMs),
+        daily: computeDailyLeadFlow(leads, goals, nowMs, soldRows),
         analysis: buildLeadsAnalysis(leads, nowMs, days),
         sales: {
           soldMeta: sold

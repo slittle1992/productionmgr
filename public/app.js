@@ -2732,6 +2732,55 @@ function renderDailyStep() {
       split rubber vs flake (totals work meanwhile).</p>`;
   }
 
+  // Per-location month-to-date vs goals (leads exact; $ joined by client name).
+  if (d.byClass?.length) {
+    const dRow = (v) =>
+      v === null
+        ? "—"
+        : `<span class="${v >= 0 ? "lead-up" : "lead-down"}">${v >= 0 ? "+" : ""}${Math.round(v)}</span>`;
+    const dMoney = (v) =>
+      v === null
+        ? "—"
+        : `<span class="${v >= 0 ? "lead-up" : "lead-down"}">${v >= 0 ? "+" : "−"}${fmtMoney0(Math.abs(v))}</span>`;
+    html += `
+    <div class="prep-head" style="margin-top:14px"><span class="prep-title">By location — ${escapeHtml(d.month.label)} MTD vs goal</span></div>
+    <div class="table-wrap">
+    <table class="mtg-table leads-table goal-table">
+      <thead><tr><th>Location</th><th>Leads</th><th>Goal</th><th>Δ pace</th><th>Sold $</th><th>$ Goal</th><th>Δ pace</th></tr></thead>
+      <tbody>
+        ${d.byClass
+          .map((c) => {
+            const isCo = c.className === "Company";
+            const cls = escapeHtml(c.className);
+            return `<tr${isCo ? ' class="score-footer"' : ""}>
+              <td><b>${cls}</b></td>
+              <td><b>${c.leadsMtd}</b></td>
+              <td>${
+                isCo
+                  ? c.leadsGoal ?? "—"
+                  : `<input class="goal-cell" type="number" min="0" step="1" inputmode="numeric" data-goal-class="${cls}" data-goal-field="leads" value="${c.leadsGoal ?? ""}" placeholder="—" />`
+              }</td>
+              <td>${dRow(c.leadsDelta)}${
+                !isCo && c.leadsNeededPerDay ? `<span class="inv-dim"> · ${c.leadsNeededPerDay.toFixed(1)}/d</span>` : ""
+              }</td>
+              <td>${c.volMtd ? fmtMoney0(c.volMtd) : "—"}</td>
+              <td>${
+                isCo
+                  ? c.volGoal ? fmtMoney0(c.volGoal) : "—"
+                  : `<input class="goal-cell wide" type="number" min="0" step="1000" inputmode="numeric" data-goal-class="${cls}" data-goal-field="volume" value="${c.volGoal ?? ""}" placeholder="—" />`
+              }</td>
+              <td>${dMoney(c.volDelta)}</td>
+            </tr>`;
+          })
+          .join("")}
+      </tbody>
+    </table>
+    </div>
+    <p class="hint">Goals seeded from the <b>Quick Pacing</b> tracker (Aug 2026) —
+      edit any cell when the month's goals change. Sold $ needs the Sold Contracts
+      upload${d.volJoin.total ? ` (per-location $ joined by client name: ${d.volJoin.joined}/${d.volJoin.total} this month; the Company row is exact)` : ""}.</p>`;
+  }
+
   const showOther = d.hasType && d.days.some((day) => day.other > 0);
   html += `
   <table class="mtg-table leads-table">
@@ -2847,6 +2896,15 @@ async function handleSalesUpload(kind, file) {
 async function salesChange(e) {
   const t = e.target;
   try {
+    if (t.dataset.goalClass && t.dataset.goalField) {
+      await meetingApi("/api/leads/goals", "POST", {
+        className: t.dataset.goalClass,
+        [t.dataset.goalField]: t.value === "" ? null : Number(t.value),
+      });
+      toast(`${t.dataset.goalClass} goal saved ✓`, "success");
+      await loadSales();
+      return;
+    }
     if (t.dataset.goal) {
       await meetingApi("/api/leads/goals", "POST", {
         [t.dataset.goal]: t.value === "" ? null : Number(t.value),

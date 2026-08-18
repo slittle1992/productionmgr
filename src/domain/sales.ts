@@ -306,9 +306,32 @@ export interface DailyLeadDay {
   total: number;
 }
 
+export interface ClassGoal {
+  /** Monthly leads (inquiries) goal. */
+  leads: number | null;
+  /** Monthly sold-$ volume quota. */
+  volume: number | null;
+}
+
 export interface LeadGoals {
   flakeMonthly: number | null;
   rubberMonthly: number | null;
+  /** Per-location goals; merged over the seeded defaults (edits win). */
+  classGoals?: Record<string, ClassGoal>;
+}
+
+/** One location's month-to-date pacing vs its goals. */
+export interface ClassPace {
+  className: string;
+  leadsMtd: number;
+  leadsGoal: number | null;
+  /** leadsMtd − (goal spread evenly, by today). Null without a goal. */
+  leadsDelta: number | null;
+  leadsNeededPerDay: number | null;
+  /** Sold $ MTD (joined to this location by client name; approximate). */
+  volMtd: number;
+  volGoal: number | null;
+  volDelta: number | null;
 }
 
 export interface GoalPace {
@@ -337,6 +360,10 @@ export interface DailyLeadFlow {
   dataThroughMs: number | null;
   month: { label: string; day: number; daysInMonth: number };
   pace: GoalPace[];
+  /** Per-location MTD vs goals, plus a Company rollup row (exact totals). */
+  byClass: ClassPace[];
+  /** How many of the month's sold contracts joined to a location by name. */
+  volJoin: { joined: number; total: number };
 }
 
 const DAY_MS = 86_400_000;
@@ -346,6 +373,7 @@ export function computeDailyLeadFlow(
   leads: CompactLead[],
   goals: LeadGoals,
   nowMs: number,
+  sold: SoldContract[] = [],
   days = 14
 ): DailyLeadFlow {
   const today = dayStartUtc(nowMs);
@@ -363,7 +391,10 @@ export function computeDailyLeadFlow(
   let dataThroughMs: number | null = null;
   const mtd = { flake: 0, rubber: 0, total: 0 };
   const last7 = { flake: 0, rubber: 0, total: 0 };
+  const classLeadsMtd = new Map<string, number>();
+  const leadClassByName = new Map<string, string>();
   for (const l of leads) {
+    if (l.name) leadClassByName.set(l.name, l.className);
     if (dataThroughMs === null || l.created > dataThroughMs) dataThroughMs = l.created;
     if (l.pt) hasType = true;
     const d = dayStartUtc(l.created);
@@ -388,6 +419,7 @@ export function computeDailyLeadFlow(
       mtd.total++;
       if (l.pt === "flake") mtd.flake++;
       else if (l.pt === "rubber") mtd.rubber++;
+      classLeadsMtd.set(l.className, (classLeadsMtd.get(l.className) ?? 0) + 1);
     }
     if (l.created >= today - 6 * DAY_MS && l.created < today + DAY_MS) {
       last7.total++;
@@ -442,6 +474,68 @@ export function computeDailyLeadFlow(
     paceOf("total", totalGoal, mtd.total, last7.total),
   ].filter((p): p is GoalPace => p !== null);
 
+  // ── Per-location: leads MTD (exact) + sold $ MTD (client-name join). ──
+  const classVolMtd = new Map<string, number>();
+  let volCompany = 0;
+  let volJoined = 0;
+  let volTotal = 0;
+  for (const s of sold) {
+    if (s.saleMs === null || s.saleMs < monthStart || s.saleMs >= nowMs + DAY_MS)
+      continue;
+    if (s.status && CANCELLED_RE.test(s.status)) continue;
+    volTotal++;
+    volCompany += s.saleAmount;
+    const cls = s.clientKey ? leadClassByName.get(s.clientKey) : undefined;
+    if (!cls) continue;
+    volJoined++;
+    classVolMtd.set(cls, r2((classVolMtd.get(cls) ?? 0) + s.saleAmount));
+  }
+
+  const classGoals = goals.classGoals ?? {};
+  const classNames = [
+    ...new Set([...Object.keys(classGoals), ...classLeadsMtd.keys()]),
+  ].sort();
+  const share = dayOfMonth / daysInMonth;
+  const classRow = (className: string): ClassPace => {
+    const g = classGoals[className] ?? { leads: null, volume: null };
+    const leadsMtd = classLeadsMtd.get(className) ?? 0;
+    const volMtd = classVolMtd.get(className) ?? 0;
+    return {
+      className,
+      leadsMtd,
+      leadsGoal: g.leads,
+      leadsDelta: g.leads ? r2(leadsMtd - g.leads * share) : null,
+      leadsNeededPerDay:
+        g.leads && remaining > 0 ? r2(Math.max(0, g.leads - leadsMtd) / remaining) : null,
+      volMtd,
+      volGoal: g.volume,
+      volDelta: g.volume ? r2(volMtd - g.volume * share) : null,
+    };
+  };
+  const byClass = classNames.map(classRow);
+  // Company rollup: exact totals (every lead and contract, joined or not).
+  const companyLeadsGoal = byClass.reduce<number | null>(
+    (s, c) => (c.leadsGoal !== null ? (s ?? 0) + c.leadsGoal : s),
+    null
+  );
+  const companyVolGoal = byClass.reduce<number | null>(
+    (s, c) => (c.volGoal !== null ? (s ?? 0) + c.volGoal : s),
+    null
+  );
+  byClass.push({
+    className: "Company",
+    leadsMtd: mtd.total,
+    leadsGoal: companyLeadsGoal,
+    leadsDelta: companyLeadsGoal ? r2(mtd.total - companyLeadsGoal * share) : null,
+    leadsNeededPerDay:
+      companyLeadsGoal && remaining > 0
+        ? r2(Math.max(0, companyLeadsGoal - mtd.total) / remaining)
+        : null,
+    volMtd: r2(volCompany),
+    volGoal: companyVolGoal,
+    volDelta: companyVolGoal ? r2(volCompany - companyVolGoal * share) : null,
+  });
+
   return {
     days: out,
     hasType,
@@ -452,6 +546,8 @@ export function computeDailyLeadFlow(
       daysInMonth,
     },
     pace,
+    byClass,
+    volJoin: { joined: volJoined, total: volTotal },
   };
 }
 

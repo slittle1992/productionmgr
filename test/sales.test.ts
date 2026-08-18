@@ -164,3 +164,59 @@ describe("daily lead flow + goal pacing", () => {
     expect(rubber.delta).toBeLessThan(0);
   });
 });
+
+describe("per-location goal pacing", () => {
+  const NOW = Date.UTC(2026, 7, 18, 12); // day 18 of 31
+  const DAY = 86_400_000;
+  const lead = (cls: string, name: string, daysAgo = 1): CompactLead => ({
+    zip: "75201",
+    className: cls,
+    city: null,
+    created: NOW - daysAgo * DAY,
+    cat: "open",
+    name,
+  });
+
+  it("paces leads per location and joins sold $ by client name", () => {
+    const leads = [
+      lead("Dallas", "ann ames"),
+      lead("Dallas", "bob best"),
+      lead("Austin", "cal cole"),
+      lead("Austin", "old lead", 90), // outside the month
+    ];
+    const sold = [
+      { rep: "R", contractNumber: null, client: "Ann Ames", clientKey: "ann ames",
+        projectType: "Concrete Coating", jobNumber: null, status: "Sold",
+        saleMs: NOW - DAY, saleAmount: 10000 },
+      { rep: "R", contractNumber: null, client: "Zed Zonk", clientKey: "zed zonk",
+        projectType: null, jobNumber: null, status: "Sold",
+        saleMs: NOW - DAY, saleAmount: 5000 }, // no matching lead
+      { rep: "R", contractNumber: null, client: "Bob Best", clientKey: "bob best",
+        projectType: null, jobNumber: null, status: "Cancelled",
+        saleMs: NOW - DAY, saleAmount: 9999 }, // excluded
+    ];
+    const goals = {
+      flakeMonthly: null,
+      rubberMonthly: null,
+      classGoals: {
+        Dallas: { leads: 62, volume: 310000 },
+        Austin: { leads: null, volume: null },
+      },
+    };
+    const d = computeDailyLeadFlow(leads, goals, NOW, sold as never);
+    const dallas = d.byClass.find((c) => c.className === "Dallas")!;
+    expect(dallas.leadsMtd).toBe(2);
+    // Expected by day 18 of 31 with a 62 goal = 36; 2 − 36 = −34.
+    expect(dallas.leadsDelta).toBe(-34);
+    expect(dallas.volMtd).toBe(10000);
+    expect(dallas.volDelta).toBe(10000 - 180000);
+    const austin = d.byClass.find((c) => c.className === "Austin")!;
+    expect(austin.leadsMtd).toBe(1);
+    expect(austin.leadsDelta).toBeNull();
+    const company = d.byClass.find((c) => c.className === "Company")!;
+    expect(company.leadsMtd).toBe(3);
+    expect(company.leadsGoal).toBe(62);
+    expect(company.volMtd).toBe(15000); // exact, including the unjoined contract
+    expect(d.volJoin).toEqual({ joined: 1, total: 2 });
+  });
+});
