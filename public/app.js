@@ -1521,6 +1521,7 @@ const sales = {
   daily: null, // daily rubber/flake lead flow + goal pacing
   goals: null, // per-location goals + (unused) type goals
   dailyTasks: null, // today's checks, recent contracts, rehash list
+  chartClass: null, // daily chart market filter (null = all markets)
 };
 
 const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
@@ -2872,7 +2873,20 @@ function renderDailyStep() {
  * untyped) in an inline SVG, with a tap/hover readout and a table view.
  */
 function renderLeadBarChart(d) {
-  const days = [...d.days].reverse(); // oldest → newest, left → right
+  const allDays = [...d.days].reverse(); // oldest → newest, left → right
+  // Market filter: chips for every market seen in the window.
+  const marketSet = new Set();
+  for (const day of allDays) {
+    for (const cls of Object.keys(day.byClass || {})) marketSet.add(cls);
+  }
+  const markets = [...marketSet].sort();
+  if (sales.chartClass && !marketSet.has(sales.chartClass)) sales.chartClass = null;
+  const sel = sales.chartClass;
+  const zero = { flake: 0, rubber: 0, other: 0, total: 0 };
+  const days = allDays.map((day) => ({
+    date: day.date,
+    ...(sel ? day.byClass?.[sel] ?? zero : day),
+  }));
   const n = days.length;
   const showOther = d.hasType && days.some((day) => day.other > 0);
   const stacked = d.hasType;
@@ -2920,7 +2934,7 @@ function renderLeadBarChart(d) {
       months += `<line class="lb-grid" x1="${x}" x2="${x}" y1="${PAD_T}" y2="${H - PAD_B + 3}"/>
         <text class="lb-txt" x="${Number(x) + 2}" y="${H - 5}">${dt.toLocaleDateString(undefined, { month: "short", timeZone: "UTC" })}</text>`;
     }
-    const label = `${fmtDay(day.date)}: ${day.total} lead${day.total === 1 ? "" : "s"}${
+    const label = `${sel ? sel + " — " : ""}${fmtDay(day.date)}: ${day.total} lead${day.total === 1 ? "" : "s"}${
       stacked ? ` — ${day.flake} flake · ${day.rubber} rubber${day.other ? ` · ${day.other} untyped` : ""}` : ""
     }`;
     hits += `<rect class="lb-hit js-bar-hit" data-cap="${escapeHtml(label)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}"><title>${escapeHtml(label)}</title></rect>`;
@@ -2929,18 +2943,30 @@ function renderLeadBarChart(d) {
   const gridVals = [yMax / 2, yMax];
   const latest = days[n - 1];
   const defaultCap = latest
-    ? `${fmtDay(latest.date)}: ${latest.total} leads${stacked ? ` — ${latest.flake} flake · ${latest.rubber} rubber` : ""}`
+    ? `${sel ? sel + " — " : ""}${fmtDay(latest.date)}: ${latest.total} leads${stacked ? ` — ${latest.flake} flake · ${latest.rubber} rubber` : ""}`
     : "";
 
   return `
   <div class="prep-head" style="margin-top:14px">
-    <span class="prep-title">Daily leads — last 3 months</span>
+    <span class="prep-title">Daily leads — last 3 months${sel ? ` · ${escapeHtml(sel)}` : ""}</span>
     ${
       stacked
         ? `<span class="lb-legend"><i class="lb-sw lb-flake"></i>Flake <i class="lb-sw lb-rubber"></i>Rubber${showOther ? `<i class="lb-sw lb-other"></i>Untyped` : ""}</span>`
         : ""
     }
   </div>
+  ${
+    markets.length > 1
+      ? `<div class="class-chips lb-chips">
+          <button type="button" class="chip-btn ${sel === null ? "active" : ""}" data-act="chart-class">All markets</button>
+          ${markets
+            .map(
+              (m) => `<button type="button" class="chip-btn ${sel === m ? "active" : ""}" data-act="chart-class" data-cls="${escapeHtml(m)}">${escapeHtml(m)}</button>`
+            )
+            .join("")}
+        </div>`
+      : ""
+  }
   <div class="lb-cap" id="lead-chart-cap">${escapeHtml(defaultCap)}</div>
   <div class="lb-wrap">
     <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Daily lead volume, last 3 months">
@@ -2962,7 +2988,8 @@ function renderLeadBarChart(d) {
     <table class="mtg-table leads-table">
       <thead><tr><th>Day</th>${stacked ? `<th>Flake</th><th>Rubber</th>${showOther ? "<th>?</th>" : ""}` : ""}<th>Total</th></tr></thead>
       <tbody>
-        ${d.days
+        ${[...days]
+          .reverse()
           .map(
             (day) => `<tr>
           <td>${fmtDay(day.date)}</td>
@@ -3250,6 +3277,11 @@ async function salesClick(e) {
   const btn = e.target.closest("[data-act]");
   if (!btn) return;
   try {
+    if (btn.dataset.act === "chart-class") {
+      sales.chartClass = btn.dataset.cls || null;
+      renderSales();
+      return;
+    }
     if (btn.dataset.act === "leads-window") {
       sales.days = Number(btn.dataset.days);
       sales.analysis = null;

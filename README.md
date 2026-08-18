@@ -204,7 +204,9 @@ tomorrow.
    pace while lead volume isn't and rubber share fell** — the miss is the
    mix, not the volume. Below it, a **daily lead-volume bar chart of the
    last 3 months** — stacked columns (flake / rubber), month markers, a
-   tap/hover readout per day, and a collapsible day-by-day table. The
+   tap/hover readout per day, **market filter chips** (All markets or any
+   single location), and a collapsible day-by-day table that follows the
+   selected market. The
    split needs the **Project Type** column in the Clients List export
    (the card says so if it's missing; totals chart regardless), and a
    freshness note nudges "upload today's Clients List" whenever the

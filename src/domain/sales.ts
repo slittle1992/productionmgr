@@ -296,14 +296,19 @@ export function computeWeeklyFlow(
 
 // ───────────────────── Daily lead flow + monthly goal pacing ─────────────────────
 
-export interface DailyLeadDay {
-  /** ISO date (UTC). */
-  date: string;
+export interface DailyTypeCounts {
   flake: number;
   rubber: number;
   /** Leads with no recognisable project type. */
   other: number;
   total: number;
+}
+
+export interface DailyLeadDay extends DailyTypeCounts {
+  /** ISO date (UTC). */
+  date: string;
+  /** Same counts split per market (only markets with leads that day). */
+  byClass: Record<string, DailyTypeCounts>;
 }
 
 export interface ClassGoal {
@@ -430,13 +435,28 @@ export function computeDailyLeadFlow(
           rubber: 0,
           other: 0,
           total: 0,
+          byClass: {},
         };
         byDay.set(d, slot);
       }
+      const cls = (slot.byClass[l.className] ??= {
+        flake: 0,
+        rubber: 0,
+        other: 0,
+        total: 0,
+      });
       slot.total++;
-      if (l.pt === "flake") slot.flake++;
-      else if (l.pt === "rubber") slot.rubber++;
-      else slot.other++;
+      cls.total++;
+      if (l.pt === "flake") {
+        slot.flake++;
+        cls.flake++;
+      } else if (l.pt === "rubber") {
+        slot.rubber++;
+        cls.rubber++;
+      } else {
+        slot.other++;
+        cls.other++;
+      }
     }
     if (l.created >= monthStart && l.created < nowMs + DAY_MS) {
       mtd.total++;
@@ -463,6 +483,7 @@ export function computeDailyLeadFlow(
         rubber: 0,
         other: 0,
         total: 0,
+        byClass: {},
       }
     );
   }
