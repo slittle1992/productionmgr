@@ -123,6 +123,63 @@ describe("inventory API", () => {
     expect(glacier).toMatchObject({ used: 0, restocked: true });
   });
 
+  it("takes POs from the email, pending until Received books the dollars", async () => {
+    // Counts for two weeks so the identity is computable.
+    await request(app)
+      .post("/api/inventory-counts?week=2026-08-09")
+      .send({ rows: week1Rows });
+    await request(app).post("/api/inventory-counts").send({ rows: week2Rows });
+
+    const PO_ROWS = [
+      ["PURCHASE ORDER"],
+      ["FM-AUSTIN-081726"],
+      ["8/12/2026"],
+      ["Supplier"],
+      ["Fieldmaster"],
+      ["Ship to"],
+      ["89 Falon Lane; Liberty Hill, TX 78642"],
+      ["Product ID Description Packing Quantity Unit price Subtotal"],
+      ["EPDM-BLACK EPDM - BLACK 40 34.75 1,390.00"],
+      ["Total: 1,390.00"],
+    ];
+    const up = await request(app).post("/api/inventory-counts").send({ rows: PO_ROWS });
+    expect(up.status).toBe(200);
+    expect(up.body.kind).toBe("po");
+    expect(up.body.po.className).toBe("Austin");
+    expect(up.body.po.total).toBe(1390);
+    expect(up.body.pos.pending).toHaveLength(1);
+
+    // Pending POs don't touch the math yet.
+    const austinBefore = up.body.classes.find(
+      (c: { className: string }) => c.className === "Austin"
+    );
+    expect(austinBefore.purchases).toBeNull();
+
+    // Received → the total becomes this week's purchases automatically.
+    const rec = await request(app)
+      .post(`/api/inventory-counts/pos/${up.body.po.id}?week=2026-08-16`)
+      .send({ received: true });
+    expect(rec.status).toBe(200);
+    const austin = rec.body.classes.find(
+      (c: { className: string }) => c.className === "Austin"
+    );
+    expect(austin.purchases).toBe(1390);
+    expect(austin.purchasesSource).toBe("pos");
+    // drawdown 576 + received 1390.
+    expect(austin.materialCost).toBe(1966);
+    expect(rec.body.pos.received).toHaveLength(1);
+
+    // A manual entry still overrides the PO figure.
+    const manual = await request(app)
+      .post("/api/inventory-counts/purchases?week=2026-08-16")
+      .send({ className: "Austin", amount: 2000 });
+    const austinM = manual.body.classes.find(
+      (c: { className: string }) => c.className === "Austin"
+    );
+    expect(austinM.purchases).toBe(2000);
+    expect(austinM.purchasesSource).toBe("manual");
+  });
+
   it("requires a location when none can be detected", async () => {
     const res = await request(app)
       .post("/api/inventory-counts")

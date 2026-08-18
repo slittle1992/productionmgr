@@ -20,6 +20,21 @@ export type PriceMap = Record<string, number>;
 /** Dollars spent on material for one location in one week (from POs/Ramp). */
 export type PurchasesMap = Record<string, number>;
 
+/** A vendor purchase order dropped in from the email, pending until received. */
+export interface StoredPo {
+  id: string;
+  poNumber: string | null;
+  supplier: string | null;
+  orderMs: number | null;
+  className: string | null;
+  total: number | null;
+  filename: string | null;
+  uploadedAt: string;
+  /** Week the material landed; null while still in transit. */
+  receivedWeek: string | null;
+  receivedAt: string | null;
+}
+
 export interface InventoryCountsStore {
   /** Every location's count stored for the week. */
   getWeek(weekStart: string): Promise<StoredInventoryWeek[]>;
@@ -40,6 +55,11 @@ export interface InventoryCountsStore {
     className: string,
     amount: number | null
   ): Promise<void>;
+  listPos(): Promise<StoredPo[]>;
+  addPo(po: StoredPo): Promise<void>;
+  /** Merge fields into a stored PO; returns null when the id is unknown. */
+  updatePo(id: string, patch: Partial<StoredPo>): Promise<StoredPo | null>;
+  deletePo(id: string): Promise<void>;
 }
 
 function mergePrices(current: PriceMap, updates: PriceMap): PriceMap {
@@ -60,6 +80,7 @@ interface InventoryFile {
   prices: PriceMap;
   /** weekStart → classSlug → purchases $. */
   purchases?: Record<string, PurchasesMap>;
+  pos?: StoredPo[];
 }
 
 export class JsonInventoryCountsStore implements InventoryCountsStore {
@@ -139,6 +160,27 @@ export class JsonInventoryCountsStore implements InventoryCountsStore {
       else wk[classSlug(className)] = amount;
     });
   }
+  async listPos(): Promise<StoredPo[]> {
+    return (await this.read()).pos ?? [];
+  }
+  async addPo(po: StoredPo): Promise<void> {
+    await this.write((f) => {
+      (f.pos ??= []).push(po);
+    });
+  }
+  async updatePo(id: string, patch: Partial<StoredPo>): Promise<StoredPo | null> {
+    let updated: StoredPo | null = null;
+    await this.write((f) => {
+      const po = (f.pos ?? []).find((p) => p.id === id);
+      if (po) updated = Object.assign(po, patch);
+    });
+    return updated;
+  }
+  async deletePo(id: string): Promise<void> {
+    await this.write((f) => {
+      f.pos = (f.pos ?? []).filter((p) => p.id !== id);
+    });
+  }
 }
 
 export class KvInventoryCountsStore implements InventoryCountsStore {
@@ -147,6 +189,8 @@ export class KvInventoryCountsStore implements InventoryCountsStore {
   private static readonly PRICES = "inventory:prices";
   /** Hash of `${weekStart}|${classSlug}` → purchases $ (null = cleared). */
   private static readonly PURCHASES = "inventory:purchases";
+  /** Hash of PO id → StoredPo (null = deleted). */
+  private static readonly POS = "inventory:pos";
   constructor(private readonly kv: KvClient) {}
 
   private async all(): Promise<Record<string, StoredInventoryWeek | null>> {
@@ -232,6 +276,31 @@ export class KvInventoryCountsStore implements InventoryCountsStore {
       amount
     );
   }
+  private async allPos(): Promise<StoredPo[]> {
+    const all =
+      (await this.kv.hgetall<StoredPo | null>(KvInventoryCountsStore.POS)) ?? {};
+    return Object.values(all).filter((p): p is StoredPo => Boolean(p && p.id));
+  }
+  async listPos(): Promise<StoredPo[]> {
+    return (await this.allPos()).sort((a, b) =>
+      a.uploadedAt.localeCompare(b.uploadedAt)
+    );
+  }
+  async addPo(po: StoredPo): Promise<void> {
+    await this.kv.hset(KvInventoryCountsStore.POS, po.id, po);
+  }
+  async updatePo(id: string, patch: Partial<StoredPo>): Promise<StoredPo | null> {
+    const all =
+      (await this.kv.hgetall<StoredPo | null>(KvInventoryCountsStore.POS)) ?? {};
+    const po = all[id];
+    if (!po) return null;
+    const next = { ...po, ...patch };
+    await this.kv.hset(KvInventoryCountsStore.POS, id, next);
+    return next;
+  }
+  async deletePo(id: string): Promise<void> {
+    await this.kv.hset(KvInventoryCountsStore.POS, id, null);
+  }
 }
 
 export class MemoryInventoryCountsStore implements InventoryCountsStore {
@@ -284,5 +353,21 @@ export class MemoryInventoryCountsStore implements InventoryCountsStore {
     const key = MemoryInventoryCountsStore.key(weekStart, className);
     if (amount === null) this.purchases.delete(key);
     else this.purchases.set(key, amount);
+  }
+  private pos: StoredPo[] = [];
+  async listPos() {
+    return structuredClone(this.pos);
+  }
+  async addPo(po: StoredPo) {
+    this.pos.push(structuredClone(po));
+  }
+  async updatePo(id: string, patch: Partial<StoredPo>) {
+    const po = this.pos.find((p) => p.id === id);
+    if (!po) return null;
+    Object.assign(po, patch);
+    return structuredClone(po);
+  }
+  async deletePo(id: string) {
+    this.pos = this.pos.filter((p) => p.id !== id);
   }
 }

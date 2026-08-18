@@ -9,12 +9,17 @@ import {
   type InventoryUsage,
 } from "../domain/inventory.js";
 import { pdfToTextLines } from "../domain/inventoryPdf.js";
+import {
+  isPurchaseOrderGrid,
+  parsePurchaseOrder,
+} from "../domain/purchaseOrders.js";
 import { PipelineFormatError } from "../domain/pipeline.js";
 import { getReportingWeek, getReportingWeekFromStart } from "../domain/week.js";
 import { DEFAULT_UNIT_COSTS } from "../data/materialPrices.js";
 import type {
   InventoryCountsStore,
   StoredInventoryWeek,
+  StoredPo,
 } from "../storage/inventoryCountsStore.js";
 import { classSlug } from "../storage/repository.js";
 import { asyncHandler } from "./asyncHandler.js";
@@ -76,8 +81,12 @@ export function inventoryCountsRouter(
     endValue: number;
     /** Counted items with no unit cost (value is understated by these). */
     valueUnpricedCount: number;
-    /** Dollars spent on material this week, as entered by the PM. */
+    /** Dollars spent on material this week (manual entry or received POs). */
     purchases: number | null;
+    /** Where the purchases figure came from. */
+    purchasesSource: "manual" | "pos" | null;
+    /** POs received into this location this week. */
+    poCount: number;
     /**
      * The headline: purchases + (begin − end) — the P&L material number.
      * Null until there's a prior count to give a beginning value.
@@ -88,6 +97,8 @@ export function inventoryCountsRouter(
   interface Summary {
     week: { weekStart: string; weekEnd: string };
     classes: ClassSummary[];
+    /** POs still in transit + those received this week. */
+    pos: { pending: StoredPo[]; received: StoredPo[] };
     totals: {
       /** Σ materialCost over classes where it's computable. */
       materialCost: number;
@@ -109,12 +120,29 @@ export function inventoryCountsRouter(
     const stored = await store.getWeek(weekStart);
     const prices = { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) };
     const purchasesMap = await store.getPurchases(weekStart);
+    const allPos = await store.listPos();
+    const pending = allPos.filter((p) => p.receivedWeek === null);
+    const received = allPos.filter((p) => p.receivedWeek === weekStart);
+    const poTotals = new Map<string, { total: number; count: number }>();
+    for (const po of received) {
+      if (!po.className || po.total === null) continue;
+      const key = classSlug(po.className);
+      const cur = poTotals.get(key) ?? { total: 0, count: 0 };
+      cur.total += po.total;
+      cur.count++;
+      poTotals.set(key, cur);
+    }
     const classes: ClassSummary[] = [];
     for (const current of stored) {
       const prev = await previousFor(weekStart, current.className);
       const end = inventoryValue(current.lines, prices);
       const begin = prev ? inventoryValue(prev.lines, prices) : null;
-      const purchases = purchasesMap[classSlug(current.className)] ?? null;
+      const manual = purchasesMap[classSlug(current.className)] ?? null;
+      const fromPos = poTotals.get(classSlug(current.className));
+      // Manual entry wins; otherwise the received POs' totals; else nothing.
+      const purchases = manual ?? (fromPos ? r2(fromPos.total) : null);
+      const purchasesSource: "manual" | "pos" | null =
+        manual !== null ? "manual" : fromPos ? "pos" : null;
       // The P&L identity: material cost = purchases + beginning − ending
       // inventory. With purchases missing it degrades to pure drawdown.
       const materialCost =
@@ -135,6 +163,8 @@ export function inventoryCountsRouter(
         endValue: end.value,
         valueUnpricedCount: end.unpricedCount,
         purchases,
+        purchasesSource,
+        poCount: fromPos?.count ?? 0,
         materialCost,
       });
     }
@@ -143,6 +173,7 @@ export function inventoryCountsRouter(
     return {
       week: { weekStart, weekEnd },
       classes,
+      pos: { pending, received },
       totals: {
         materialCost: r2(
           classes.reduce((n, c) => n + (c.materialCost ?? 0), 0)
@@ -190,6 +221,28 @@ export function inventoryCountsRouter(
                 new Uint8Array(Buffer.from(body.pdfBase64!, "base64"))
               )
             );
+        // Vendor POs dropped in from the email land as pending until a PM
+        // taps Received (which books the dollars to that location + week).
+        if (isPurchaseOrderGrid(grid)) {
+          const po = parsePurchaseOrder(grid);
+          const stored: StoredPo = {
+            id: `po-${now()}-${Math.abs((po.poNumber ?? "x").split("").reduce((a, c) => a * 31 + c.charCodeAt(0), 7)) % 10000}`,
+            ...po,
+            filename: body.filename ?? null,
+            uploadedAt: new Date(now()).toISOString(),
+            receivedWeek: null,
+            receivedAt: null,
+          };
+          await store.addPo(stored);
+          const week = resolveWeek(req.query.week);
+          res.json({
+            ok: true,
+            kind: "po",
+            po: stored,
+            ...(await summarize(week.weekStart, week.weekEnd)),
+          });
+          return;
+        }
         parsed = parseInventory(grid);
       } catch (err) {
         if (err instanceof PipelineFormatError) {
@@ -264,6 +317,43 @@ export function inventoryCountsRouter(
         prices: { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) },
         defaults: DEFAULT_UNIT_COSTS,
       });
+    })
+  );
+
+  const poBody = z.object({
+    className: z.string().trim().min(1).max(80).optional(),
+    /** true = received this week (?week=); false = back to in-transit. */
+    received: z.boolean().optional(),
+  });
+
+  // POST /api/inventory-counts/pos/:id?week= — assign a location and/or mark
+  // received (books the PO total into that week's purchases).
+  router.post(
+    "/inventory-counts/pos/:id",
+    asyncHandler(async (req, res) => {
+      const week = resolveWeek(req.query.week);
+      const body = poBody.parse(req.body);
+      const patch: Partial<StoredPo> = {};
+      if (body.className !== undefined) patch.className = body.className;
+      if (body.received !== undefined) {
+        patch.receivedWeek = body.received ? week.weekStart : null;
+        patch.receivedAt = body.received ? new Date(now()).toISOString() : null;
+      }
+      const po = await store.updatePo(String(req.params.id), patch);
+      if (!po) {
+        res.status(404).json({ error: "unknown_po" });
+        return;
+      }
+      res.json({ ok: true, po, ...(await summarize(week.weekStart, week.weekEnd)) });
+    })
+  );
+
+  // DELETE /api/inventory-counts/pos/:id — remove a mistaken PO upload.
+  router.delete(
+    "/inventory-counts/pos/:id",
+    asyncHandler(async (req, res) => {
+      await store.deletePo(String(req.params.id));
+      res.json({ ok: true });
     })
   );
 

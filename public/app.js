@@ -3684,9 +3684,12 @@ function renderMaterialsSection(v) {
     </span>
   </div>`;
 
+  const posBlock = renderInvPos();
+
   if (!invCounts.classes.length) {
     return (
       controls +
+      posBlock +
       `<p class="hint">No counts uploaded for the week of ${fmtDay(invCounts.week.weekStart)} yet.</p>`
     );
   }
@@ -3730,16 +3733,18 @@ function renderMaterialsSection(v) {
       );
       const arrivalsR = Math.round(arrivals * 100) / 100;
       const suggest =
-        arrivalsR > 0 && c.purchases === null
+        arrivalsR > 0 && c.purchases === null && c.purchasesSource === null
           ? `<button class="inv-use" type="button" data-invuse="${escapeHtml(c.className)}" data-amount="${arrivalsR}">arrivals detected ≈ ${fmtMoney(arrivalsR)} — use</button>`
           : "";
       const mathRows = `
       <div class="inv-math">
         <div class="derived-row">
-          <span>Purchases this week <span class="inv-dim">(material received — POs/Ramp)</span>${suggest}</span>
+          <span>Purchases this week
+            ${c.purchasesSource === "pos" ? `<span class="po-auto">auto · ${c.poCount} PO${c.poCount === 1 ? "" : "s"} received</span>` : `<span class="inv-dim">(material received — POs/Ramp)</span>`}
+            ${suggest}</span>
           <span class="money-inline">$ <input class="js-purchase" data-class="${escapeHtml(c.className)}"
             type="number" min="0" step="0.01" inputmode="decimal"
-            value="${c.purchases ?? ""}" placeholder="0" /></span>
+            value="${c.purchasesSource === "manual" ? c.purchases : ""}" placeholder="${c.purchasesSource === "pos" ? c.purchases : "0"}" /></span>
         </div>
         <div class="derived-row">
           <span>Trailer stock value</span>
@@ -3843,7 +3848,63 @@ function renderMaterialsSection(v) {
     ${t.missingPrevious.length ? `<p class="hint">${t.missingPrevious.map(escapeHtml).join(", ")}: first count on record — excluded until next week's count.</p>` : ""}
   </div>`;
 
-  return controls + blocks + totals;
+  return controls + posBlock + blocks + totals;
+}
+
+/** Pending + received-this-week purchase orders (dropped in from the email). */
+function renderInvPos() {
+  const pos = invCounts.pos || { pending: [], received: [] };
+  if (!pos.pending.length && !pos.received.length) return "";
+  const card = (po, received) => `
+    <div class="po-card${received ? " received" : ""}">
+      <div class="po-main">
+        <b>${escapeHtml(po.poNumber || po.filename || "PO")}</b>
+        <span class="inv-dim">${escapeHtml(po.supplier || "")}${po.orderMs ? ` · ordered ${fmtDay(new Date(po.orderMs).toISOString().slice(0, 10))}` : ""}</span>
+        ${
+          po.className
+            ? `<span class="po-class">${escapeHtml(po.className)}</span>`
+            : `<select class="inv-class-select js-po-class" data-po="${po.id}">
+                 <option value="">Location?</option>
+                 ${state.classes.map((c) => `<option>${escapeHtml(c)}</option>`).join("")}
+               </select>`
+        }
+        <span class="po-total">${po.total !== null ? fmtMoney(po.total) : "$?"}</span>
+      </div>
+      <div class="po-actions">
+        ${
+          received
+            ? `<span class="po-received-tag">✓ received ${po.receivedAt ? fmtDay(po.receivedAt.slice(0, 10)) : ""}</span>
+               <button class="btn-clear" type="button" data-po-unreceive="${po.id}">undo</button>`
+            : `<button class="po-receive" type="button" data-po-receive="${po.id}" ${po.className ? "" : "disabled title='Pick the location first'"}>📦 Received</button>`
+        }
+        <button class="btn-clear" type="button" data-po-del="${po.id}">✕</button>
+      </div>
+    </div>`;
+  return `
+  <div class="po-block">
+    ${pos.pending.length ? `<p class="po-head">In transit — tap <b>Received</b> when it lands (books the $ into this week)</p>` : ""}
+    ${pos.pending.map((p) => card(p, false)).join("")}
+    ${pos.received.length ? `<p class="po-head">Received this week</p>` : ""}
+    ${pos.received.map((p) => card(p, true)).join("")}
+  </div>`;
+}
+
+async function poAction(id, body) {
+  try {
+    const q = meeting.week ? `?week=${meeting.week}` : "";
+    const res = await fetch(`/api/inventory-counts/pos/${encodeURIComponent(id)}${q}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error();
+    invCounts = await res.json();
+    if (meeting.view) renderMeeting();
+    return true;
+  } catch {
+    toast("Couldn't update that PO.", "error");
+    return false;
+  }
 }
 
 async function postInvCounts(payload) {
@@ -3855,6 +3916,9 @@ async function postInvCounts(payload) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.message || "Upload failed.");
+  if (data.kind === "po") {
+    return `PO ${data.po.poNumber || ""} (${data.po.className || "pick location"}, ${data.po.total !== null ? fmtMoney(data.po.total) : "$?"}) — pending until Received`;
+  }
   // The sheet may belong to a different week (its Submitted date decides),
   // so refresh the meeting week's view instead of trusting this response.
   return `${data.className} · week of ${fmtDay(data.week.weekStart)}`;
@@ -3996,6 +4060,8 @@ function initInvCounts() {
       saveInvPrice(t);
     } else if (t.classList && t.classList.contains("js-purchase")) {
       saveInvPurchases(t);
+    } else if (t.classList && t.classList.contains("js-po-class")) {
+      if (t.value) poAction(t.dataset.po, { className: t.value });
     }
   });
   root.addEventListener("click", (e) => {
@@ -4003,6 +4069,29 @@ function initInvCounts() {
     if (del) {
       e.preventDefault();
       deleteInvCounts(del.dataset.invdel);
+      return;
+    }
+    const rec = e.target.closest("[data-po-receive]");
+    if (rec) {
+      e.preventDefault();
+      poAction(rec.dataset.poReceive, { received: true }).then(
+        (ok) => ok && toast("Booked into this week's purchases ✓", "success")
+      );
+      return;
+    }
+    const unrec = e.target.closest("[data-po-unreceive]");
+    if (unrec) {
+      e.preventDefault();
+      poAction(unrec.dataset.poUnreceive, { received: false });
+      return;
+    }
+    const podel = e.target.closest("[data-po-del]");
+    if (podel) {
+      e.preventDefault();
+      if (confirm("Remove this purchase order?")) {
+        fetch(`/api/inventory-counts/pos/${encodeURIComponent(podel.dataset.poDel)}`, { method: "DELETE" })
+          .then(() => loadInvCounts());
+      }
       return;
     }
     const use = e.target.closest("[data-invuse]");

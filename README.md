@@ -123,10 +123,19 @@ sign-off, note, and update so next week you know who owns what.
    counts × the PO-derived unit-cost catalog. Because a delivery raises
    stock and purchases equally, big PO weeks don't spike the number — and
    a negative cost means the purchases entry is too low, which the section
-   flags rather than hides. Deliveries are hard to track across locations,
-   so the section detects them: counts that **rose**, valued at PO prices,
-   show as "arrivals detected ≈ $X — use", one tap to fill the purchases
-   box (a floor for what landed; type the real PO total when known). Item movement (counts that went down) stays as
+   flags rather than hides. Purchases fill themselves three ways, best
+   first: **drop the vendor PO PDF in** (same upload button — the app tells
+   POs and count sheets apart, reads the PO number, supplier, total, and
+   the ship-to location, and holds it as *in transit* until a PM taps
+   **📦 Received**, which books the dollars into that location's week; PO
+   totals rightly include sundries — squeegees and the like are never
+   counted, so their dollars expense in the week received, exactly like
+   the P&L). Or type the amount by hand (manual always overrides). Or, as
+   a floor, tap "arrivals detected ≈ $X — use" (counts that rose, valued
+   at PO prices). `scripts/po-email-forwarder.gs` is a ready-made Google
+   Apps Script that auto-sends PO PDFs from Gmail (or the Drive PO folder)
+   into the app, making ingestion zero-touch — Received stays the one
+   human tap. Item movement (counts that went down) stays as
    a collapsible detail per location, with unit costs from
    `src/data/materialPrices.ts` editable inline. Included in the meeting
    export.
