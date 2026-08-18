@@ -9,6 +9,40 @@ import {
   readCustomField,
   type BuilderPrimeProject,
 } from "../builderPrime/types.js";
+import type { JobFacts } from "../storage/pipelineStore.js";
+
+/** Join key tolerant of formatting: the digits of a job number, else as-is. */
+export function jobKey(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  return digits.length >= 4 ? digits : raw.trim().toLowerCase();
+}
+
+const strVal = (v: unknown) =>
+  v === null || v === undefined || String(v).trim() === ""
+    ? null
+    : String(v).trim();
+const numVal = (v: unknown) => {
+  const n = Number(String(v ?? "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/** jobKey → sqft/color for every job in a pipeline upload. */
+export function extractJobFacts(
+  projects: BuilderPrimeProject[],
+  fields: CustomFieldNames
+): Record<string, JobFacts> {
+  const facts: Record<string, JobFacts> = {};
+  for (const p of projects) {
+    const jobNumber =
+      strVal(readCustomField(p, fields.jobNumber)) ?? strVal(p.jobNumber);
+    if (!jobNumber) continue;
+    facts[jobKey(jobNumber)] = {
+      sqft: numVal(readCustomField(p, fields.sqft)),
+      color: strVal(readCustomField(p, fields.color)),
+    };
+  }
+  return facts;
+}
 
 /**
  * "Spec" material cost for the week's completed jobs: each completed job is
@@ -77,25 +111,17 @@ export function expectedMaterialsByClass(
   week: ReportingWeek,
   projects: BuilderPrimeProject[],
   fields: CustomFieldNames,
-  coverage: CoverageConfig
+  coverage: CoverageConfig,
+  history: Record<string, JobFacts> = {}
 ): ExpectedMaterialsRow[] {
-  // jobNumber → pipeline sqft/color.
-  const str = (v: unknown) =>
-    v === null || v === undefined || String(v).trim() === ""
-      ? null
-      : String(v).trim();
-  const num = (v: unknown) => {
-    const n = Number(String(v ?? "").replace(/[^0-9.]/g, ""));
-    return Number.isFinite(n) && n > 0 ? n : null;
-  };
-  const byJob = new Map<string, { sqft: number | null; color: string | null }>();
-  for (const p of projects) {
-    const jobNumber =
-      str(readCustomField(p, fields.jobNumber)) ?? str(p.jobNumber);
-    if (!jobNumber) continue;
-    byJob.set(jobNumber, {
-      sqft: num(readCustomField(p, fields.sqft)),
-      color: str(readCustomField(p, fields.color)),
+  // Remembered facts from past uploads first; the current pipeline overlays
+  // them (completed jobs usually aged out of the current export).
+  const byJob = new Map<string, JobFacts>(Object.entries(history));
+  for (const [key, f] of Object.entries(extractJobFacts(projects, fields))) {
+    const old = byJob.get(key);
+    byJob.set(key, {
+      sqft: f.sqft ?? old?.sqft ?? null,
+      color: f.color ?? old?.color ?? null,
     });
   }
 
@@ -107,7 +133,7 @@ export function expectedMaterialsByClass(
       rows.get(cls) ??
       ({ className: cls, completedJobs: 0, jobsWithSqft: 0, sqft: 0, expectedCost: 0 } as ExpectedMaterialsRow);
     row.completedJobs++;
-    const match = byJob.get(job.jobNumber);
+    const match = byJob.get(jobKey(job.jobNumber));
     if (match?.sqft) {
       row.jobsWithSqft++;
       row.sqft += match.sqft;

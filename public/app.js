@@ -1673,7 +1673,9 @@ function renderMeeting() {
   if (!v) return;
   renderMeetingPrep(v);
   renderMeetingScore(v);
-  $("meeting-week-range").textContent = `${fmtDay(v.week.weekStart)} – ${fmtDay(v.week.weekEnd)}`;
+  $("meeting-week-range").innerHTML =
+    `${fmtDay(v.week.weekStart)} – ${fmtDay(v.week.weekEnd)}` +
+    `<span class="week-reviewing">reviewing ${fmtDay(v.labor.weekStart)} – ${fmtDay(v.labor.weekEnd)}</span>`;
   $("meeting-progress-label").textContent = `${v.doneCount} of ${v.sectionCount} done`;
   $("meeting-progress-fill").style.width =
     Math.round((v.doneCount / v.sectionCount) * 100) + "%";
@@ -3812,7 +3814,7 @@ function renderMaterialsSection(v) {
           ${pctHtml}
           <span class="inv-loc-cost">${headline === null ? "—" : fmtMoney(headline)}</span>
         </summary>
-        ${c ? invMathHtml(c) : `<p class="hint">No inventory count uploaded for ${escapeHtml(className)} this week — drop the tracker sheet in to compute material cost.</p>`}
+        ${c ? invMathHtml(c) : `<p class="hint">${myReceived.length ? `<b>${fmtMoney(myReceived.reduce((n, p) => n + (p.total || 0), 0))}</b> received this week — ` : ""}no inventory count uploaded for ${escapeHtml(className)} this week; drop the tracker sheet in to compute material cost.</p>`}
         ${invPoListHtml(myPending, myReceived)}
         ${c ? invMovementHtml(c) : ""}
         ${c ? `<p class="hint inv-loc-meta">${c.current.sourceLabel ? escapeHtml(c.current.sourceLabel) + " · " : ""}<button class="btn-clear inv-del" type="button" data-invdel="${escapeHtml(className)}">Remove count</button></p>` : ""}
@@ -3834,6 +3836,7 @@ function renderMaterialsSection(v) {
     <div class="derived-row"><span>Trailer stock value</span><strong>${fmtMoney(t.beginValue)} → ${fmtMoney(t.endValue)}</strong></div>
     <div class="derived-row inv-headline"><span><b>Material cost this week</b></span><strong>${fmtMoney(t.materialCost)}</strong></div>
     ${t.missingPurchases.length ? `<p class="hint">⚠ No purchases for ${t.missingPurchases.map(escapeHtml).join(", ")} — drawdown only there.</p>` : ""}
+    ${t.orphanPoTotal ? `<p class="hint">⚠ ${fmtMoney(t.orphanPoTotal)} of received POs (${t.orphanPoClasses.map(escapeHtml).join(", ")}) isn't in these totals yet — upload those locations' counts.</p>` : ""}
     ${t.missingPrevious.length ? `<p class="hint">${t.missingPrevious.map(escapeHtml).join(", ")}: first count on record — in next week's math.</p>` : ""}
     ${t.unpricedItems.length ? `<p class="hint">${t.unpricedItems.length} item${t.unpricedItems.length === 1 ? "" : "s"} still unpriced.</p>` : ""}
   </div>`
@@ -3877,6 +3880,7 @@ function invMathHtml(c) {
       <span><b>Material cost this week</b></span>
       <strong>${c.materialCost === null ? "—" : fmtMoney(c.materialCost)}</strong>
     </div>
+    ${c.purchasesSource === "manual" && c.poCount > 0 && c.poTotal !== c.purchases ? `<p class="hint">⚠ The typed amount ${fmtMoney(c.purchases)} overrides ${c.poCount} received PO${c.poCount === 1 ? "" : "s"} totalling ${fmtMoney(c.poTotal)} — clear the purchases box to use the PO total.</p>` : ""}
     ${c.materialCost !== null && c.purchases === null ? `<p class="hint">⚠ No purchases yet — drawdown only. Tap Received on a PO or enter the spend.</p>` : ""}
     ${c.materialCost !== null && c.materialCost < 0 ? `<p class="hint">⚠ Negative cost: stock grew by more than the purchases entered — check purchases or counts.</p>` : ""}
     ${c.valueUnpricedCount ? `<p class="hint">${c.valueUnpricedCount} counted item${c.valueUnpricedCount === 1 ? "" : "s"} lack a unit cost (not in stock value).</p>` : ""}

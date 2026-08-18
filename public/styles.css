@@ -2500,3 +2500,12 @@ details.inv-loc[open] {
 .score-part {
   font-size: 10.5px;
 }
+
+/* The meeting sits in one week but reviews the one before it */
+.week-reviewing {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}

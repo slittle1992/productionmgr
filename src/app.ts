@@ -259,7 +259,8 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
     provider,
     config,
     now,
-    leadsStore
+    leadsStore,
+    pipelineStore
   );
 
   app.use("/api", pipelineRouter(pipelineStore, now));

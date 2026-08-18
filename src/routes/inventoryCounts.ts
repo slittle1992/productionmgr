@@ -87,6 +87,8 @@ export function inventoryCountsRouter(
     purchasesSource: "manual" | "pos" | null;
     /** POs received into this location this week. */
     poCount: number;
+    /** Their summed totals (shown even when a manual entry overrides). */
+    poTotal: number;
     /**
      * The headline: purchases + (begin − end) — the P&L material number.
      * Null until there's a prior count to give a beginning value.
@@ -111,6 +113,9 @@ export function inventoryCountsRouter(
       missingPurchases: string[];
       /** Locations with no prior count yet (excluded from materialCost). */
       missingPrevious: string[];
+      /** Received-PO dollars for locations with no count this week. */
+      orphanPoTotal: number;
+      orphanPoClasses: string[];
     };
   }
 
@@ -165,11 +170,16 @@ export function inventoryCountsRouter(
         purchases,
         purchasesSource,
         poCount: fromPos?.count ?? 0,
+        poTotal: fromPos ? r2(fromPos.total) : 0,
         materialCost,
       });
     }
     const unpriced = new Set<string>();
     for (const c of classes) c.usage.unpricedItems.forEach((i) => unpriced.add(i));
+    const counted = new Set(classes.map((c) => classSlug(c.className)));
+    const orphanPos = received.filter(
+      (p) => p.className && !counted.has(classSlug(p.className))
+    );
     return {
       week: { weekStart, weekEnd },
       classes,
@@ -189,6 +199,11 @@ export function inventoryCountsRouter(
         missingPrevious: classes
           .filter((c) => c.previous === null)
           .map((c) => c.className),
+        // Received-PO dollars waiting on a count upload to enter the math.
+        orphanPoTotal: r2(
+          orphanPos.reduce((n, p) => n + (p.total ?? 0), 0)
+        ),
+        orphanPoClasses: [...new Set(orphanPos.map((p) => p.className!))],
       },
     };
   }

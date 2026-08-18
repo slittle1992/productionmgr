@@ -5,8 +5,16 @@ import { parseUnpaidInvoices, syncFollowUps } from "../domain/pastDue.js";
 import { parseCompletedProjects } from "../domain/completedProjects.js";
 import {
   expectedMaterialsByClass,
+  extractJobFacts,
   type ExpectedMaterialsRow,
 } from "../domain/expectedMaterials.js";
+import type { JobFacts } from "../storage/pipelineStore.js";
+
+/** The slice of PipelineStore the meeting needs for the sqft history. */
+export interface PipelineStoreForFacts {
+  getJobFacts(): Promise<Record<string, JobFacts>>;
+  mergeJobFacts(facts: Record<string, JobFacts>): Promise<void>;
+}
 import {
   buildLaborRates,
   buildPipelineChecks,
@@ -102,7 +110,8 @@ export class MeetingService {
     private readonly provider: ProjectProvider,
     private readonly config: AppConfig,
     private readonly now: () => number = () => Date.now(),
-    private readonly leadsStore?: LeadsStore
+    private readonly leadsStore?: LeadsStore,
+    private readonly pipelineStore?: PipelineStoreForFacts
   ) {}
 
   resolveWeek(weekStart?: string): ReportingWeek {
@@ -327,12 +336,24 @@ export class MeetingService {
     );
     const pipeline = buildPipelineChecks(projects, lookAhead, this.config.customFields);
     const laborWeek = this.laborWeek(week);
+    // Remember every job's SQFT/color: completed jobs age out of the current
+    // pipeline export, so the join reads this history.
+    let jobFacts: Record<string, JobFacts> = {};
+    if (this.pipelineStore) {
+      if (projects.length) {
+        await this.pipelineStore.mergeJobFacts(
+          extractJobFacts(projects, this.config.customFields)
+        );
+      }
+      jobFacts = await this.pipelineStore.getJobFacts();
+    }
     const materialsExpected = expectedMaterialsByClass(
       completed?.jobs ?? [],
       laborWeek,
       projects,
       this.config.customFields,
-      this.config.coverage
+      this.config.coverage,
+      jobFacts
     );
     const laborRows = buildLaborRates(
       completed?.jobs ?? [],
