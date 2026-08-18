@@ -174,6 +174,24 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
   return { lines, itemCount: lines.length, sourceLabel, submittedMs, className };
 }
 
+/** Dollar value of counted stock (priced items only). */
+export function inventoryValue(
+  lines: InventoryCountLine[],
+  prices: Record<string, number>
+): { value: number; unpricedCount: number } {
+  let value = 0;
+  let unpricedCount = 0;
+  for (const l of lines) {
+    const price = prices[itemKey(l.item)];
+    if (price === undefined) {
+      if (l.count > 0) unpricedCount++;
+      continue;
+    }
+    value += l.count * price;
+  }
+  return { value: r2(value), unpricedCount };
+}
+
 /**
  * Week-over-week usage: what was on the trailer last week but not this week.
  * A count that went UP (shipment / returns) counts as 0 used — the tracker

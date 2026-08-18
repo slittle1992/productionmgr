@@ -17,6 +17,9 @@ export interface StoredInventoryWeek {
 /** Unit costs by item key (lower-cased cleaned item name) → dollars per unit. */
 export type PriceMap = Record<string, number>;
 
+/** Dollars spent on material for one location in one week (from POs/Ramp). */
+export type PurchasesMap = Record<string, number>;
+
 export interface InventoryCountsStore {
   /** Every location's count stored for the week. */
   getWeek(weekStart: string): Promise<StoredInventoryWeek[]>;
@@ -29,6 +32,14 @@ export interface InventoryCountsStore {
   getPrices(): Promise<PriceMap>;
   /** Merge `prices` into the stored map; entries with value <= 0 are removed. */
   setPrices(prices: PriceMap): Promise<PriceMap>;
+  /** classSlug → purchases $ for the week. */
+  getPurchases(weekStart: string): Promise<PurchasesMap>;
+  /** Set (or clear, with null) one location's purchases $ for the week. */
+  setPurchases(
+    weekStart: string,
+    className: string,
+    amount: number | null
+  ): Promise<void>;
 }
 
 function mergePrices(current: PriceMap, updates: PriceMap): PriceMap {
@@ -47,6 +58,8 @@ interface InventoryFile {
   /** weekStart → classSlug → count. */
   weeks: Record<string, Record<string, StoredInventoryWeek>>;
   prices: PriceMap;
+  /** weekStart → classSlug → purchases $. */
+  purchases?: Record<string, PurchasesMap>;
 }
 
 export class JsonInventoryCountsStore implements InventoryCountsStore {
@@ -62,7 +75,7 @@ export class JsonInventoryCountsStore implements InventoryCountsStore {
       return JSON.parse(await fs.readFile(this.file, "utf8")) as InventoryFile;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT")
-        return { weeks: {}, prices: {} };
+        return { weeks: {}, prices: {}, purchases: {} };
       throw err;
     }
   }
@@ -112,12 +125,28 @@ export class JsonInventoryCountsStore implements InventoryCountsStore {
     });
     return next.prices;
   }
+  async getPurchases(weekStart: string): Promise<PurchasesMap> {
+    return (await this.read()).purchases?.[weekStart] ?? {};
+  }
+  async setPurchases(
+    weekStart: string,
+    className: string,
+    amount: number | null
+  ): Promise<void> {
+    await this.write((f) => {
+      const wk = ((f.purchases ??= {})[weekStart] ??= {});
+      if (amount === null) delete wk[classSlug(className)];
+      else wk[classSlug(className)] = amount;
+    });
+  }
 }
 
 export class KvInventoryCountsStore implements InventoryCountsStore {
   /** Hash of `${weekStart}|${classSlug}` → StoredInventoryWeek (null = deleted). */
   private static readonly WEEKS = "inventory:weeks";
   private static readonly PRICES = "inventory:prices";
+  /** Hash of `${weekStart}|${classSlug}` → purchases $ (null = cleared). */
+  private static readonly PURCHASES = "inventory:purchases";
   constructor(private readonly kv: KvClient) {}
 
   private async all(): Promise<Record<string, StoredInventoryWeek | null>> {
@@ -180,6 +209,29 @@ export class KvInventoryCountsStore implements InventoryCountsStore {
     await this.kv.set(KvInventoryCountsStore.PRICES, next);
     return next;
   }
+  async getPurchases(weekStart: string): Promise<PurchasesMap> {
+    const all =
+      (await this.kv.hgetall<number | null>(KvInventoryCountsStore.PURCHASES)) ??
+      {};
+    const out: PurchasesMap = {};
+    for (const [key, v] of Object.entries(all)) {
+      if (typeof v === "number" && key.startsWith(`${weekStart}|`)) {
+        out[key.slice(weekStart.length + 1)] = v;
+      }
+    }
+    return out;
+  }
+  async setPurchases(
+    weekStart: string,
+    className: string,
+    amount: number | null
+  ): Promise<void> {
+    await this.kv.hset(
+      KvInventoryCountsStore.PURCHASES,
+      `${weekStart}|${classSlug(className)}`,
+      amount
+    );
+  }
 }
 
 export class MemoryInventoryCountsStore implements InventoryCountsStore {
@@ -219,5 +271,18 @@ export class MemoryInventoryCountsStore implements InventoryCountsStore {
   async setPrices(prices: PriceMap) {
     this.prices = mergePrices(this.prices, prices);
     return { ...this.prices };
+  }
+  private purchases = new Map<string, number>();
+  async getPurchases(weekStart: string) {
+    const out: PurchasesMap = {};
+    for (const [key, v] of this.purchases) {
+      if (key.startsWith(`${weekStart}|`)) out[key.slice(weekStart.length + 1)] = v;
+    }
+    return out;
+  }
+  async setPurchases(weekStart: string, className: string, amount: number | null) {
+    const key = MemoryInventoryCountsStore.key(weekStart, className);
+    if (amount === null) this.purchases.delete(key);
+    else this.purchases.set(key, amount);
   }
 }

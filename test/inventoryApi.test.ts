@@ -49,7 +49,7 @@ describe("inventory API", () => {
     expect(res.status).toBe(200);
     expect(res.body.week.weekStart).toBe("2026-08-16");
     expect(res.body.classes).toEqual([]);
-    expect(res.body.totals.totalCost).toBe(0);
+    expect(res.body.totals.materialCost).toBe(0);
   });
 
   it("stores counts per week and computes usage + cost against the prior week", async () => {
@@ -69,11 +69,31 @@ describe("inventory API", () => {
     expect(austin.previous.weekStart).toBe("2026-08-09");
     expect(austin.current.sourceLabel).toMatch(/^Submitted 8\/17\/2026/);
 
-    // Claystone is priced from the PO defaults (10 used × $82.40); Fumed
-    // Silica has no default and is flagged so the total isn't silently low.
+    // With no purchases entered, material cost degrades to the trailer
+    // drawdown: Claystone 17→7 at the PO default $82.40 plus Glacier 40→44
+    // (stock UP 4 × $62 = −$248) nets 824 − 248 = $576. Austin is flagged
+    // as missing a purchases entry; Fumed Silica has no unit cost.
     expect(up2.body.totals.usedCount).toBe(2);
-    expect(up2.body.totals.totalCost).toBe(824);
+    const austinSum = up2.body.classes.find(
+      (c: { className: string }) => c.className === "Austin"
+    );
+    expect(austinSum.materialCost).toBe(576);
+    expect(austinSum.purchases).toBeNull();
+    expect(up2.body.totals.missingPurchases).toContain("Austin");
     expect(up2.body.totals.unpricedItems).toEqual(["FUMED SILICA"]);
+
+    // Enter the week's material spend and the P&L identity takes over:
+    // 1000 + begin − end = 1000 + 576 = $1,576.
+    const withPurch = await request(app)
+      .post("/api/inventory-counts/purchases?week=2026-08-16")
+      .send({ className: "Austin", amount: 1000 });
+    expect(withPurch.status).toBe(200);
+    const austinP = withPurch.body.classes.find(
+      (c: { className: string }) => c.className === "Austin"
+    );
+    expect(austinP.purchases).toBe(1000);
+    expect(austinP.materialCost).toBe(1576);
+    expect(withPurch.body.totals.missingPurchases).not.toContain("Austin");
 
     // A second location the same week stacks onto the totals (class given
     // explicitly since these rows carry no title line).
@@ -93,10 +113,9 @@ describe("inventory API", () => {
     expect(priced.status).toBe(200);
     expect(priced.body.prices.claystone).toBe(84.2);
 
-    // Two locations, each 10 × $84.20 + 4 × $100.
+    // Two locations; item-movement detail still works per location.
     const summary = await request(app).get("/api/inventory-counts?week=2026-08-16");
     expect(summary.body.classes).toHaveLength(2);
-    expect(summary.body.totals.totalCost).toBe(2484);
     expect(summary.body.totals.unpricedItems).toEqual([]);
     const glacier = summary.body.classes[0].usage.lines.find(
       (l: { item: string }) => l.item === "Glacier"

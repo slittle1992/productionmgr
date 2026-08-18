@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   computeInventoryUsage,
+  inventoryValue,
   itemKey,
   parseInventory,
   textLinesToGrid,
@@ -69,25 +70,55 @@ export function inventoryCountsRouter(
     };
     previous: { weekStart: string; itemCount: number } | null;
     usage: InventoryUsage;
+    /** Trailer stock value at the start of the week (prior count × prices). */
+    beginValue: number | null;
+    /** Trailer stock value at the end of the week (this count × prices). */
+    endValue: number;
+    /** Counted items with no unit cost (value is understated by these). */
+    valueUnpricedCount: number;
+    /** Dollars spent on material this week, as entered by the PM. */
+    purchases: number | null;
+    /**
+     * The headline: purchases + (begin − end) — the P&L material number.
+     * Null until there's a prior count to give a beginning value.
+     */
+    materialCost: number | null;
   }
 
   interface Summary {
     week: { weekStart: string; weekEnd: string };
     classes: ClassSummary[];
     totals: {
-      totalCost: number;
+      /** Σ materialCost over classes where it's computable. */
+      materialCost: number;
+      purchases: number;
+      beginValue: number;
+      endValue: number;
       usedCount: number;
-      pricedCount: number;
       unpricedItems: string[];
+      /** Locations counted but with no purchases entered (cost is drawdown-only). */
+      missingPurchases: string[];
+      /** Locations with no prior count yet (excluded from materialCost). */
+      missingPrevious: string[];
     };
   }
+
+  const r2 = (n: number) => Math.round(n * 100) / 100;
 
   async function summarize(weekStart: string, weekEnd: string): Promise<Summary> {
     const stored = await store.getWeek(weekStart);
     const prices = { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) };
+    const purchasesMap = await store.getPurchases(weekStart);
     const classes: ClassSummary[] = [];
     for (const current of stored) {
       const prev = await previousFor(weekStart, current.className);
+      const end = inventoryValue(current.lines, prices);
+      const begin = prev ? inventoryValue(prev.lines, prices) : null;
+      const purchases = purchasesMap[classSlug(current.className)] ?? null;
+      // The P&L identity: material cost = purchases + beginning − ending
+      // inventory. With purchases missing it degrades to pure drawdown.
+      const materialCost =
+        begin === null ? null : r2((purchases ?? 0) + begin.value - end.value);
       classes.push({
         className: current.className,
         current: {
@@ -100,19 +131,33 @@ export function inventoryCountsRouter(
           ? { weekStart: prev.weekStart, itemCount: prev.lines.length }
           : null,
         usage: computeInventoryUsage(prev?.lines ?? null, current.lines, prices),
+        beginValue: begin?.value ?? null,
+        endValue: end.value,
+        valueUnpricedCount: end.unpricedCount,
+        purchases,
+        materialCost,
       });
     }
     const unpriced = new Set<string>();
     for (const c of classes) c.usage.unpricedItems.forEach((i) => unpriced.add(i));
-    const r2 = (n: number) => Math.round(n * 100) / 100;
     return {
       week: { weekStart, weekEnd },
       classes,
       totals: {
-        totalCost: r2(classes.reduce((n, c) => n + c.usage.totalCost, 0)),
+        materialCost: r2(
+          classes.reduce((n, c) => n + (c.materialCost ?? 0), 0)
+        ),
+        purchases: r2(classes.reduce((n, c) => n + (c.purchases ?? 0), 0)),
+        beginValue: r2(classes.reduce((n, c) => n + (c.beginValue ?? 0), 0)),
+        endValue: r2(classes.reduce((n, c) => n + c.endValue, 0)),
         usedCount: classes.reduce((n, c) => n + c.usage.usedCount, 0),
-        pricedCount: classes.reduce((n, c) => n + c.usage.pricedCount, 0),
         unpricedItems: [...unpriced],
+        missingPurchases: classes
+          .filter((c) => c.purchases === null)
+          .map((c) => c.className),
+        missingPrevious: classes
+          .filter((c) => c.previous === null)
+          .map((c) => c.className),
       },
     };
   }
@@ -219,6 +264,24 @@ export function inventoryCountsRouter(
         prices: { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) },
         defaults: DEFAULT_UNIT_COSTS,
       });
+    })
+  );
+
+  const purchasesBody = z.object({
+    className: z.string().trim().min(1).max(80),
+    /** Dollars spent on material this week; null clears the entry. */
+    amount: z.number().min(0).max(10_000_000).nullable(),
+  });
+
+  // POST /api/inventory-counts/purchases?week= — record a location's material
+  // spend for the week (the missing piece that makes the cost P&L-true).
+  router.post(
+    "/inventory-counts/purchases",
+    asyncHandler(async (req, res) => {
+      const week = resolveWeek(req.query.week);
+      const body = purchasesBody.parse(req.body);
+      await store.setPurchases(week.weekStart, body.className, body.amount);
+      res.json({ ok: true, ...(await summarize(week.weekStart, week.weekEnd)) });
     })
   );
 

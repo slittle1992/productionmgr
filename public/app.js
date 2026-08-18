@@ -2884,19 +2884,28 @@ function buildMeetingXlsx(v, leadsView) {
     invCounts.classes.length
       ? [
           [],
-          [`MATERIAL COST — from the weekly inventory counts`],
-          ["Location", "Items counted", "Items used", "Material cost", "Material % of revenue"],
+          [`MATERIAL COST — purchases + trailer stock change (weekly counts)`],
+          ["Location", "Purchases", "Stock begin", "Stock end", "Material cost", "Material % of revenue"],
           ...invCounts.classes.map((c) => {
             const rev = invRevenueFor(v, c.className);
+            const cost = c.materialCost ?? "";
             return [
               c.className,
-              c.current.itemCount,
-              c.usage.usedCount,
-              c.usage.totalCost,
-              rev && rev > 0 ? Number(((c.usage.totalCost / rev) * 100).toFixed(1)) / 100 : "",
+              c.purchases ?? "",
+              c.beginValue ?? "",
+              c.endValue,
+              cost,
+              rev && rev > 0 && cost !== "" ? Number(((cost / rev) * 100).toFixed(1)) / 100 : "",
             ];
           }),
-          ["TOTAL", "", invCounts.totals.usedCount, invCounts.totals.totalCost, ""],
+          [
+            "TOTAL",
+            invCounts.totals.purchases,
+            invCounts.totals.beginValue,
+            invCounts.totals.endValue,
+            invCounts.totals.materialCost,
+            "",
+          ],
         ]
       : []),
   ];
@@ -3585,8 +3594,8 @@ function invCountsSubtitle() {
   const n = invCounts.classes.length;
   const t = invCounts.totals;
   return (
-    `${n} location${n === 1 ? "" : "s"} · ${fmtMoney0(t.totalCost)} used` +
-    (t.unpricedItems.length ? ` · ${t.unpricedItems.length} unpriced` : "")
+    `${fmtMoney0(t.materialCost)} material · ${n} location${n === 1 ? "" : "s"}` +
+    (t.missingPurchases.length ? ` · purchases missing ×${t.missingPurchases.length}` : "")
   );
 }
 
@@ -3617,11 +3626,11 @@ function renderMaterialsSection(v) {
   }
   const controls = `
   <div class="mtg-upload">
-    <span>Upload the <b>Material Tracker</b> counts — printed PDFs, .xlsx/.csv,
-    or paste the page. <b>Select several files at once</b>: each sheet's
-    location and week (from its Submitted date) are read automatically, so
-    include <b>last week's</b> History sheet per location and usage and cost
-    appear immediately. The picker overrides the location if needed.</span>
+    <span><b>Material cost = purchases + what came off the trailers.</b>
+    Upload each location's <b>Material Tracker</b> counts (PDFs, .xlsx/.csv, or
+    paste — several files at once; location and week are read from each sheet)
+    and enter what the location <b>spent on material</b> this week from
+    POs/Ramp. The count change does the rest.</span>
     <span class="mtg-upload-actions">
       <select id="inv-class" class="inv-class-select">${invClassOptions()}</select>
       <label class="btn-upload"><span>⬆ Upload counts</span>
@@ -3645,11 +3654,12 @@ function renderMaterialsSection(v) {
   const blocks = invCounts.classes
     .map((c) => {
       const rev = invRevenueFor(v, c.className);
+      const headline = c.materialCost ?? c.usage.totalCost;
       if (rev && rev > 0) {
         revTotal += rev;
         revKnown = true;
       }
-      const pct = rev && rev > 0 ? (c.usage.totalCost / rev) * 100 : null;
+      const pct = rev && rev > 0 ? (headline / rev) * 100 : null;
       const pctHtml =
         pct !== null
           ? `<span class="mtg-rate-pct">material ${pct.toFixed(1)}% of revenue</span>`
@@ -3661,40 +3671,83 @@ function renderMaterialsSection(v) {
       const prevNote = c.previous
         ? `vs week of ${fmtDay(c.previous.weekStart)}`
         : "first count on record";
-      const body = !c.previous
+
+      const deltaValue =
+        c.beginValue !== null ? c.beginValue - c.endValue : null;
+      const mathRows = `
+      <div class="inv-math">
+        <div class="derived-row">
+          <span>Purchases this week <span class="inv-dim">(material spend — POs/Ramp)</span></span>
+          <span class="money-inline">$ <input class="js-purchase" data-class="${escapeHtml(c.className)}"
+            type="number" min="0" step="0.01" inputmode="decimal"
+            value="${c.purchases ?? ""}" placeholder="0" /></span>
+        </div>
+        <div class="derived-row">
+          <span>Trailer stock value</span>
+          <span>${c.beginValue === null ? "—" : fmtMoney(c.beginValue)} → ${fmtMoney(c.endValue)}
+            ${deltaValue === null ? "" : `<span class="inv-dim">(${deltaValue >= 0 ? "−" : "+"}${fmtMoney(Math.abs(deltaValue)).slice(1)})</span>`}</span>
+        </div>
+        <div class="derived-row inv-headline">
+          <span><b>Material cost this week</b></span>
+          <strong>${c.materialCost === null ? "—" : fmtMoney(c.materialCost)}</strong>
+        </div>
+        ${
+          c.materialCost !== null && c.purchases === null
+            ? `<p class="hint">⚠ No purchases entered — this is trailer drawdown only. Enter the week's material spend above to make it match the P&L.</p>`
+            : ""
+        }
+        ${
+          c.materialCost !== null && c.materialCost < 0
+            ? `<p class="hint">⚠ Negative cost: stock grew by more than the purchases entered — check the purchases amount or the counts.</p>`
+            : ""
+        }
+        ${
+          c.valueUnpricedCount
+            ? `<p class="hint">${c.valueUnpricedCount} counted item${c.valueUnpricedCount === 1 ? "" : "s"} have no unit cost and aren't in the stock value.</p>`
+            : ""
+        }
+      </div>`;
+
+      const detail = !c.previous
         ? `<p class="hint">First count on record for ${escapeHtml(c.className)} —
            there's nothing earlier to diff against yet. Open the tracker's
            <b>History</b> page, grab <b>last week's</b> ${escapeHtml(c.className)}
            sheet (PDF or copy-paste), and upload it here too — its Submitted
-           date files it under last week and this week's usage appears.</p>`
-        : !used.length
-        ? `<p class="hint">Nothing was used this week — no counts went down.</p>`
+           date files it under last week.</p>`
         : `
-        <div class="table-wrap inv-table-wrap">
-          <table class="inv-table">
-            <thead><tr>
-              <th>Item used</th><th class="num">Last wk</th><th class="num">Now</th>
-              <th class="num">Used</th><th class="num">Unit cost $</th><th class="num">Cost</th>
-            </tr></thead>
-            <tbody>
-              ${used
-                .map(
-                  (l) => `
-                <tr>
-                  <td class="inv-item">${escapeHtml(l.item)}${l.category ? `<span class="inv-cat"> · ${escapeHtml(l.category)}</span>` : ""}</td>
-                  <td class="num">${fmtN(l.prevCount)}</td>
-                  <td class="num">${fmtN(l.count)}</td>
-                  <td class="num"><strong>${fmtN(l.used)}</strong></td>
-                  <td class="num"><input class="js-price" data-item="${escapeHtml(l.item)}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.unitCost ?? ""}" placeholder="—" /></td>
-                  <td class="num">${l.cost === null ? "—" : fmtMoney(l.cost)}</td>
-                </tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </div>
-        ${restocked ? `<p class="hint">${restocked} item${restocked === 1 ? "" : "s"} restocked (count went up) — counted as 0 used.</p>` : ""}
-        ${usage.unpricedItems.length ? `<p class="hint">⚠ ${usage.unpricedItems.length} used item${usage.unpricedItems.length === 1 ? " has" : "s have"} no unit cost — enter unit costs above to include them.</p>` : ""}`;
+        <details class="mtg-class inv-detail" data-open="invd:${escapeHtml(c.className)}" ${meeting.open.has(`invd:${c.className}`) ? "open" : ""}>
+          <summary>Item movement — counts that went down (${used.length})</summary>
+          ${
+            !used.length
+              ? `<p class="hint">No counts went down this week.</p>`
+              : `
+          <div class="table-wrap inv-table-wrap">
+            <table class="inv-table">
+              <thead><tr>
+                <th>Item</th><th class="num">Last wk</th><th class="num">Now</th>
+                <th class="num">Down</th><th class="num">Unit cost $</th><th class="num">Value</th>
+              </tr></thead>
+              <tbody>
+                ${used
+                  .map(
+                    (l) => `
+                  <tr>
+                    <td class="inv-item">${escapeHtml(l.item)}${l.category ? `<span class="inv-cat"> · ${escapeHtml(l.category)}</span>` : ""}</td>
+                    <td class="num">${fmtN(l.prevCount)}</td>
+                    <td class="num">${fmtN(l.count)}</td>
+                    <td class="num"><strong>${fmtN(l.used)}</strong></td>
+                    <td class="num"><input class="js-price" data-item="${escapeHtml(l.item)}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.unitCost ?? ""}" placeholder="—" /></td>
+                    <td class="num">${l.cost === null ? "—" : fmtMoney(l.cost)}</td>
+                  </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>`
+          }
+          ${restocked ? `<p class="hint">${restocked} item${restocked === 1 ? "" : "s"} went up (deliveries/returns) — already handled by the purchases + stock-change math.</p>` : ""}
+          ${usage.unpricedItems.length ? `<p class="hint">⚠ ${usage.unpricedItems.length} moved item${usage.unpricedItems.length === 1 ? " has" : "s have"} no unit cost — enter unit costs to tighten the stock value.</p>` : ""}
+        </details>`;
 
       return `
       <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
@@ -3702,26 +3755,33 @@ function renderMaterialsSection(v) {
           <b>${escapeHtml(c.className)}</b>
           <span class="inv-loc-sub">${c.current.itemCount} items · ${prevNote}</span>
           ${pctHtml}
-          <span class="inv-loc-cost">${fmtMoney(usage.totalCost)}</span>
+          <span class="inv-loc-cost">${c.materialCost === null ? "—" : fmtMoney(c.materialCost)}</span>
         </summary>
         <p class="hint inv-loc-meta">
           ${c.current.sourceLabel ? escapeHtml(c.current.sourceLabel) + " · " : ""}
           ${c.current.filename ? escapeHtml(c.current.filename) + " · " : ""}
           <button class="btn-clear inv-del" type="button" data-invdel="${escapeHtml(c.className)}">Remove</button>
         </p>
-        ${body}
+        ${mathRows}
+        ${detail}
       </details>`;
     })
     .join("");
 
-  const totalPct = revKnown && revTotal > 0 ? (t.totalCost / revTotal) * 100 : null;
+  const totalPct =
+    revKnown && revTotal > 0 && t.materialCost
+      ? (t.materialCost / revTotal) * 100
+      : null;
   const totals = `
   <div class="mtg-labor-row inv-totals">
     <div class="mtg-labor-head"><b>All locations</b>
       ${totalPct !== null ? `<span class="mtg-rate-pct">material ${totalPct.toFixed(1)}% of revenue</span>` : ""}
     </div>
-    <div class="derived-row"><span>Items used this week</span><strong>${t.usedCount}</strong></div>
-    <div class="derived-row"><span>Material cost this week</span><strong>${fmtMoney(t.totalCost)}</strong></div>
+    <div class="derived-row"><span>Purchases</span><strong>${fmtMoney(t.purchases)}</strong></div>
+    <div class="derived-row"><span>Trailer stock value</span><strong>${fmtMoney(t.beginValue)} → ${fmtMoney(t.endValue)}</strong></div>
+    <div class="derived-row inv-headline"><span><b>Material cost this week</b></span><strong>${fmtMoney(t.materialCost)}</strong></div>
+    ${t.missingPurchases.length ? `<p class="hint">⚠ No purchases entered for ${t.missingPurchases.map(escapeHtml).join(", ")} — their cost shows trailer drawdown only.</p>` : ""}
+    ${t.missingPrevious.length ? `<p class="hint">${t.missingPrevious.map(escapeHtml).join(", ")}: first count on record — excluded until next week's count.</p>` : ""}
   </div>`;
 
   return controls + blocks + totals;
@@ -3807,6 +3867,29 @@ async function deleteInvCounts(className) {
   await loadInvCounts();
 }
 
+function saveInvPurchases(input) {
+  const className = input.dataset.class;
+  const amount = input.value === "" ? null : Number(input.value);
+  debounce(`purch:${className}`, async () => {
+    try {
+      const q = meeting.week ? `?week=${meeting.week}` : "";
+      const res = await fetch(`/api/inventory-counts/purchases${q}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          className,
+          amount: amount !== null && Number.isFinite(amount) ? amount : null,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      await loadInvCounts();
+      toast(`Purchases saved for ${className} ✓`, "success");
+    } catch {
+      toast("Couldn't save the purchases amount.", "error");
+    }
+  }, 500);
+}
+
 function saveInvPrice(input) {
   const item = input.dataset.item;
   const value = input.value === "" ? 0 : Number(input.value);
@@ -3840,6 +3923,8 @@ function initInvCounts() {
       handleInvCountsFiles(files);
     } else if (t.classList && t.classList.contains("js-price")) {
       saveInvPrice(t);
+    } else if (t.classList && t.classList.contains("js-purchase")) {
+      saveInvPurchases(t);
     }
   });
   root.addEventListener("click", (e) => {

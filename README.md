@@ -110,18 +110,21 @@ sign-off, note, and update so next week you know who owns what.
    its own **⬆ Payroll** upload; the app reads every sheet, totals the
    **Production** department, and suggests the sheet whose pay period matches
    the week. Or just type the number.
-5. **Inventory counts & material cost** — every location uploads its weekly
-   ReVamp Material Tracker count (the printed **PDF**, an .xlsx/.csv, or
-   pasted straight off the page). **Several files can be selected at once**:
-   each sheet's location comes from its title and its week from its
-   Submitted date, so uploading last week's and this week's History sheets
-   together produces usage immediately (picker available to override the
-   location). Usage = last week's count − this week's,
-   priced from the PO-derived unit-cost catalog
-   (`src/data/materialPrices.ts`; editable inline, flagged when unpriced,
-   restocks counted as 0 used) — and each location's material cost is
-   compared with §4's completed revenue as **material % of revenue**, plus
-   an all-locations total. Included in the meeting export.
+5. **Inventory counts & material cost** — the headline is the P&L identity
+   **material cost = purchases + (beginning − ending trailer stock value)**,
+   per location and overall, compared with §4's completed revenue as
+   *material % of revenue*. Two inputs per location per week: the ReVamp
+   Material Tracker count (printed **PDF**, .xlsx/.csv, or pasted straight
+   off the page — **several files at once**; each sheet's location comes
+   from its title and its week from its Submitted date) and one typed
+   number, the week's **material spend** (from POs/Ramp). Stock values are
+   counts × the PO-derived unit-cost catalog. Because a delivery raises
+   stock and purchases equally, big PO weeks don't spike the number — and
+   a negative cost means the purchases entry is too low, which the section
+   flags rather than hides. Item movement (counts that went down) stays as
+   a collapsible detail per location, with unit costs from
+   `src/data/materialPrices.ts` editable inline. Included in the meeting
+   export.
 6. **Reviews** · 7. **Lytx** · 8. **Ramp** — one-tap links to each dashboard
    (configurable via `REVIEWS_DASHBOARD_URL`, `LYTX_DASHBOARD_URL`,
    `RAMP_DASHBOARD_URL`), a notes box for what you found (incidents, counts,
