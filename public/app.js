@@ -3617,13 +3617,15 @@ function renderMaterialsSection(v) {
   }
   const controls = `
   <div class="mtg-upload">
-    <span>Upload each location's <b>Material Tracker</b> count — the printed
-    PDF, an .xlsx/.csv, or paste the page. The location is read from the
-    sheet title; the picker overrides it.</span>
+    <span>Upload the <b>Material Tracker</b> counts — printed PDFs, .xlsx/.csv,
+    or paste the page. <b>Select several files at once</b>: each sheet's
+    location and week (from its Submitted date) are read automatically, so
+    include <b>last week's</b> History sheet per location and usage and cost
+    appear immediately. The picker overrides the location if needed.</span>
     <span class="mtg-upload-actions">
       <select id="inv-class" class="inv-class-select">${invClassOptions()}</select>
-      <label class="btn-upload"><span>⬆ Upload count</span>
-        <input id="inv-file" type="file" accept=".xlsx,.xls,.csv,.pdf" hidden />
+      <label class="btn-upload"><span>⬆ Upload counts</span>
+        <input id="inv-file" type="file" accept=".xlsx,.xls,.csv,.pdf" multiple hidden />
       </label>
       <button id="inv-paste" class="btn-export" type="button">Paste counts</button>
     </span>
@@ -3661,7 +3663,10 @@ function renderMaterialsSection(v) {
         : "first count on record";
       const body = !c.previous
         ? `<p class="hint">First count on record for ${escapeHtml(c.className)} —
-           upload next week's count and usage and cost will come from the difference.</p>`
+           there's nothing earlier to diff against yet. Open the tracker's
+           <b>History</b> page, grab <b>last week's</b> ${escapeHtml(c.className)}
+           sheet (PDF or copy-paste), and upload it here too — its Submitted
+           date files it under last week and this week's usage appears.</p>`
         : !used.length
         ? `<p class="hint">Nothing was used this week — no counts went down.</p>`
         : `
@@ -3731,9 +3736,9 @@ async function postInvCounts(payload) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.message || "Upload failed.");
-  invCounts = data;
-  if (meeting.view) renderMeeting();
-  toast(`Saved ${data.itemCount} counts for ${data.className} ✓`, "success");
+  // The sheet may belong to a different week (its Submitted date decides),
+  // so refresh the meeting week's view instead of trusting this response.
+  return `${data.className} · week of ${fmtDay(data.week.weekStart)}`;
 }
 
 function invSelectedClass() {
@@ -3741,31 +3746,42 @@ function invSelectedClass() {
   return sel && sel.value ? { className: sel.value } : {};
 }
 
-async function handleInvCountsFile(file) {
-  if (!file) return;
-  try {
-    if (/\.pdf$/i.test(file.name)) {
-      const b64 = await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result).split(",")[1] || "");
-        r.onerror = reject;
-        r.readAsDataURL(file);
-      });
-      await postInvCounts({ filename: file.name, pdfBase64: b64, ...invSelectedClass() });
-      return;
+async function handleInvCountsFiles(files) {
+  const list = [...(files || [])];
+  if (!list.length) return;
+  const saved = [];
+  const failed = [];
+  for (const file of list) {
+    try {
+      if (/\.pdf$/i.test(file.name)) {
+        const b64 = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result).split(",")[1] || "");
+          r.onerror = reject;
+          r.readAsDataURL(file);
+        });
+        saved.push(
+          await postInvCounts({ filename: file.name, pdfBase64: b64, ...invSelectedClass() })
+        );
+        continue;
+      }
+      if (typeof XLSX === "undefined") {
+        throw new Error("Spreadsheet reader didn't load — check your connection.");
+      }
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+      saved.push(
+        await postInvCounts({ filename: file.name, rows, ...invSelectedClass() })
+      );
+    } catch (err) {
+      failed.push(`${file.name}: ${err.message || "couldn't read it"}`);
     }
-    if (typeof XLSX === "undefined") {
-      toast("Spreadsheet reader didn't load — check your connection.", "error");
-      return;
-    }
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: "array" });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
-    await postInvCounts({ filename: file.name, rows, ...invSelectedClass() });
-  } catch (err) {
-    toast(err.message || "Couldn't read that file.", "error");
   }
+  await loadInvCounts();
+  if (saved.length) toast(`Saved ${saved.join(", ")} ✓`, failed.length ? "" : "success");
+  if (failed.length) toast(failed.join(" · "), "error");
 }
 
 /** Pasted counts → rows: the trailing number on each line is the count. */
@@ -3818,8 +3834,10 @@ function initInvCounts() {
   root.addEventListener("change", (e) => {
     const t = e.target;
     if (t.id === "inv-file") {
-      handleInvCountsFile(t.files[0]);
+      // Copy first — clearing the input empties the live FileList.
+      const files = [...t.files];
       t.value = "";
+      handleInvCountsFiles(files);
     } else if (t.classList && t.classList.contains("js-price")) {
       saveInvPrice(t);
     }
@@ -3845,7 +3863,9 @@ function initInvCounts() {
       return;
     }
     try {
-      await postInvCounts({ rows, ...invSelectedClass() });
+      const saved = await postInvCounts({ rows, ...invSelectedClass() });
+      await loadInvCounts();
+      toast(`Saved ${saved} ✓`, "success");
     } catch (err) {
       toast(err.message || "Couldn't read those counts.", "error");
     }

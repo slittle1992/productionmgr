@@ -112,6 +112,18 @@ describe("inventory API", () => {
     expect(res.body.error).toBe("needs_class");
   });
 
+  it("files a sheet under the week of its Submitted date, not the requested week", async () => {
+    // week2Rows says "Submitted 8/17/2026" → week of 2026-08-16, even though
+    // the request targets 2026-08-09.
+    const res = await request(app)
+      .post("/api/inventory-counts?week=2026-08-09")
+      .send({ rows: week2Rows });
+    expect(res.status).toBe(200);
+    expect(res.body.week.weekStart).toBe("2026-08-16");
+    const wk = await request(app).get("/api/inventory-counts?week=2026-08-16");
+    expect(wk.body.classes[0]?.className).toBe("Austin");
+  });
+
   it("snaps mid-week dates to the reporting week", async () => {
     await request(app).post("/api/inventory-counts?week=2026-08-18").send({ rows: week1Rows });
     const res = await request(app).get("/api/inventory-counts?week=2026-08-16");

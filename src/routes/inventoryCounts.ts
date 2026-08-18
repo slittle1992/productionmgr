@@ -135,7 +135,6 @@ export function inventoryCountsRouter(
   router.post(
     "/inventory-counts",
     asyncHandler(async (req, res) => {
-      const week = resolveWeek(req.query.week);
       const body = uploadBody.parse(req.body);
       let parsed;
       try {
@@ -154,6 +153,13 @@ export function inventoryCountsRouter(
         }
         throw err;
       }
+      // The sheet's own Submitted date pins the count to its week — so last
+      // week's and this week's History pages can be uploaded in one batch —
+      // falling back to the requested (or current) week.
+      const week =
+        parsed.submittedMs !== null
+          ? getReportingWeek(parsed.submittedMs, weekStartDay)
+          : resolveWeek(req.query.week);
       const className = body.className?.trim() || parsed.className;
       if (!className) {
         res.status(400).json({

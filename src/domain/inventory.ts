@@ -20,6 +20,8 @@ export interface InventoryParseResult {
   itemCount: number;
   /** e.g. "Submitted 8/17/2026, 7:59:59 AM · by John Blake · 4 trailers" */
   sourceLabel: string | null;
+  /** UTC ms of the Submitted date — pins the count to its reporting week. */
+  submittedMs: number | null;
   /** Location parsed from the sheet title ("Deluxe Garages - Austin — Inventory Count"). */
   className: string | null;
 }
@@ -114,6 +116,7 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
   const seen = new Set<string>();
   let category: string | null = null;
   let sourceLabel: string | null = null;
+  let submittedMs: number | null = null;
   let className: string | null = null;
 
   for (const raw of grid) {
@@ -138,6 +141,8 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
     const joined = cells.join(" ").trim();
     if (/^submitted\b/i.test(joined)) {
       sourceLabel = joined;
+      const d = joined.match(/submitted\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+      if (d) submittedMs = Date.UTC(Number(d[3]), Number(d[1]) - 1, Number(d[2]));
       continue;
     }
     // Sheet title carries the location: "Deluxe Garages - Austin — Inventory Count".
@@ -166,7 +171,7 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
         "count at the end (the ReVamp Material Tracker export)."
     );
   }
-  return { lines, itemCount: lines.length, sourceLabel, className };
+  return { lines, itemCount: lines.length, sourceLabel, submittedMs, className };
 }
 
 /**

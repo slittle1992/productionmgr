@@ -112,8 +112,11 @@ sign-off, note, and update so next week you know who owns what.
    the week. Or just type the number.
 5. **Inventory counts & material cost** — every location uploads its weekly
    ReVamp Material Tracker count (the printed **PDF**, an .xlsx/.csv, or
-   pasted straight off the page; the location is read from the sheet title,
-   with a picker to override). Usage = last week's count − this week's,
+   pasted straight off the page). **Several files can be selected at once**:
+   each sheet's location comes from its title and its week from its
+   Submitted date, so uploading last week's and this week's History sheets
+   together produces usage immediately (picker available to override the
+   location). Usage = last week's count − this week's,
    priced from the PO-derived unit-cost catalog
    (`src/data/materialPrices.ts`; editable inline, flagged when unpriced,
    restocks counted as 0 used) — and each location's material cost is
