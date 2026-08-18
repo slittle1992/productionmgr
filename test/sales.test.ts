@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeDailyLeadFlow,
   computeRepScorecard,
   computeWeeklyFlow,
   parseLeadPerformance,
@@ -7,6 +8,7 @@ import {
   salesByCluster,
 } from "../src/domain/sales.js";
 import { PipelineFormatError } from "../src/domain/pipeline.js";
+import type { CompactLead } from "../src/domain/leads.js";
 
 const SOLD_GRID: unknown[][] = [
   ["Total Sales (Contracts) Between 08/16/2026 and 08/18/2026"],
@@ -109,5 +111,56 @@ describe("sales by area (name join)", () => {
     expect(area.joined).toBe(2);
     expect(area.clusters["Austin|787"]).toMatchObject({ net: 3971.58, soldCount: 1 });
     expect(area.clusters["Dallas|750"]).toMatchObject({ net: 3000, soldCount: 1 });
+  });
+});
+
+describe("daily lead flow + goal pacing", () => {
+  // Tue Aug 18 2026, noon UTC — day 18 of a 31-day month.
+  const NOW = Date.UTC(2026, 7, 18, 12);
+  const DAY = 86_400_000;
+  const lead = (daysAgo: number, pt: "rubber" | "flake" | null): CompactLead => ({
+    zip: "76001",
+    className: "Dallas",
+    city: null,
+    created: NOW - daysAgo * DAY,
+    cat: "open",
+    pt,
+  });
+
+  it("buckets leads per day split by project type", () => {
+    const leads = [lead(0, "flake"), lead(0, "rubber"), lead(1, "flake"), lead(1, null)];
+    const d = computeDailyLeadFlow(leads, { flakeMonthly: null, rubberMonthly: null }, NOW);
+    expect(d.days).toHaveLength(14);
+    expect(d.days[0]).toMatchObject({ date: "2026-08-18", flake: 1, rubber: 1, total: 2 });
+    expect(d.days[1]).toMatchObject({ date: "2026-08-17", flake: 1, other: 1, total: 2 });
+    expect(d.hasType).toBe(true);
+    expect(d.dataThroughMs).toBe(NOW);
+    expect(d.month).toMatchObject({ label: "August", day: 18, daysInMonth: 31 });
+  });
+
+  it("computes pace vs the monthly goal and the needed run rate", () => {
+    // 36 flake leads MTD (2/day for 18 days), goal 62 (2/day pace).
+    const leads: CompactLead[] = [];
+    for (let i = 0; i < 18; i++) leads.push(lead(i, "flake"), lead(i, "flake"));
+    const d = computeDailyLeadFlow(leads, { flakeMonthly: 62, rubberMonthly: null }, NOW);
+    const flake = d.pace.find((p) => p.type === "flake")!;
+    expect(flake.mtd).toBe(36);
+    expect(flake.expectedToDate).toBe(36); // 62 × 18/31
+    expect(flake.delta).toBe(0);
+    expect(flake.neededPerDay).toBe(2); // (62−36)/13
+    expect(flake.last7PerDay).toBe(2);
+    expect(flake.projected).toBe(62);
+    expect(flake.onTrack).toBe(true);
+    // Total pace mirrors the only set goal.
+    const total = d.pace.find((p) => p.type === "total")!;
+    expect(total.goal).toBe(62);
+  });
+
+  it("flags off-track when the trailing rate can't reach the goal", () => {
+    const leads = [lead(0, "rubber")]; // 1 MTD vs a 100 goal
+    const d = computeDailyLeadFlow(leads, { flakeMonthly: null, rubberMonthly: 100 }, NOW);
+    const rubber = d.pace.find((p) => p.type === "rubber")!;
+    expect(rubber.onTrack).toBe(false);
+    expect(rubber.delta).toBeLessThan(0);
   });
 });

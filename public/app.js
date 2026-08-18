@@ -1518,6 +1518,8 @@ const sales = {
   analysis: null, // leads-by-area view
   sales: null, // weekly flow / rep scorecard / area sold $
   appts: null, // { weeks: [...] } appointments + cancellations
+  daily: null, // daily rubber/flake lead flow + goal pacing
+  goals: null, // { flakeMonthly, rubberMonthly }
 };
 
 const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
@@ -2570,6 +2572,8 @@ async function loadSales() {
     sales.analysis = data.analysis;
     sales.sales = data.sales;
     sales.appts = data.appointments;
+    sales.daily = data.daily;
+    sales.goals = data.goals;
     renderSales();
   } catch (err) {
     toast(err.message || "Couldn't load the sales data.", "error");
@@ -2661,6 +2665,85 @@ function renderApptsStep() {
   return html;
 }
 
+function renderDailyStep() {
+  const d = sales.daily;
+  if (!sales.meta || !d) {
+    return `<p class="card-help">Powered by the leads report — upload the
+    <b>Clients List</b> in Weekly step 1 and the daily flow shows up here.</p>`;
+  }
+  const g = sales.goals || {};
+  let html = "";
+
+  // Freshness: the daily view is only as good as the last upload.
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  if (d.dataThroughMs !== null && d.dataThroughMs < todayUtc) {
+    html += `<div class="stg-warn">⏱ Counts run through <b>${fmtMsDate(d.dataThroughMs)}</b> —
+      upload today's Clients List (step 1) to see today's leads.</div>`;
+  }
+
+  // Goal pacing — the action signal.
+  if (d.pace.length) {
+    const label = { flake: "Flake", rubber: "Rubber", total: "Total" };
+    html += d.pace
+      .map((p) => {
+        const ahead = p.delta >= 0;
+        return `
+      <div class="pace-row${p.onTrack ? "" : " off"}">
+        <span class="pace-type">${label[p.type]}</span>
+        <span class="pace-mtd"><b>${p.mtd}</b> of ${p.goal} in ${d.month.label}</span>
+        <span class="pace-badge ${ahead ? "up" : "down"}">${ahead ? "▲" : "▼"} ${Math.abs(p.delta).toFixed(0)} ${ahead ? "ahead of" : "behind"} pace</span>
+        <span class="pace-note">${
+          p.neededPerDay !== null
+            ? `need <b>${p.neededPerDay.toFixed(1)}/day</b> · doing ${p.last7PerDay.toFixed(1)}/day → lands ≈ ${p.projected}`
+            : `month over — finished at ${p.mtd}`
+        }</span>
+      </div>`;
+      })
+      .join("");
+  } else {
+    html += `<p class="hint">Set the monthly lead goals below to see pace —
+      ahead/behind by today, and the per-day rate needed to finish the month.</p>`;
+  }
+
+  // Goal inputs.
+  html += `
+  <div class="goal-bar">
+    <label>Flake goal / mo
+      <input type="number" min="0" step="1" inputmode="numeric" data-goal="flakeMonthly"
+        value="${g.flakeMonthly ?? ""}" placeholder="—" />
+    </label>
+    <label>Rubber goal / mo
+      <input type="number" min="0" step="1" inputmode="numeric" data-goal="rubberMonthly"
+        value="${g.rubberMonthly ?? ""}" placeholder="—" />
+    </label>
+  </div>`;
+
+  if (!d.hasType) {
+    html += `<p class="hint">⚠ The stored leads have no project type — add the
+      <b>Project Type</b> column to the Clients List export and re-upload to
+      split rubber vs flake (totals work meanwhile).</p>`;
+  }
+
+  const showOther = d.hasType && d.days.some((day) => day.other > 0);
+  html += `
+  <table class="mtg-table leads-table">
+    <thead><tr><th>Day</th>${d.hasType ? `<th>Flake</th><th>Rubber</th>${showOther ? "<th>?</th>" : ""}` : ""}<th>Total</th></tr></thead>
+    <tbody>
+      ${d.days
+        .map(
+          (day) => `<tr>
+        <td>${fmtDay(day.date)}</td>
+        ${d.hasType ? `<td>${day.flake || ""}</td><td>${day.rubber || ""}</td>${showOther ? `<td>${day.other || ""}</td>` : ""}` : ""}
+        <td><b>${day.total || ""}</b></td>
+      </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>`;
+  return html;
+}
+
 function renderSales() {
   const weeks = sales.appts?.weeks || [];
   const latest = weeks[0] || null;
@@ -2686,9 +2769,26 @@ function renderSales() {
     ? `wk ${fmtDay(latest.weekStart)}: ${latest.total} appts · ${pct1(latest.cancelRate)} cancelled`
     : "upload the weekly meetings export";
 
+  const pace = sales.daily?.pace || [];
+  const offPace = pace.filter((p) => !p.onTrack);
+  const dailySub = !sales.meta
+    ? "needs the leads report from step 1"
+    : pace.length
+    ? offPace.length
+      ? `${offPace.map((p) => p.type).join(" + ")} behind goal`
+      : "on pace for the month"
+    : "set the monthly lead goals";
+
   $("sales-sections").innerHTML = `
     <div class="sales-group">Daily</div>
-    <div class="card sales-placeholder">Daily steps are next — the weekly cadence is below.</div>
+    ${step(
+      1,
+      "ssec:daily",
+      "Lead flow vs goal — rubber & flake",
+      dailySub,
+      Boolean(sales.meta) && pace.length > 0 && offPace.length === 0,
+      renderDailyStep()
+    )}
     <div class="sales-group">Weekly</div>
     ${step(1, "ssec:leads", "Leads reports", leadsSub, Boolean(sales.meta), renderLeadsStep())}
     ${step(
@@ -2739,13 +2839,22 @@ async function handleSalesUpload(kind, file) {
 
 async function salesChange(e) {
   const t = e.target;
-  if (!t.dataset.upload) return;
   try {
+    if (t.dataset.goal) {
+      await meetingApi("/api/leads/goals", "POST", {
+        [t.dataset.goal]: t.value === "" ? null : Number(t.value),
+      });
+      toast("Goal saved ✓", "success");
+      await loadSales();
+      return;
+    }
+    if (!t.dataset.upload) return;
     await handleSalesUpload(t.dataset.upload, t.files[0]);
+    t.value = "";
   } catch (err) {
-    toast(err.message || "Couldn't upload that file.", "error");
+    toast(err.message || "Couldn't save.", "error");
+    if (t.dataset.upload) t.value = "";
   }
-  t.value = "";
 }
 
 async function salesClick(e) {
@@ -3492,6 +3601,7 @@ async function uploadLeadsChunked(filename, rows) {
     class: ["class"],
     created: ["created"],
     status: ["lead status", "status"],
+    pt: ["project type", "opportunity type"],
   };
   const hdrIdx = rows.findIndex((r) =>
     (r || []).some((c) => {

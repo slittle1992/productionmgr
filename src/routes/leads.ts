@@ -10,6 +10,7 @@ import { PipelineFormatError } from "../domain/pipeline.js";
 import { getReportingWeek } from "../domain/week.js";
 import type { LeadsStore } from "../storage/leadsStore.js";
 import {
+  computeDailyLeadFlow,
   computeRepScorecard,
   computeWeeklyFlow,
   parseLeadPerformance,
@@ -202,6 +203,29 @@ export function leadsRouter(
     })
   );
 
+  // POST /api/leads/goals — the monthly lead goals for the Daily pacing view.
+  const goalsBody = z.object({
+    flakeMonthly: z.number().int().min(0).max(100000).nullable().optional(),
+    rubberMonthly: z.number().int().min(0).max(100000).nullable().optional(),
+  });
+  router.post(
+    "/leads/goals",
+    asyncHandler(async (req, res) => {
+      const body = goalsBody.parse(req.body);
+      const current = await store.getGoals();
+      const next = {
+        flakeMonthly:
+          body.flakeMonthly !== undefined ? body.flakeMonthly : current.flakeMonthly,
+        rubberMonthly:
+          body.rubberMonthly !== undefined
+            ? body.rubberMonthly
+            : current.rubberMonthly,
+      };
+      await store.setGoals(next);
+      res.json({ ok: true, goals: next });
+    })
+  );
+
   // GET /api/leads?days=7|28|91 — analysis by location → zip cluster.
   router.get(
     "/leads",
@@ -213,12 +237,13 @@ export function leadsRouter(
         .max(365)
         .optional()
         .parse(req.query.days || undefined) ?? 28;
-      const [meta, leads, sold, perf, appts] = await Promise.all([
+      const [meta, leads, sold, perf, appts, goals] = await Promise.all([
         store.getMeta(),
         store.getLeads(),
         store.getSold(),
         store.getPerf(),
         store.getAppts(),
+        store.getGoals(),
       ]);
       const appointments = {
         weeks: Object.values(appts)
@@ -230,7 +255,14 @@ export function leadsRouter(
           })),
       };
       if (!meta) {
-        res.json({ meta: null, analysis: null, sales: null, appointments });
+        res.json({
+          meta: null,
+          analysis: null,
+          sales: null,
+          appointments,
+          daily: null,
+          goals,
+        });
         return;
       }
       const nowMs = now();
@@ -242,6 +274,8 @@ export function leadsRouter(
       res.json({
         meta,
         appointments,
+        goals,
+        daily: computeDailyLeadFlow(leads, goals, nowMs),
         analysis: buildLeadsAnalysis(leads, nowMs, days),
         sales: {
           soldMeta: sold

@@ -24,6 +24,15 @@ export interface CompactLead {
   /** Normalised client name — joins sold contracts to areas (may be absent
    * on uploads stored before this field existed). */
   name?: string | null;
+  /** rubber vs flake, when the export includes the Project Type column. */
+  pt?: "rubber" | "flake" | null;
+}
+
+export function projectTypeOf(raw: string | null): "rubber" | "flake" | null {
+  if (!raw) return null;
+  if (/rubber/i.test(raw)) return "rubber";
+  if (/concrete|flake|epoxy/i.test(raw)) return "flake";
+  return null;
 }
 
 /** Statuses that count as a sale for conversion purposes. */
@@ -46,6 +55,7 @@ const HEADERS: Record<string, string[]> = {
   className: ["class"],
   created: ["created"],
   status: ["lead status", "status"],
+  pt: ["project type", "opportunity type"],
 };
 
 function text(v: unknown): string | null {
@@ -112,6 +122,7 @@ export function parseClientsExport(grid: RawGrid): LeadsParseResult {
       created,
       cat: categorize(text(cell(row, "status"))),
       name: name.toLowerCase().replace(/\s+/g, " ").trim(),
+      pt: projectTypeOf(text(cell(row, "pt"))),
     });
   }
   return { leads, sourceLabel };

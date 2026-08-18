@@ -294,6 +294,167 @@ export function computeWeeklyFlow(
   });
 }
 
+// ───────────────────── Daily lead flow + monthly goal pacing ─────────────────────
+
+export interface DailyLeadDay {
+  /** ISO date (UTC). */
+  date: string;
+  flake: number;
+  rubber: number;
+  /** Leads with no recognisable project type. */
+  other: number;
+  total: number;
+}
+
+export interface LeadGoals {
+  flakeMonthly: number | null;
+  rubberMonthly: number | null;
+}
+
+export interface GoalPace {
+  type: "flake" | "rubber" | "total";
+  goal: number;
+  /** Month-to-date leads of this type. */
+  mtd: number;
+  /** Where MTD should be by the end of today to hit the goal evenly. */
+  expectedToDate: number;
+  /** mtd − expectedToDate (positive = ahead of pace). */
+  delta: number;
+  /** Leads/day needed over the remaining days to still hit the goal. */
+  neededPerDay: number | null;
+  /** Average leads/day over the trailing 7 days. */
+  last7PerDay: number;
+  /** mtd + last7PerDay × remaining days. */
+  projected: number;
+  onTrack: boolean;
+}
+
+export interface DailyLeadFlow {
+  days: DailyLeadDay[];
+  /** Whether any lead carries a project type (the export had the column). */
+  hasType: boolean;
+  /** Newest lead's created date — how fresh the upload is. */
+  dataThroughMs: number | null;
+  month: { label: string; day: number; daysInMonth: number };
+  pace: GoalPace[];
+}
+
+const DAY_MS = 86_400_000;
+const dayStartUtc = (ms: number) => Math.floor(ms / DAY_MS) * DAY_MS;
+
+export function computeDailyLeadFlow(
+  leads: CompactLead[],
+  goals: LeadGoals,
+  nowMs: number,
+  days = 14
+): DailyLeadFlow {
+  const today = dayStartUtc(nowMs);
+  const from = today - (days - 1) * DAY_MS;
+
+  const byDay = new Map<number, DailyLeadDay>();
+  const now = new Date(nowMs);
+  const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+  const daysInMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  const dayOfMonth = now.getUTCDate();
+
+  let hasType = false;
+  let dataThroughMs: number | null = null;
+  const mtd = { flake: 0, rubber: 0, total: 0 };
+  const last7 = { flake: 0, rubber: 0, total: 0 };
+  for (const l of leads) {
+    if (dataThroughMs === null || l.created > dataThroughMs) dataThroughMs = l.created;
+    if (l.pt) hasType = true;
+    const d = dayStartUtc(l.created);
+    if (d >= from && d <= today) {
+      let slot = byDay.get(d);
+      if (!slot) {
+        slot = {
+          date: new Date(d).toISOString().slice(0, 10),
+          flake: 0,
+          rubber: 0,
+          other: 0,
+          total: 0,
+        };
+        byDay.set(d, slot);
+      }
+      slot.total++;
+      if (l.pt === "flake") slot.flake++;
+      else if (l.pt === "rubber") slot.rubber++;
+      else slot.other++;
+    }
+    if (l.created >= monthStart && l.created < nowMs + DAY_MS) {
+      mtd.total++;
+      if (l.pt === "flake") mtd.flake++;
+      else if (l.pt === "rubber") mtd.rubber++;
+    }
+    if (l.created >= today - 6 * DAY_MS && l.created < today + DAY_MS) {
+      last7.total++;
+      if (l.pt === "flake") last7.flake++;
+      else if (l.pt === "rubber") last7.rubber++;
+    }
+  }
+
+  const out: DailyLeadDay[] = [];
+  for (let d = today; d >= from; d -= DAY_MS) {
+    out.push(
+      byDay.get(d) ?? {
+        date: new Date(d).toISOString().slice(0, 10),
+        flake: 0,
+        rubber: 0,
+        other: 0,
+        total: 0,
+      }
+    );
+  }
+
+  const remaining = daysInMonth - dayOfMonth;
+  const paceOf = (
+    type: GoalPace["type"],
+    goal: number | null,
+    got: number,
+    recent: number
+  ): GoalPace | null => {
+    if (goal === null || goal <= 0) return null;
+    const expectedToDate = r2((goal * dayOfMonth) / daysInMonth);
+    const last7PerDay = r2(recent / 7);
+    const projected = Math.round(got + last7PerDay * remaining);
+    return {
+      type,
+      goal,
+      mtd: got,
+      expectedToDate,
+      delta: r2(got - expectedToDate),
+      neededPerDay: remaining > 0 ? r2(Math.max(0, goal - got) / remaining) : null,
+      last7PerDay,
+      projected,
+      onTrack: projected >= goal,
+    };
+  };
+  const totalGoal =
+    goals.flakeMonthly !== null || goals.rubberMonthly !== null
+      ? (goals.flakeMonthly ?? 0) + (goals.rubberMonthly ?? 0)
+      : null;
+  const pace = [
+    paceOf("flake", goals.flakeMonthly, mtd.flake, last7.flake),
+    paceOf("rubber", goals.rubberMonthly, mtd.rubber, last7.rubber),
+    paceOf("total", totalGoal, mtd.total, last7.total),
+  ].filter((p): p is GoalPace => p !== null);
+
+  return {
+    days: out,
+    hasType,
+    dataThroughMs,
+    month: {
+      label: now.toLocaleString("en-US", { month: "long", timeZone: "UTC" }),
+      day: dayOfMonth,
+      daysInMonth,
+    },
+    pace,
+  };
+}
+
 // ───────────────────── Area (zip-cluster) sales via name join ─────────────────────
 
 export interface ClusterSales {

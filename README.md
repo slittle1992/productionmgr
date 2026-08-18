@@ -184,8 +184,22 @@ staging workbook.
 
 ## Sales Management (Sales tab)
 
-The sales manager's own workflow, separate from the production meeting. A
-**Daily** section (steps to come) and the **Weekly** steps:
+The sales manager's own workflow, separate from the production meeting.
+
+**Daily** — **Lead flow vs goal (rubber & flake)**, powered by the latest
+Clients List upload. Set a monthly lead goal for flake and one for rubber
+(saved in the app); the card then shows, per type and in total: **MTD leads
+vs where you should be by today** (goal spread evenly over the month, ▲/▼
+badge with the lead count ahead/behind), the **per-day rate needed** to
+still hit the goal, the trailing-7-day rate actually being run, and where
+the month **lands** at that rate — red when the projection misses. Below
+it, a **daily table of the last 14 days** split flake vs rubber. The split
+needs the **Project Type** column included in the Clients List export
+(the card says so if it's missing; totals work regardless), and a freshness
+note nudges "upload today's Clients List" whenever the newest lead in the
+data is older than today — making the upload itself the daily habit.
+
+**Weekly** steps:
 
 1. **Leads reports** — upload the **Clients List** export. Leads group per
    location, then by **ZIP cluster** (first three digits ≈ a metro: 752xx

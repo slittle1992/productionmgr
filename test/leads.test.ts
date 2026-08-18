@@ -241,3 +241,45 @@ describe("zip table (heat map data)", () => {
     expect(dallas.totals.allTime).toBe(4);
   });
 });
+
+describe("lead goals API", () => {
+  it("saves goals and serves them (even before any leads upload)", async () => {
+    const config = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    const app = buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore: new MemoryPipelineStore(),
+      scheduleStore: new MemoryScheduleStore(),
+      leadsStore: new MemoryLeadsStore(),
+      now: () => NOW,
+    }).app;
+
+    await request(app)
+      .post("/api/leads/goals")
+      .send({ flakeMonthly: 600 })
+      .expect(200);
+    // Partial update keeps the other goal.
+    await request(app)
+      .post("/api/leads/goals")
+      .send({ rubberMonthly: 120 })
+      .expect(200);
+
+    const bare = await request(app).get("/api/leads");
+    expect(bare.body.goals).toEqual({ flakeMonthly: 600, rubberMonthly: 120 });
+    expect(bare.body.daily).toBeNull(); // no leads yet
+
+    await request(app)
+      .post("/api/leads")
+      .send({ filename: "clients.xlsx", rows: GRID })
+      .expect(200);
+    const res = await request(app).get("/api/leads");
+    expect(res.body.daily).not.toBeNull();
+    expect(res.body.daily.pace.map((p: { type: string }) => p.type)).toEqual([
+      "flake",
+      "rubber",
+      "total",
+    ]);
+  });
+});
