@@ -2863,23 +2863,118 @@ function renderDailyStep() {
       upload${d.volJoin.total ? ` (per-location $ joined by client name: ${d.volJoin.joined}/${d.volJoin.total} this month; the Company row is exact)` : ""}.</p>`;
   }
 
-  const showOther = d.hasType && d.days.some((day) => day.other > 0);
-  html += `
-  <table class="mtg-table leads-table">
-    <thead><tr><th>Day</th>${d.hasType ? `<th>Flake</th><th>Rubber</th>${showOther ? "<th>?</th>" : ""}` : ""}<th>Total</th></tr></thead>
-    <tbody>
-      ${d.days
+  html += renderLeadBarChart(d);
+  return html;
+}
+
+/**
+ * Daily lead volume, last ~3 months — stacked columns (flake / rubber /
+ * untyped) in an inline SVG, with a tap/hover readout and a table view.
+ */
+function renderLeadBarChart(d) {
+  const days = [...d.days].reverse(); // oldest → newest, left → right
+  const n = days.length;
+  const showOther = d.hasType && days.some((day) => day.other > 0);
+  const stacked = d.hasType;
+
+  const SLOT = 5;
+  const PAD_L = 30;
+  const PAD_T = 8;
+  const PAD_B = 18;
+  const H = 150;
+  const W = PAD_L + n * SLOT + 6;
+  const plotH = H - PAD_T - PAD_B;
+  const max = Math.max(1, ...days.map((day) => day.total));
+  // Clean axis ceiling: 1/2/5 × 10^k above the max.
+  const pow = Math.pow(10, Math.floor(Math.log10(max)));
+  const yMax = [1, 2, 5, 10].map((m) => m * pow).find((v) => v >= max) || max;
+  const y = (v) => PAD_T + plotH * (1 - v / yMax);
+  const GAP = 1.5; // surface gap between stacked segments
+  const BW = 3.4;
+
+  let bars = "";
+  let months = "";
+  let hits = "";
+  for (let i = 0; i < n; i++) {
+    const day = days[i];
+    const x = (PAD_L + i * SLOT).toFixed(1);
+    // Segments bottom-up: flake, rubber, untyped (single hue when untyped-only).
+    const segs = stacked
+      ? [
+          ["lb-flake", day.flake],
+          ["lb-rubber", day.rubber],
+          ["lb-other", day.other],
+        ]
+      : [["lb-flake", day.total]];
+    let base = 0;
+    for (const [cls, v] of segs) {
+      if (!v) continue;
+      const top = y(base + v);
+      const bottom = y(base) - (base > 0 ? GAP : 0);
+      const h = Math.max(0.8, bottom - top);
+      bars += `<rect class="${cls}" x="${x}" width="${BW}" y="${top.toFixed(1)}" height="${h.toFixed(1)}" rx="1.2"/>`;
+      base += v;
+    }
+    const dt = new Date(day.date + "T12:00:00Z");
+    if (dt.getUTCDate() === 1 || i === 0) {
+      months += `<line class="lb-grid" x1="${x}" x2="${x}" y1="${PAD_T}" y2="${H - PAD_B + 3}"/>
+        <text class="lb-txt" x="${Number(x) + 2}" y="${H - 5}">${dt.toLocaleDateString(undefined, { month: "short", timeZone: "UTC" })}</text>`;
+    }
+    const label = `${fmtDay(day.date)}: ${day.total} lead${day.total === 1 ? "" : "s"}${
+      stacked ? ` — ${day.flake} flake · ${day.rubber} rubber${day.other ? ` · ${day.other} untyped` : ""}` : ""
+    }`;
+    hits += `<rect class="lb-hit js-bar-hit" data-cap="${escapeHtml(label)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}"><title>${escapeHtml(label)}</title></rect>`;
+  }
+
+  const gridVals = [yMax / 2, yMax];
+  const latest = days[n - 1];
+  const defaultCap = latest
+    ? `${fmtDay(latest.date)}: ${latest.total} leads${stacked ? ` — ${latest.flake} flake · ${latest.rubber} rubber` : ""}`
+    : "";
+
+  return `
+  <div class="prep-head" style="margin-top:14px">
+    <span class="prep-title">Daily leads — last 3 months</span>
+    ${
+      stacked
+        ? `<span class="lb-legend"><i class="lb-sw lb-flake"></i>Flake <i class="lb-sw lb-rubber"></i>Rubber${showOther ? `<i class="lb-sw lb-other"></i>Untyped` : ""}</span>`
+        : ""
+    }
+  </div>
+  <div class="lb-cap" id="lead-chart-cap">${escapeHtml(defaultCap)}</div>
+  <div class="lb-wrap">
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Daily lead volume, last 3 months">
+      ${gridVals
         .map(
-          (day) => `<tr>
-        <td>${fmtDay(day.date)}</td>
-        ${d.hasType ? `<td>${day.flake || ""}</td><td>${day.rubber || ""}</td>${showOther ? `<td>${day.other || ""}</td>` : ""}` : ""}
-        <td><b>${day.total || ""}</b></td>
-      </tr>`
+          (v) => `<line class="lb-grid" x1="${PAD_L - 3}" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+        <text class="lb-txt" x="${PAD_L - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`
         )
         .join("")}
-    </tbody>
-  </table>`;
-  return html;
+      <line class="lb-grid" x1="${PAD_L - 3}" x2="${W}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>
+      ${months}${bars}${hits}
+    </svg>
+  </div>
+  <details class="mtg-class" data-open="daily:table" ${meeting.open.has("daily:table") ? "open" : ""}>
+    <summary><span class="mtg-class-name">Daily table</span>
+      <span class="mtg-class-info">${n} days</span>
+    </summary>
+    <div class="table-wrap lb-tablewrap">
+    <table class="mtg-table leads-table">
+      <thead><tr><th>Day</th>${stacked ? `<th>Flake</th><th>Rubber</th>${showOther ? "<th>?</th>" : ""}` : ""}<th>Total</th></tr></thead>
+      <tbody>
+        ${d.days
+          .map(
+            (day) => `<tr>
+          <td>${fmtDay(day.date)}</td>
+          ${stacked ? `<td>${day.flake || ""}</td><td>${day.rubber || ""}</td>${showOther ? `<td>${day.other || ""}</td>` : ""}` : ""}
+          <td><b>${day.total || ""}</b></td>
+        </tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>
+    </div>
+  </details>`;
 }
 
 function renderSales() {
@@ -3146,6 +3241,12 @@ async function salesChange(e) {
 }
 
 async function salesClick(e) {
+  const hit = e.target.closest?.(".js-bar-hit");
+  if (hit) {
+    const cap = $("lead-chart-cap");
+    if (cap) cap.textContent = hit.dataset.cap;
+    return;
+  }
   const btn = e.target.closest("[data-act]");
   if (!btn) return;
   try {
@@ -5112,6 +5213,13 @@ async function init() {
   salesRoot.addEventListener("change", salesChange);
   salesRoot.addEventListener("click", salesClick);
   salesRoot.addEventListener("toggle", meetingToggle, true);
+  // Hover readout for the daily lead chart (tap is handled in salesClick).
+  salesRoot.addEventListener("mouseover", (e) => {
+    const hit = e.target.closest?.(".js-bar-hit");
+    if (!hit) return;
+    const cap = $("lead-chart-cap");
+    if (cap) cap.textContent = hit.dataset.cap;
+  });
 
   // Staging + inventory.
   $("staging-prev").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, -1)));

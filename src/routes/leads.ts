@@ -415,7 +415,8 @@ export function leadsRouter(
         appointments,
         goals,
         dailyTasks,
-        daily: computeDailyLeadFlow(leads, goals, nowMs, soldRows),
+        // 92 days ≈ the last three months for the daily trend chart.
+        daily: computeDailyLeadFlow(leads, goals, nowMs, soldRows, 92),
         analysis: buildLeadsAnalysis(leads, nowMs, days),
         sales: {
           soldMeta: sold

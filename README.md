@@ -202,12 +202,14 @@ tomorrow.
    tickets run ~2.5× flake, so the card shows the MTD rubber share vs
    last month and the avg ticket per type, and warns when **$ is behind
    pace while lead volume isn't and rubber share fell** — the miss is the
-   mix, not the volume. Below it, a **daily table of the last 14 days**
-   split flake vs rubber. The split needs the **Project Type** column in
-   the Clients List export (the card says so if it's missing; totals work
-   regardless), and a freshness note nudges "upload today's Clients List"
-   whenever the newest lead is older than today — making the upload
-   itself part of the daily habit.
+   mix, not the volume. Below it, a **daily lead-volume bar chart of the
+   last 3 months** — stacked columns (flake / rubber), month markers, a
+   tap/hover readout per day, and a collapsible day-by-day table. The
+   split needs the **Project Type** column in the Clients List export
+   (the card says so if it's missing; totals chart regardless), and a
+   freshness note nudges "upload today's Clients List" whenever the
+   newest lead is older than today — making the upload itself part of
+   the daily habit.
 2. **Review sold contracts** — the last 3 days of contracts (date, rep,
    client, type, sale $) from the Sold Contracts upload, to catch
    mispriced or mistyped deals while they're fresh.
