@@ -4,7 +4,7 @@ import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { parseUnpaidInvoices, syncFollowUps, type FollowUp } from "../src/domain/pastDue.js";
 import { parseCompletedProjects } from "../src/domain/completedProjects.js";
-import { summarisePayrollWorkbook } from "../src/domain/payroll.js";
+import { summarisePayrollSheet, summarisePayrollWorkbook } from "../src/domain/payroll.js";
 import {
   buildLaborRates,
   buildPipelineChecks,
@@ -28,6 +28,36 @@ const UNPAID_GRID = [
   ["Wayne Nowotny", "188439", "[#201865] Pool deck", "No Installation Date", "$20,240.15", "$20,240.15", "Deluxe Garages - Corpus Christi, TX", "2026-07-27", "3"],
   ["Crosby Peck", "155611", "Pool deck", "Project Scheduled", "$19,925.00", "$9,925.00", "Deluxe Garages - Austin, TX", "2026-08-01", ""],
 ];
+
+describe("2026 payroll template (Installer departments)", () => {
+  const sheet = {
+    name: "CORRECT MASTER-USE ME",
+    rows: [
+      ["Deluxe Garage - Austin", null, null, null, "620", "Weekly Payroll"],
+      [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, "Pay period start date:", null, 46243],
+      [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, "Pay period end date:", null, 46249],
+      [null, "Department", "Last Name", "First Name", "Salary", "Pay Rate", "Regular Hours", "Commission Hours", "PTO Hours", "Holiday Hours", "PTO/Holiday Rate", "Monthly Bonus", "Commission", "Expense Reimbursement", "Miscellaneous Deductions", "Vehicle Mileage Reimbursement", "Min Wage Supplement", "Min Wage Check", "Total Hours", "OT Hours", "OT Premium Pay", "Total Gross Pay"],
+      [null, "Sales", "Butler", "Haleigh", 375, null, null, null, null, null, null, null, 182.82, null, null, null, null, null, null, null, null, 557.82],
+      [null, "Installer - Hourly", "Foster", "Samuel", null, 24, 50, null, null, null, null, null, null, null, null, null, 0, "OK", 50, 10, 120, 1320],
+      [null, "Installer - PFP", "Perez", "Cristian", null, 20, 6.75, 45.25, null, null, null, null, 2336.83, null, null, null, 0, "OK", 52, 12, 285.21, 2757.04],
+      [null, "Admin", "Robert", "Jessica", null, 20, 39.25, null, null, null, null, null, null, null, null, null, null, null, null, null, null, 785],
+    ],
+  };
+
+  it("counts Installer - PFP and Installer - Hourly as production", () => {
+    const sum = summarisePayrollSheet(sheet)!;
+    expect(sum.productionTotal).toBe(1320 + 2757.04);
+    expect(sum.employeeCount).toBe(2);
+    expect(sum.periodStart).toBe("2026-08-09");
+    expect(sum.periodEnd).toBe("2026-08-15");
+  });
+
+  it("demotes utility tabs below the real sheet", () => {
+    const master = { ...sheet, name: "Master with all" };
+    const out = summarisePayrollWorkbook([master, sheet], "2026-08-09", "2026-08-15");
+    expect(out[0]?.sheetName).toBe("CORRECT MASTER-USE ME");
+  });
+});
 
 describe("unpaid invoices parsing + follow-up sync", () => {
   it("parses the export and cleans class names", () => {

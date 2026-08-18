@@ -5,8 +5,10 @@ import { parseMoney } from "./pastDue.js";
  * Reader for the per-location weekly payroll workbook (e.g. "Deluxe Garages
  * Austin Payroll"). The browser sends every sheet as a raw grid; each weekly
  * sheet lists employees with a Department column and a Total Gross Pay column.
- * We extract the PRODUCTION department total per sheet so the meeting can pick
- * the sheet matching the week and fill the labor-rate denominator.
+ * We extract the production-department total per sheet so the meeting can pick
+ * the sheet matching the week and fill the labor-rate denominator. Older books
+ * label techs "Production"; the 2026 template labels them "Installer - PFP" /
+ * "Installer - Hourly" — both count.
  */
 
 export interface PayrollSheet {
@@ -63,7 +65,8 @@ export function summarisePayrollSheet(sheet: PayrollSheet): PayrollSheetSummary 
   let deptCol = -1;
   let grossCol = -1;
   for (let r = 0; r < rows.length; r++) {
-    const lower = (rows[r] ?? []).map((c) => text(c)?.toLowerCase() ?? "");
+    // Array.from tolerates sparse rows (holes become undefined, not skipped).
+    const lower = Array.from(rows[r] ?? [], (c) => text(c)?.toLowerCase() ?? "");
     const d = lower.findIndex((c) => c === "department");
     const g = lower.findIndex((c) => c.startsWith("total gross pay"));
     if (d >= 0 && g >= 0) {
@@ -80,7 +83,7 @@ export function summarisePayrollSheet(sheet: PayrollSheet): PayrollSheetSummary 
   for (let r = headerRow + 1; r < rows.length; r++) {
     const row = rows[r] ?? [];
     const dept = text(row[deptCol])?.toLowerCase();
-    if (dept !== "production") continue;
+    if (!dept || (dept !== "production" && !dept.startsWith("installer"))) continue;
     const gross = parseMoney(row[grossCol]);
     if (gross === null) continue;
     productionTotal += gross;
@@ -115,9 +118,15 @@ export function summarisePayrollWorkbook(
     return s.periodStart <= weekEnd && s.periodEnd >= weekStart;
   };
 
+  // Template/utility tabs parse like data but shouldn't be the suggestion.
+  const utility = (s: PayrollSheetSummary): boolean =>
+    /do not touch|master with all|template/i.test(s.sheetName);
+
   return summaries.sort((a, b) => {
     const byWeek = Number(overlaps(b)) - Number(overlaps(a));
     if (byWeek !== 0) return byWeek;
+    const byUtility = Number(utility(a)) - Number(utility(b));
+    if (byUtility !== 0) return byUtility;
     const byHasPay = Number(b.productionTotal > 0) - Number(a.productionTotal > 0);
     if (byHasPay !== 0) return byHasPay;
     return 0;
