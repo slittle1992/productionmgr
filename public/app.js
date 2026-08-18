@@ -3857,9 +3857,14 @@ function invMathHtml(c) {
     0
   );
   const arrivalsR = Math.round(arrivals * 100) / 100;
+  // Offer the counts-based arrivals figure when nothing is entered, OR when
+  // recorded purchases clearly under-cover what the counts say landed
+  // (deliveries from POs that never made it into the app).
+  const underCovered =
+    c.purchases !== null && arrivalsR > c.purchases + Math.max(500, c.purchases * 0.25);
   const suggest =
-    arrivalsR > 0 && c.purchases === null && c.purchasesSource === null
-      ? `<button class="inv-use" type="button" data-invuse="${escapeHtml(c.className)}" data-amount="${arrivalsR}">arrivals detected ≈ ${fmtMoney(arrivalsR)} — use</button>`
+    arrivalsR > 0 && ((c.purchases === null && c.purchasesSource === null) || underCovered)
+      ? `<button class="inv-use" type="button" data-invuse="${escapeHtml(c.className)}" data-amount="${arrivalsR}">counts show ≥ ${fmtMoney(arrivalsR)} landed — use</button>`
       : "";
   return `
   <div class="inv-math">
@@ -3882,7 +3887,7 @@ function invMathHtml(c) {
     </div>
     ${c.purchasesSource === "manual" && c.poCount > 0 && c.poTotal !== c.purchases ? `<p class="hint">⚠ The typed amount ${fmtMoney(c.purchases)} overrides ${c.poCount} received PO${c.poCount === 1 ? "" : "s"} totalling ${fmtMoney(c.poTotal)} — clear the purchases box to use the PO total.</p>` : ""}
     ${c.materialCost !== null && c.purchases === null ? `<p class="hint">⚠ No purchases yet — drawdown only. Tap Received on a PO or enter the spend.</p>` : ""}
-    ${c.materialCost !== null && c.materialCost < 0 ? `<p class="hint">⚠ Negative cost: stock grew by more than the purchases entered — check purchases or counts.</p>` : ""}
+    ${c.materialCost !== null && c.materialCost < 0 ? `<p class="hint">⚠ Negative cost: stock grew by more than the recorded purchases — usually a delivery from a PO that isn't in the app yet. Drop the missing PO in, or tap the counts-based figure above.</p>` : ""}
     ${c.valueUnpricedCount ? `<p class="hint">${c.valueUnpricedCount} counted item${c.valueUnpricedCount === 1 ? "" : "s"} lack a unit cost (not in stock value).</p>` : ""}
   </div>`;
 }
