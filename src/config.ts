@@ -75,6 +75,12 @@ export interface AppConfig {
   };
   /** Neon Postgres connection string (preferred durable store). */
   databaseUrl: string | null;
+  /** Dashboard links surfaced on the Friday-meeting checklist. */
+  meetingLinks: {
+    reviews: string | null;
+    lytx: string | null;
+    ramp: string | null;
+  };
 }
 
 function list(value: string | undefined, fallback: string[]): string[] {
@@ -136,6 +142,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.NEON_DATABASE_URL?.trim() ||
       env.POSTGRES_URL?.trim() ||
       null,
+    meetingLinks: {
+      reviews: env.REVIEWS_DASHBOARD_URL?.trim() || null,
+      lytx: env.LYTX_DASHBOARD_URL?.trim() || "https://user.lytx.com",
+      ramp: env.RAMP_DASHBOARD_URL?.trim() || "https://app.ramp.com",
+    },
   };
 }
 

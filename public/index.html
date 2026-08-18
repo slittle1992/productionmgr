@@ -21,7 +21,7 @@
     </div>
 
     <header class="app-header">
-      <h1 id="screen-title">Weekly Report</h1>
+      <h1 id="screen-title">Weekly Schedule</h1>
       <p id="week-label" class="week-label"></p>
     </header>
 
@@ -77,230 +77,6 @@
         </div>
       </section>
 
-      <!-- ───────────────────────── Weekly Report ───────────────────────── -->
-      <section id="screen-report" class="screen" hidden>
-        <p class="report-class-label">Submitting report for:</p>
-        <div id="report-class-chips" class="class-chips"></div>
-        <div id="report-status" class="status-pill" hidden></div>
-
-        <form id="report-form" novalidate>
-          <!-- Pulled from Builder Prime -->
-          <fieldset class="card">
-            <legend>From Builder Prime</legend>
-            <p class="card-help">
-              We pulled these for you. Tap a number to correct it if needed.
-            </p>
-
-            <div class="field" data-auto="projectedJobSchedule">
-              <label for="projectedJobSchedule">Projected job schedule</label>
-              <p class="hint">Total sold work scheduled to start this week.</p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input
-                  id="projectedJobSchedule"
-                  inputmode="decimal"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                />
-                <span class="auto-badge">auto</span>
-              </div>
-            </div>
-
-            <div class="field" data-auto="completedJobsRevenue">
-              <label for="completedJobsRevenue">Completed jobs revenue</label>
-              <p class="hint">Value of jobs marked complete this week.</p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input
-                  id="completedJobsRevenue"
-                  inputmode="decimal"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                />
-                <span class="auto-badge">auto</span>
-              </div>
-            </div>
-
-            <div class="field" data-auto="projectedLabor">
-              <label for="projectedLabor">Projected labor</label>
-              <p class="hint">Estimated labor cost for this week's jobs.</p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input
-                  id="projectedLabor"
-                  inputmode="decimal"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                />
-                <span class="auto-badge">auto</span>
-              </div>
-            </div>
-          </fieldset>
-
-          <!-- Labor -->
-          <fieldset class="card">
-            <legend>Labor you enter</legend>
-            <div class="field">
-              <label for="actualLaborRaw">Actual labor (raw payroll)</label>
-              <p class="hint">
-                Total labor from the payroll sheet plus your own salary. Enter
-                the raw amount — we add the 20% automatically.
-              </p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input
-                  id="actualLaborRaw"
-                  inputmode="decimal"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-            </div>
-            <div class="derived-row">
-              <span>Actual labor (with <span id="mult-label">1.2×</span>)</span>
-              <strong id="out-actualLabor">$0.00</strong>
-            </div>
-          </fieldset>
-
-          <!-- Inventory & material cost (weekly counts from the Material Tracker) -->
-          <fieldset class="card" id="inventory-card">
-            <legend>Inventory &amp; material cost</legend>
-            <p class="card-help">
-              Upload this week's inventory count (ReVamp Material Tracker
-              export). We compare it with last week's count to work out what was
-              used and what it cost.
-            </p>
-            <div class="pipeline-bar inv-bar">
-              <div id="inv-status" class="pipeline-status">Loading…</div>
-              <div class="pipeline-actions">
-                <label class="btn-upload">
-                  <span>Upload count</span>
-                  <input id="inv-file" type="file" accept=".xlsx,.xls,.csv" hidden />
-                </label>
-                <button id="inv-paste" class="btn-export" type="button">Paste counts</button>
-                <button id="inv-clear" class="btn-clear" type="button" hidden>Clear</button>
-              </div>
-            </div>
-            <div class="derived-row">
-              <span>Items used this week</span>
-              <strong id="inv-used-count">—</strong>
-            </div>
-            <div class="derived-row">
-              <span>Material cost this week</span>
-              <strong id="inv-total">—</strong>
-            </div>
-            <p class="hint" id="inv-note" hidden></p>
-            <div id="inv-usage" class="inv-usage" hidden></div>
-            <div class="inv-actions">
-              <button id="inv-apply" class="btn btn-secondary" type="button" hidden>
-                Use as actual materials
-              </button>
-            </div>
-          </fieldset>
-
-          <!-- Warranties & leads -->
-          <fieldset class="card">
-            <legend>Warranties &amp; leads</legend>
-            <div class="field">
-              <label for="warrantiesOpenedThisWeek">Warranties opened this week</label>
-              <p class="hint">Count of new warranty work orders started this week.</p>
-              <input
-                id="warrantiesOpenedThisWeek"
-                inputmode="numeric"
-                type="number"
-                min="0"
-                step="1"
-              />
-            </div>
-            <div class="field">
-              <label for="materialsGivenForWarranties">Materials given for warranties</label>
-              <p class="hint">Dollar value of materials handed out for warranty work.</p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input
-                  id="materialsGivenForWarranties"
-                  inputmode="decimal"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-            </div>
-            <div class="field">
-              <label for="leadsThisWeek">New leads this week</label>
-              <p class="hint">Leads you tracked this week (rolls up to the quarter).</p>
-              <input
-                id="leadsThisWeek"
-                inputmode="numeric"
-                type="number"
-                min="0"
-                step="1"
-              />
-            </div>
-            <div class="derived-row">
-              <span>Total warranties (quarter to date)</span>
-              <strong id="out-totalWarrantiesQTD">0</strong>
-            </div>
-            <div class="derived-row">
-              <span>Total leads (quarter to date)</span>
-              <strong id="out-totalLeadsQTD">0</strong>
-            </div>
-          </fieldset>
-
-          <!-- Materials & sundries -->
-          <fieldset class="card">
-            <legend>Materials &amp; sundries</legend>
-            <div class="field">
-              <label for="projectedMaterials">Projected materials</label>
-              <p class="hint">Estimated material cost for upcoming jobs.</p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input id="projectedMaterials" inputmode="decimal" type="number" min="0" step="0.01" />
-              </div>
-            </div>
-            <div class="field">
-              <label for="actualMaterials">Actual materials</label>
-              <p class="hint">From your inventory count.</p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input id="actualMaterials" inputmode="decimal" type="number" min="0" step="0.01" />
-              </div>
-            </div>
-            <div class="field">
-              <label for="totalSundriesCost">Total sundries cost</label>
-              <p class="hint">Total from your purchase-order list.</p>
-              <div class="money-input">
-                <span class="prefix">$</span>
-                <input id="totalSundriesCost" inputmode="decimal" type="number" min="0" step="0.01" />
-              </div>
-            </div>
-            <div class="derived-row">
-              <span>Installed revenue (= completed jobs)</span>
-              <strong id="out-installedRevenue">$0.00</strong>
-            </div>
-            <div class="derived-row">
-              <span>Sundries ratio (sundries ÷ completed)</span>
-              <strong id="out-sundriesRatio">0%</strong>
-            </div>
-          </fieldset>
-        </form>
-
-        <div class="card history-card">
-          <h2 class="history-title">Submitted reports</h2>
-          <p class="card-help">
-            Reports are saved here (per class, per week) and feed the
-            quarter-to-date totals.
-          </p>
-          <div id="report-history" class="report-history">
-            <div class="loading">Loading…</div>
-          </div>
-        </div>
-      </section>
-
       <!-- ───────────────────────── Performance Pay ───────────────────────── -->
       <section id="screen-pay" class="screen" hidden>
         <p class="report-class-label">Pay for performance — pick a class:</p>
@@ -348,6 +124,134 @@
         </div>
       </section>
 
+      <!-- ───────────────────────── Friday Meeting ───────────────────────── -->
+      <section id="screen-meeting" class="screen" hidden>
+        <div class="week-bar">
+          <button id="meeting-prev" class="week-arrow" type="button" aria-label="Previous week">◀</button>
+          <div class="week-display"><span id="meeting-week-range">Loading…</span></div>
+          <button id="meeting-next" class="week-arrow" type="button" aria-label="Next week">▶</button>
+          <button id="meeting-today" class="week-today" type="button">This week</button>
+        </div>
+        <div class="meeting-topbar">
+          <div id="meeting-progress" class="meeting-progress">
+            <div class="meeting-progress-bar"><div id="meeting-progress-fill"></div></div>
+            <span id="meeting-progress-label">0 of 7</span>
+          </div>
+          <input
+            id="meeting-user"
+            type="text"
+            maxlength="60"
+            placeholder="Your name (for sign-offs)"
+            aria-label="Your name"
+          />
+          <button id="meeting-export" class="btn-export" type="button">⬇ Export .xlsx</button>
+          <button id="meeting-snapshot" class="btn-export snap-btn" type="button">📸 Save snapshot</button>
+        </div>
+        <div id="meeting-sections">
+          <div class="loading">Loading meeting…</div>
+        </div>
+        <!-- Inventory counts & material cost — shown under §4 Labor rates -->
+        <fieldset class="card" id="inventory-card">
+          <legend>Inventory counts &amp; material cost</legend>
+          <p class="card-help">
+            Upload this week's inventory count (ReVamp Material Tracker
+            export). We compare it with last week's count to work out what was
+            used and what it cost.
+          </p>
+          <div class="pipeline-bar inv-bar">
+            <div id="inv-status" class="pipeline-status">Loading…</div>
+            <div class="pipeline-actions">
+              <label class="btn-upload">
+                <span>Upload count</span>
+                <input id="inv-file" type="file" accept=".xlsx,.xls,.csv" hidden />
+              </label>
+              <button id="inv-paste" class="btn-export" type="button">Paste counts</button>
+              <button id="inv-clear" class="btn-clear" type="button" hidden>Clear</button>
+            </div>
+          </div>
+          <div class="derived-row">
+            <span>Items used this week</span>
+            <strong id="inv-used-count">—</strong>
+          </div>
+          <div class="derived-row">
+            <span>Material cost this week</span>
+            <strong id="inv-total">—</strong>
+          </div>
+          <p class="hint" id="inv-note" hidden></p>
+          <div id="inv-usage" class="inv-usage" hidden></div>
+        </fieldset>
+        <div class="card history-card">
+          <h2 class="history-title">Saved weeks</h2>
+          <p class="card-help">
+            A snapshot freezes the whole week — meeting, staging list, and
+            inventory — so later uploads can't change the record. Re-download
+            any saved week below.
+          </p>
+          <div id="meeting-snapshots" class="report-history">
+            <div class="loading">Loading…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────────── Staging ───────────────────────── -->
+      <section id="screen-staging" class="screen" hidden>
+        <div class="week-bar">
+          <button id="staging-prev" class="week-arrow" type="button" aria-label="Previous week">◀</button>
+          <div class="week-display"><span id="staging-week-range">Loading…</span></div>
+          <button id="staging-next" class="week-arrow" type="button" aria-label="Next week">▶</button>
+          <button id="staging-nextweek" class="week-today" type="button">Next week</button>
+        </div>
+        <div class="filter-bar sched-tools">
+          <p class="card-help staging-help">
+            Material to pull and set out <b>this week</b> for the selected week's
+            installs. Pulled from the schedule (SQFT + color per job).
+          </p>
+          <button id="staging-export" class="btn-export" type="button">⬇ Export .xlsx</button>
+        </div>
+        <div id="staging-list">
+          <div class="loading">Loading staging…</div>
+        </div>
+      </section>
+
+      <!-- ───────────────────────── Inventory ───────────────────────── -->
+      <section id="screen-inventory" class="screen" hidden>
+        <div class="week-bar">
+          <button id="inv-prev" class="week-arrow" type="button" aria-label="Previous week">◀</button>
+          <div class="week-display"><span id="inv-week-range">Loading…</span></div>
+          <button id="inv-next" class="week-arrow" type="button" aria-label="Next week">▶</button>
+          <button id="inv-nextweek" class="week-today" type="button">Next week</button>
+        </div>
+        <p class="card-help">
+          On-hand counts per location vs what the selected week's staging list
+          needs. Anything short is flagged so you can order before staging day.
+        </p>
+        <div id="inventory-list">
+          <div class="loading">Loading inventory…</div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── Lead heat map (opened from the Meeting) ─────────────────── -->
+      <section id="screen-leadsmap" class="screen" hidden>
+        <div class="map-topbar">
+          <button id="map-back" class="week-arrow map-back" type="button">← Back</button>
+          <div id="map-class-chips" class="class-chips map-chips"></div>
+        </div>
+        <div class="class-chips map-controls">
+          <span id="map-mode-chips"></span>
+          <span id="map-window-chips"></span>
+        </div>
+        <div id="map-info" class="map-info">Tap a zip for details.</div>
+        <div id="map-holder" class="map-holder">
+          <div class="loading">Loading map…</div>
+        </div>
+        <div id="map-legend" class="map-legend"></div>
+        <div class="filter-bar">
+          <input id="map-search" type="search" placeholder="Filter zip or city…" aria-label="Filter zips" />
+          <button id="map-export" class="btn-export" type="button">⬇ Export table</button>
+        </div>
+        <div id="map-table" class="map-table"></div>
+      </section>
+
       <!-- ───────────────────────── Projects ───────────────────────── -->
       <section id="screen-projects" class="screen" hidden>
         <div class="filter-bar">
@@ -366,20 +270,21 @@
       </section>
     </main>
 
-    <!-- Save bar (report screen only) -->
-    <div id="save-bar" class="save-bar">
-      <button id="btn-save" class="btn btn-secondary" type="button">Save draft</button>
-      <button id="btn-submit" class="btn btn-primary" type="button">Submit report</button>
-    </div>
-
-    <!-- Bottom tabs -->
+    <!-- Bottom tabs: the weekly flow — Meeting → Schedule → Staging → Inventory -->
     <nav class="tabbar">
-      <!-- Schedule, Pay and Roster are hidden for now (code kept intact). -->
+      <button class="tab active" data-screen="meeting" type="button">
+        <span class="tab-icon">✅</span><span>Production Management</span>
+      </button>
+      <!-- Schedule, Staging, Inventory, Pay and Roster are hidden for now
+           (code kept intact — remove `hidden` to bring one back). -->
       <button class="tab" data-screen="schedule" type="button" hidden>
         <span class="tab-icon">📅</span><span>Schedule</span>
       </button>
-      <button class="tab active" data-screen="report" type="button">
-        <span class="tab-icon">📋</span><span>Production Management</span>
+      <button class="tab" data-screen="staging" type="button" hidden>
+        <span class="tab-icon">📦</span><span>Staging</span>
+      </button>
+      <button class="tab" data-screen="inventory" type="button" hidden>
+        <span class="tab-icon">🗃️</span><span>Inventory</span>
       </button>
       <button class="tab" data-screen="pay" type="button" hidden>
         <span class="tab-icon">💵</span><span>Pay</span>

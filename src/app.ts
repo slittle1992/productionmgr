@@ -21,7 +21,32 @@ import { pipelineRouter } from "./routes/pipeline.js";
 import { workOrdersRouter } from "./routes/workOrders.js";
 import { rosterRouter } from "./routes/roster.js";
 import { payRouter } from "./routes/pay.js";
-import { inventoryRouter } from "./routes/inventory.js";
+import { inventoryCountsRouter } from "./routes/inventoryCounts.js";
+import { meetingRouter } from "./routes/meeting.js";
+import { stagingRouter } from "./routes/staging.js";
+import { MeetingService } from "./services/meetingService.js";
+import {
+  JsonMeetingStore,
+  KvMeetingStore,
+  type MeetingStore,
+} from "./storage/meetingStore.js";
+import {
+  JsonInventoryStore,
+  KvInventoryStore,
+  type InventoryStore,
+} from "./storage/inventoryStore.js";
+import { snapshotRouter } from "./routes/snapshot.js";
+import { leadsRouter } from "./routes/leads.js";
+import {
+  JsonLeadsStore,
+  KvLeadsStore,
+  type LeadsStore,
+} from "./storage/leadsStore.js";
+import {
+  JsonSnapshotStore,
+  KvSnapshotStore,
+  type SnapshotStore,
+} from "./storage/snapshotStore.js";
 import { ProjectsService } from "./services/projectsService.js";
 import { ReportService } from "./services/reportService.js";
 import { ScheduleService } from "./services/scheduleService.js";
@@ -48,10 +73,10 @@ import {
   type RosterStore,
 } from "./storage/rosterStore.js";
 import {
-  JsonInventoryStore,
-  KvInventoryStore,
-  type InventoryStore,
-} from "./storage/inventoryStore.js";
+  JsonInventoryCountsStore,
+  KvInventoryCountsStore,
+  type InventoryCountsStore,
+} from "./storage/inventoryCountsStore.js";
 
 /**
  * Resolve the static `public/` directory. Works both when running from source
@@ -88,7 +113,11 @@ export interface BuildAppOptions {
   pipelineStore?: PipelineStore;
   workOrderStore?: WorkOrderStore;
   rosterStore?: RosterStore;
+  inventoryCountsStore?: InventoryCountsStore;
+  meetingStore?: MeetingStore;
   inventoryStore?: InventoryStore;
+  snapshotStore?: SnapshotStore;
+  leadsStore?: LeadsStore;
   now?: () => number;
 }
 
@@ -157,9 +186,23 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
   const rosterStore =
     options.rosterStore ??
     (kv ? new KvRosterStore(kv) : new JsonRosterStore(config.dataDir));
+  const inventoryCountsStore =
+    options.inventoryCountsStore ??
+    (kv
+      ? new KvInventoryCountsStore(kv)
+      : new JsonInventoryCountsStore(config.dataDir));
+  const meetingStore =
+    options.meetingStore ??
+    (kv ? new KvMeetingStore(kv) : new JsonMeetingStore(config.dataDir));
   const inventoryStore =
     options.inventoryStore ??
     (kv ? new KvInventoryStore(kv) : new JsonInventoryStore(config.dataDir));
+  const snapshotStore =
+    options.snapshotStore ??
+    (kv ? new KvSnapshotStore(kv) : new JsonSnapshotStore(config.dataDir));
+  const leadsStore =
+    options.leadsStore ??
+    (kv ? new KvLeadsStore(kv) : new JsonLeadsStore(config.dataDir));
 
   const provider = options.provider ?? resolveProvider(config, now, pipelineStore);
 
@@ -210,10 +253,33 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
 
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+  const meetingService = new MeetingService(
+    meetingStore,
+    workOrderStore,
+    provider,
+    config,
+    now,
+    leadsStore
+  );
+
   app.use("/api", pipelineRouter(pipelineStore, now));
+  app.use("/api", meetingRouter(meetingService));
+  app.use("/api", stagingRouter(scheduleService, inventoryStore, now));
+  app.use("/api", leadsRouter(leadsStore, now));
+  app.use(
+    "/api",
+    snapshotRouter(
+      meetingService,
+      scheduleService,
+      inventoryStore,
+      snapshotStore,
+      now,
+      leadsStore
+    )
+  );
   app.use("/api", workOrdersRouter(workOrderStore, now));
   app.use("/api", rosterRouter(rosterStore, now));
-  app.use("/api", inventoryRouter(inventoryStore, config.weekStartDay, now));
+  app.use("/api", inventoryCountsRouter(inventoryCountsStore, config.weekStartDay, now));
   app.use("/api", payRouter(scheduleService, rosterStore));
   app.use("/api", scheduleRouter(scheduleService));
   app.use("/api", reportsRouter(reportService));

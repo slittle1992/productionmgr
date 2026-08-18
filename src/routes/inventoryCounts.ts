@@ -10,17 +10,17 @@ import { PipelineFormatError } from "../domain/pipeline.js";
 import { getReportingWeek, getReportingWeekFromStart } from "../domain/week.js";
 import { DEFAULT_UNIT_COSTS } from "../data/materialPrices.js";
 import type {
-  InventoryStore,
+  InventoryCountsStore,
   StoredInventoryWeek,
-} from "../storage/inventoryStore.js";
+} from "../storage/inventoryCountsStore.js";
 import { asyncHandler } from "./asyncHandler.js";
 
 /**
  * Weekly inventory counts + the unit-cost catalog that turns week-over-week
  * usage into a material cost for the Production Management report.
  */
-export function inventoryRouter(
-  store: InventoryStore,
+export function inventoryCountsRouter(
+  store: InventoryCountsStore,
   weekStartDay: number,
   now: () => number = () => Date.now()
 ): Router {
@@ -87,7 +87,7 @@ export function inventoryRouter(
 
   // POST /api/inventory?week= — store this week's count (replaces any prior upload).
   router.post(
-    "/inventory",
+    "/inventory-counts",
     asyncHandler(async (req, res) => {
       const week = resolveWeek(req.query.week);
       const body = uploadBody.parse(req.body);
@@ -114,7 +114,7 @@ export function inventoryRouter(
 
   // GET /api/inventory?week= — count status + usage + cost for the week.
   router.get(
-    "/inventory",
+    "/inventory-counts",
     asyncHandler(async (req, res) => {
       const week = resolveWeek(req.query.week);
       res.json(await summarize(week.weekStart, week.weekEnd));
@@ -123,7 +123,7 @@ export function inventoryRouter(
 
   // DELETE /api/inventory?week= — remove a mistaken upload.
   router.delete(
-    "/inventory",
+    "/inventory-counts",
     asyncHandler(async (req, res) => {
       const week = resolveWeek(req.query.week);
       await store.deleteWeek(week.weekStart);
@@ -133,7 +133,7 @@ export function inventoryRouter(
 
   // GET /api/inventory/prices — the unit-cost catalog (item key → $/unit).
   router.get(
-    "/inventory/prices",
+    "/inventory-counts/prices",
     asyncHandler(async (_req, res) => {
       res.json({
         prices: { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) },
@@ -149,7 +149,7 @@ export function inventoryRouter(
 
   // POST /api/inventory/prices — merge unit-cost updates.
   router.post(
-    "/inventory/prices",
+    "/inventory-counts/prices",
     asyncHandler(async (req, res) => {
       const body = pricesBody.parse(req.body);
       const normalized = Object.fromEntries(

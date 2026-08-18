@@ -2,26 +2,9 @@
 // The server is the source of truth for all math; this file mirrors the
 // derived calculations only so the manager sees instant feedback while typing.
 
-const MONEY_FIELDS = [
-  "projectedJobSchedule",
-  "completedJobsRevenue",
-  "projectedLabor",
-  "actualLaborRaw",
-  "materialsGivenForWarranties",
-  "projectedMaterials",
-  "actualMaterials",
-  "totalSundriesCost",
-];
-const COUNT_FIELDS = ["warrantiesOpenedThisWeek", "leadsThisWeek"];
-const AUTO_FIELDS = ["projectedJobSchedule", "completedJobsRevenue", "projectedLabor"];
-
 const state = {
   laborMultiplier: 1.2,
-  autoSource: { projectedJobSchedule: 0, completedJobsRevenue: 0, projectedLabor: 0 },
-  priorQtd: { warranties: 0, leads: 0 },
-  weekStart: null,
-  // Class this PM is reporting for ("All" = company-wide rollup).
-  reportClass: localStorage.getItem("reportClass") || "All",
+  // Class list shared by the pay + roster screens (from /api/classes).
   classes: [],
 };
 
@@ -42,179 +25,13 @@ function toast(message, kind = "") {
   toast._t = setTimeout(() => (el.hidden = true), 3200);
 }
 
-function numVal(id) {
-  const raw = $(id).value;
-  if (raw === "" || raw === null) return 0;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-}
-
-// ─────────────────────────── Live calculations ───────────────────────────
-function recalc() {
-  const completed = numVal("completedJobsRevenue");
-  const actualLabor = numVal("actualLaborRaw") * state.laborMultiplier;
-  const sundries = numVal("totalSundriesCost");
-  const ratio = completed > 0 ? sundries / completed : 0;
-
-  $("out-actualLabor").textContent = fmtMoney(actualLabor);
-  $("out-installedRevenue").textContent = fmtMoney(completed);
-  $("out-sundriesRatio").textContent = (ratio * 100).toFixed(1) + "%";
-  $("out-totalWarrantiesQTD").textContent =
-    state.priorQtd.warranties + numVal("warrantiesOpenedThisWeek");
-  $("out-totalLeadsQTD").textContent =
-    state.priorQtd.leads + numVal("leadsThisWeek");
-
-  // Mark auto fields that the manager has overridden.
-  for (const f of AUTO_FIELDS) {
-    const field = document.querySelector(`.field[data-auto="${f}"]`);
-    if (!field) continue;
-    const changed = Math.abs(numVal(f) - (state.autoSource[f] ?? 0)) > 0.005;
-    field.classList.toggle("edited", changed);
-  }
-}
-
-// ─────────────────────────── Report load / save ───────────────────────────
-function fillForm(report) {
-  state.autoSource = report.autoSource;
-  state.weekStart = report.weekStart;
-  // Derive priorQtd from the difference the server already computed.
-  state.priorQtd = {
-    warranties: report.derived.totalWarrantiesQTD - report.manual.warrantiesOpenedThisWeek,
-    leads: report.derived.totalLeadsQTD - report.manual.leadsThisWeek,
-  };
-
-  // Auto fields show the effective (override-applied) value.
-  $("projectedJobSchedule").value = report.auto.projectedJobSchedule;
-  $("completedJobsRevenue").value = report.auto.completedJobsRevenue;
-  $("projectedLabor").value = report.auto.projectedLabor;
-
-  // Manual fields.
-  for (const f of [...MONEY_FIELDS, ...COUNT_FIELDS]) {
-    if (AUTO_FIELDS.includes(f)) continue;
-    if (report.manual[f] !== undefined) $(f).value = report.manual[f];
-  }
-
-  $("week-label").textContent = `Week of ${report.weekStart} – ${report.weekEnd} · ${report.quarter} · ${report.className}`;
-
-  const pill = $("report-status");
-  pill.hidden = false;
-  pill.className = "status-pill " + report.status;
-  pill.textContent =
-    report.status === "submitted"
-      ? `Submitted${report.submittedAt ? " · " + report.submittedAt.slice(0, 10) : ""}`
-      : "Draft — not yet submitted";
-
-  recalc();
-}
-
-function collectPayload(submit) {
-  const manual = {
-    actualLaborRaw: numVal("actualLaborRaw"),
-    warrantiesOpenedThisWeek: Math.round(numVal("warrantiesOpenedThisWeek")),
-    leadsThisWeek: Math.round(numVal("leadsThisWeek")),
-    materialsGivenForWarranties: numVal("materialsGivenForWarranties"),
-    projectedMaterials: numVal("projectedMaterials"),
-    actualMaterials: numVal("actualMaterials"),
-    totalSundriesCost: numVal("totalSundriesCost"),
-  };
-  // Only send overrides that actually differ from the auto-pulled source.
-  const overrides = {};
-  for (const f of AUTO_FIELDS) {
-    if (Math.abs(numVal(f) - (state.autoSource[f] ?? 0)) > 0.005) {
-      overrides[f] = numVal(f);
-    }
-  }
-  return { manual, overrides, submit };
-}
-
-function renderReportChips() {
-  const bar = $("report-class-chips");
-  const chips = ["All", ...state.classes];
-  if (!chips.includes(state.reportClass)) state.reportClass = "All";
-  bar.innerHTML = chips
-    .map(
-      (c) => `
-      <button type="button" class="chip-btn ${state.reportClass === c ? "active" : ""}" data-class="${escapeHtml(c)}">
-        ${escapeHtml(c === "All" ? "All (company)" : c)}
-      </button>`
-    )
-    .join("");
-  bar.querySelectorAll(".chip-btn").forEach((b) =>
-    b.addEventListener("click", () => {
-      state.reportClass = b.dataset.class;
-      localStorage.setItem("reportClass", state.reportClass);
-      renderReportChips();
-      loadReport();
-    })
-  );
-}
-
+/** Load the class list used by the pay + roster screens. */
 async function loadReportClasses() {
   try {
     const { classes } = await (await fetch("/api/classes")).json();
     state.classes = classes || [];
   } catch {
     state.classes = [];
-  }
-  renderReportChips();
-}
-
-async function loadReportHistory() {
-  const box = $("report-history");
-  try {
-    const res = await fetch("/api/reports");
-    const list = await res.json();
-    if (!Array.isArray(list) || !list.length) {
-      box.innerHTML = `<div class="empty small">No reports saved yet.</div>`;
-      return;
-    }
-    box.innerHTML = list
-      .slice(0, 20)
-      .map(
-        (r) => `
-        <div class="history-row">
-          <span class="history-week">Week of ${escapeHtml(r.weekStart)}</span>
-          <span class="history-class">${escapeHtml(r.className || "All")}</span>
-          <span class="status-pill ${r.status}">${r.status === "submitted" ? "Submitted" : "Draft"}</span>
-        </div>`
-      )
-      .join("");
-  } catch {
-    box.innerHTML = `<div class="empty small">Couldn't load history.</div>`;
-  }
-}
-
-async function loadReport() {
-  try {
-    const res = await fetch(`/api/report?class=${encodeURIComponent(state.reportClass)}`);
-    if (!res.ok) throw await res.json().catch(() => ({}));
-    fillForm(await res.json());
-  } catch (err) {
-    toast(err.message || "Couldn't load the report.", "error");
-  }
-  loadReportHistory();
-}
-
-async function saveReport(submit) {
-  const btn = submit ? $("btn-submit") : $("btn-save");
-  btn.disabled = true;
-  try {
-    const res = await fetch(`/api/report?class=${encodeURIComponent(state.reportClass)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(collectPayload(submit)),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      const detail = data.issues?.[0]?.message || data.message;
-      throw new Error(detail || "Save failed.");
-    }
-    fillForm(data);
-    toast(submit ? "Report submitted ✓" : "Draft saved ✓", "success");
-  } catch (err) {
-    toast(err.message || "Save failed.", "error");
-  } finally {
-    btn.disabled = false;
   }
 }
 
@@ -1666,55 +1483,2133 @@ function exportPay() {
   toast("Pay sheet exported ✓", "success");
 }
 
-// ──────────────────── Inventory & material cost ────────────────────
-let invData = null;
+// ─────────────────────────── Friday Production Meeting ───────────────────────────
+// Weekly checklist: past-due balances, work orders/warranties, pipeline health,
+// labor rates, and the Reviews/Lytx/Ramp dashboard checks. Anyone (owner, PM,
+// admin) can upload the exports and fill it out; sign-offs record who did.
 
-async function loadInventory() {
+const MEETING_SECTIONS = [
+  { key: "pastdue", n: 1, title: "Past due balances" },
+  { key: "workorders", n: 2, title: "Work orders & warranties" },
+  { key: "pipeline", n: 3, title: "Production pipeline" },
+  { key: "labor", n: 4, title: "Labor rates" },
+  { key: "reviews", n: 5, title: "Reviews dashboard" },
+  { key: "lytx", n: 6, title: "Lytx incidents" },
+  { key: "ramp", n: 7, title: "Ramp spend" },
+  { key: "leads", n: 8, title: "Leads by area" },
+];
+
+const meeting = {
+  week: null,
+  view: null,
+  // Which <details> stay open across re-renders (sections, classes, items).
+  open: new Set(["sec:pastdue"]),
+  // Pending payroll-workbook uploads awaiting a "use this sheet" pick,
+  // keyed by class — each market uploads its own payroll workbook.
+  payroll: {},
+  // Leads analysis: window in days + cached analysis keyed by upload+window.
+  leadsDays: 28,
+  leadsView: null,
+  leadsKey: null,
+};
+
+const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
+const fmtDay = (iso) =>
+  new Date(iso + "T12:00:00Z").toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "numeric",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+const fmtMsDate = (ms) =>
+  ms ? new Date(ms).toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" }) : "—";
+
+function meetingUser() {
+  return $("meeting-user").value.trim();
+}
+
+async function meetingApi(path, method, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || "Request failed.");
+  return data;
+}
+
+async function loadMeeting(week) {
   try {
-    const res = await fetch("/api/inventory");
-    if (!res.ok) throw new Error();
-    invData = await res.json();
-  } catch {
-    invData = null;
+    const target = week || meeting.week;
+    const data = await meetingApi(
+      `/api/meeting${target ? `?week=${target}` : ""}`,
+      "GET"
+    );
+    meeting.view = data;
+    meeting.week = data.week.weekStart;
+    renderMeeting();
+  } catch (err) {
+    $("meeting-sections").innerHTML = `<div class="empty">${escapeHtml(
+      err.message || "Couldn't load the meeting."
+    )}</div>`;
   }
-  renderInventory();
+}
+
+function renderMeeting() {
+  const v = meeting.view;
+  if (!v) return;
+  $("meeting-week-range").textContent = `${fmtDay(v.week.weekStart)} – ${fmtDay(v.week.weekEnd)}`;
+  $("meeting-progress-label").textContent = `${v.doneCount} of ${v.sectionCount} done`;
+  $("meeting-progress-fill").style.width =
+    Math.round((v.doneCount / v.sectionCount) * 100) + "%";
+
+  const progress = Object.fromEntries(v.sections.map((s) => [s.key, s]));
+  const bodies = {
+    pastdue: renderPastDueSection(v),
+    workorders: renderWorkOrdersSection(v),
+    pipeline: renderPipelineSection(v),
+    labor: renderLaborSection(v),
+    reviews: renderCheckSection(v, "reviews"),
+    lytx: renderCheckSection(v, "lytx"),
+    ramp: renderCheckSection(v, "ramp"),
+    leads: renderLeadsSection(v),
+  };
+  const subs = {
+    pastdue: pastDueSubtitle(v.pastDue),
+    workorders: `${v.workOrders.totalOpen} open${
+      v.workOrders.attention?.length ? ` · ${v.workOrders.attention.length} need scheduling` : ""
+    } · ${v.workOrders.totalCompleted} done`,
+    pipeline: v.pipeline.available
+      ? `${v.pipeline.unscheduled.length} missing dates · ${v.pipeline.noCrew.length} no crew`
+      : "no pipeline loaded",
+    labor: v.labor.rows.length
+      ? v.labor.rows
+          .filter((r) => r.rate !== null)
+          .map((r) => `${r.className.slice(0, 3)} ${r.rate.toFixed(1)}×`)
+          .join(" · ") || "enter payroll"
+      : "upload completed jobs",
+    reviews: v.checks.reviews.status === "done" ? "reviewed" : "needs review",
+    lytx: v.checks.lytx.status === "done" ? "reviewed" : "needs review",
+    ramp: v.checks.ramp.status === "done" ? "reviewed" : "needs review",
+    leads: v.leads
+      ? `${v.leads.count.toLocaleString()} leads loaded`
+      : "upload the clients export",
+  };
+
+  $("meeting-sections").innerHTML = MEETING_SECTIONS.map((s) => {
+    const p = progress[s.key] ?? { done: false, manual: null };
+    const openKey = `sec:${s.key}`;
+    return `
+    <details class="card mtg-section${p.done ? " done" : ""}" data-open="${openKey}" ${
+      meeting.open.has(openKey) ? "open" : ""
+    }>
+      <summary>
+        <span class="mtg-num${p.done ? " ok" : ""}">${p.done ? "✓" : s.n}</span>
+        <span class="mtg-head">
+          <span class="mtg-title">${escapeHtml(s.title)}</span>
+          <span class="mtg-sub">${escapeHtml(subs[s.key] || "")}</span>
+        </span>
+        <span class="mtg-chev">▾</span>
+      </summary>
+      <div class="mtg-body">
+        ${bodies[s.key]}
+        ${renderSignOff(s.key, p)}
+      </div>
+    </details>`;
+  }).join("");
+}
+
+function renderSignOff(key, p) {
+  const who = p.manual?.by ? ` by ${escapeHtml(p.manual.by)}` : "";
+  const when = p.manual?.at ? ` · ${fmtDate(p.manual.at)}` : "";
+  return `
+  <label class="mtg-signoff${p.manual?.done ? " signed" : ""}">
+    <input type="checkbox" data-sec="${key}" ${p.manual?.done ? "checked" : ""} />
+    <span>${
+      p.manual?.done
+        ? `Section signed off${who}${when}`
+        : p.autoDone
+        ? "Looks complete — tap to sign off"
+        : "Mark this section done"
+    }</span>
+  </label>`;
+}
+
+// ── §1 Past due ──
+function pastDueSubtitle(pd) {
+  if (!pd.meta) return "upload the export";
+  const bits = [`${pd.openCount} open`];
+  if (pd.carryoverCount) bits.push(`${pd.carryoverCount} carried over`);
+  if (pd.needsInfoCount) bits.push(`${pd.needsInfoCount} need reason/owner`);
+  return bits.join(" · ");
+}
+
+function renderPastDueSection(v) {
+  const pd = v.pastDue;
+  let html = `
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      pd.meta
+        ? `<strong>${escapeHtml(pd.meta.sourceLabel || pd.meta.filename || "Unpaid invoices")}</strong> · uploaded ${fmtDate(pd.meta.uploadedAt)}`
+        : "Upload the Builder Prime <strong>Unpaid Invoices</strong> export to start."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload past due</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="pastdue" hidden />
+      </label>
+    </div>
+  </div>
+  <p class="card-help">Every open balance needs a <b>reason</b> and an <b>owner</b>.
+  Carried-over items need this week's update. Set an install/action date to put
+  it on the owner's Google Calendar.</p>`;
+
+  if (pd.likelyResolved.length) {
+    html += `<div class="mtg-resolved-hint">
+      <b>${pd.likelyResolved.length} item${pd.likelyResolved.length === 1 ? "" : "s"} no longer in the latest export</b> — probably paid. Confirm:
+      ${pd.likelyResolved
+        .map(
+          (f) => `<div class="mtg-resolve-row">
+            <span><b>${escapeHtml(f.className)}</b> · ${escapeHtml(f.client)} · ${fmtMoney0(f.balance)}</span>
+            <button type="button" class="btn-export" data-act="fu-resolve" data-fu="${escapeHtml(f.invoiceNumber)}">Mark resolved ✓</button>
+          </div>`
+        )
+        .join("")}
+    </div>`;
+  }
+
+  if (!pd.classes.length) {
+    html += `<div class="empty small">No past-due follow-ups yet.</div>`;
+    return html;
+  }
+
+  for (const group of pd.classes) {
+    const openKey = `pdc:${group.className}`;
+    const openItems = group.items.filter((i) => i.status === "open");
+    html += `
+    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+      <summary>
+        <span class="mtg-class-name">${escapeHtml(group.className)}</span>
+        <span class="mtg-class-info">${openItems.length} open · ${fmtMoney0(group.totalBalance)}</span>
+      </summary>
+      ${group.items.map((f) => renderFollowUp(f, v.week.weekStart)).join("")}
+    </details>`;
+  }
+  return html;
+}
+
+function renderFollowUp(f, weekStart) {
+  const openKey = `fu:${f.invoiceNumber}`;
+  const badges = [];
+  if (f.status === "resolved") badges.push(`<span class="mtg-badge ok">resolved</span>`);
+  else {
+    if (f.firstSeenWeek === weekStart) badges.push(`<span class="mtg-badge new">new</span>`);
+    if (f.carriedOver)
+      badges.push(
+        `<span class="mtg-badge ${f.updatedThisWeek ? "ok" : "warn"}">carryover${
+          f.updatedThisWeek ? " ✓" : " — needs update"
+        }</span>`
+      );
+    if (!f.reason || !f.owner) badges.push(`<span class="mtg-badge warn">needs reason/owner</span>`);
+  }
+  const inv = escapeHtml(f.invoiceNumber);
+  const updates = f.updates
+    .slice()
+    .reverse()
+    .slice(0, 6)
+    .map(
+      (u) =>
+        `<div class="mtg-update"><span class="mtg-update-week">${escapeHtml(u.week)}</span> ${escapeHtml(u.note)}${
+          u.by ? ` <i>— ${escapeHtml(u.by)}</i>` : ""
+        }</div>`
+    )
+    .join("");
+
+  return `
+  <details class="fu-item${f.status === "resolved" ? " resolved" : ""}" data-open="${openKey}" ${
+    meeting.open.has(openKey) ? "open" : ""
+  }>
+    <summary>
+      <span class="fu-client">${escapeHtml(f.client)}</span>
+      <span class="fu-badges">${badges.join("")}</span>
+      <span class="fu-balance">${fmtMoney0(f.balance)}</span>
+    </summary>
+    <div class="fu-body">
+      <p class="fu-meta">
+        Inv #${inv}${f.projectName ? " · " + escapeHtml(f.projectName) : ""}
+        ${f.projectStatus ? `<br/>Status: ${escapeHtml(f.projectStatus)}` : ""}
+        · Due ${fmtMsDate(f.dueDate)}${f.age !== null ? ` · ${f.age} days past` : ""}
+      </p>
+      <label class="dlg-field">Why is it past due?
+        <input type="text" maxlength="500" value="${escapeHtml(f.reason)}" placeholder="e.g. waiting on financing, install not scheduled…" data-fu="${inv}" data-field="reason" />
+      </label>
+      <div class="fu-grid">
+        <label class="dlg-field">Owner
+          <input type="text" maxlength="120" list="roster-list-dl" value="${escapeHtml(f.owner)}" placeholder="Who owns this?" data-fu="${inv}" data-field="owner" />
+        </label>
+        <label class="dlg-field">Owner email (for calendar)
+          <input type="email" maxlength="200" value="${escapeHtml(f.ownerEmail)}" placeholder="name@company.com" data-fu="${inv}" data-field="ownerEmail" />
+        </label>
+      </div>
+      <div class="fu-grid">
+        <label class="dlg-field">Action / install date
+          <input type="date" value="${escapeHtml(f.actionDate || "")}" data-fu="${inv}" data-field="actionDate" />
+        </label>
+        <div class="fu-cal">${
+          f.actionDate
+            ? `<a class="btn-export" target="_blank" rel="noopener" href="${gcalUrl(f)}">📅 Add to owner's calendar</a>`
+            : `<span class="hint">Set a date to create a calendar event.</span>`
+        }</div>
+      </div>
+      <div class="fu-note-row">
+        <input type="text" maxlength="1000" placeholder="This week's update…" data-note-for="${inv}" />
+        <button type="button" class="btn-export" data-act="fu-note" data-fu="${inv}">Add update</button>
+      </div>
+      ${updates ? `<div class="mtg-updates">${updates}</div>` : ""}
+      <div class="fu-actions">
+        ${
+          f.status === "open"
+            ? `<button type="button" class="btn btn-primary" data-act="fu-resolve" data-fu="${inv}">Resolved — collected/closed ✓</button>`
+            : `<button type="button" class="btn btn-secondary" data-act="fu-reopen" data-fu="${inv}">Reopen</button>`
+        }
+      </div>
+    </div>
+  </details>`;
+}
+
+/** Google Calendar event link for a follow-up's action date (all-day). */
+function gcalUrl(f) {
+  const start = f.actionDate.replace(/-/g, "");
+  const endDate = new Date(f.actionDate + "T00:00:00Z");
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  const end = endDate.toISOString().slice(0, 10).replace(/-/g, "");
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: `Past due: ${f.client} — ${fmtMoney0(f.balance)} (Inv #${f.invoiceNumber})`,
+    dates: `${start}/${end}`,
+    details:
+      `${f.projectName || ""}\nReason past due: ${f.reason || "—"}\nOwner: ${f.owner || "—"}` +
+      `\nClass: ${f.className}\n\nFrom the Friday Production Meeting checklist.`,
+  });
+  if (f.ownerEmail) params.set("add", f.ownerEmail);
+  return "https://calendar.google.com/calendar/render?" + params.toString();
+}
+
+// ── §2 Work orders ──
+function renderWorkOrdersSection(v) {
+  const wo = v.workOrders;
+  let html = `
+  <p class="card-help">Work orders come from the <b>Export data</b> upload on the
+  Schedule tab${wo.uploadedAt ? ` (last upload ${fmtDate(wo.uploadedAt)})` : ""}.
+  Tag each open warranty with the <b>lead</b> whose crew caused it and <b>why</b>.</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      wo.uploadedAt
+        ? `<strong>${wo.totalOpen + wo.totalCompleted} work orders</strong> loaded`
+        : "No work orders loaded yet."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload wo-btn"><span>Upload WOs</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="workorders" hidden />
+      </label>
+    </div>
+  </div>`;
+
+  if (wo.classes.length) {
+    html += `<table class="mtg-table"><thead><tr><th>Location</th><th>Open</th><th>Open warranty</th><th>⚠ Attention</th><th>Completed</th></tr></thead><tbody>`;
+    for (const c of wo.classes) {
+      html += `<tr><td>${escapeHtml(c.className)}</td><td>${c.open}</td><td>${
+        c.openWarranties
+      }</td><td>${
+        c.needsAttention ? `<b class="wo-attn">${c.needsAttention}</b>` : "0"
+      }</td><td>${c.completed}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  // Pinned to the top: open WOs that were never scheduled, or whose date
+  // already passed without being closed out.
+  if (wo.attention.length) {
+    html += `<h3 class="mtg-h3 wo-attn">⚠ Needs scheduling — unscheduled or past date, still open (${wo.attention.length})</h3>`;
+    const byClass = new Map();
+    for (const a of wo.attention) {
+      if (!byClass.has(a.className)) byClass.set(a.className, []);
+      byClass.get(a.className).push(a);
+    }
+    html += [...byClass.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([cls, rows]) => {
+        const openKey = `woattn:${cls}`;
+        const unsched = rows.filter((a) => a.reason === "unscheduled").length;
+        return `
+        <details class="mtg-class attn" data-open="${openKey}" ${
+          meeting.open.has(openKey) ? "open" : ""
+        }>
+          <summary>
+            <span class="mtg-class-name">${escapeHtml(cls)}</span>
+            <span class="mtg-class-info warn">${rows.length} WO${
+              rows.length === 1 ? "" : "s"
+            } · ${unsched} unscheduled · ${rows.length - unsched} past date</span>
+          </summary>
+          ${rows
+            .map(
+              (a) => `<div class="mtg-line attn-line">
+                <span class="mtg-badge warn">${
+                  a.reason === "unscheduled" ? "unscheduled" : "past " + fmtMsDate(a.startDate)
+                }</span>
+                #${escapeHtml(a.woNumber)} · ${escapeHtml(a.client)}${
+                  a.city ? " · " + escapeHtml(a.city) : ""
+                }
+                <span class="mtg-line-desc">${escapeHtml(a.type)} · ${escapeHtml(
+                  a.status || "OPEN"
+                )}</span>
+              </div>`
+            )
+            .join("")}
+        </details>`;
+      })
+      .join("");
+  }
+
+  if (wo.byLead.length) {
+    html += `<h3 class="mtg-h3">Warranties by lead</h3>`;
+    for (const l of wo.byLead) {
+      html += `<div class="mtg-lead-row"><b>${escapeHtml(l.lead)}</b><span class="mtg-lead-count">${
+        l.count
+      }</span><span class="mtg-lead-causes">${escapeHtml(l.causes.join(" · "))}</span></div>`;
+    }
+  }
+  if (wo.untaggedWarranties > 0) {
+    html += `<p class="hint">${wo.untaggedWarranties} warranty WO${
+      wo.untaggedWarranties === 1 ? "" : "s"
+    } not yet tagged with a lead.</p>`;
+  }
+
+  const open = wo.warranties.filter((w) => w.open);
+  const closed = wo.warranties.filter((w) => !w.open);
+  if (open.length) {
+    html += `<h3 class="mtg-h3">Open warranty / callback work orders</h3>`;
+    html += renderWarrantyGroups("woopen", open, Infinity);
+  } else if (wo.uploadedAt) {
+    html += `<div class="empty small">No open warranty work orders. 🎉</div>`;
+  }
+  if (closed.length) {
+    html += `<h3 class="mtg-h3">Recently completed warranties</h3>`;
+    html += renderWarrantyGroups("wodone", closed, 15);
+  }
+  return html;
+}
+
+/** Warranty WOs grouped by class/location, mirroring the past-due groups. */
+function renderWarrantyGroups(prefix, warranties, maxPerClass) {
+  const byClass = new Map();
+  for (const w of warranties) {
+    const cls = w.className || "Unassigned";
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(w);
+  }
+  return [...byClass.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([cls, rows]) => {
+      const openKey = `${prefix}:${cls}`;
+      const shown = rows.slice(0, maxPerClass);
+      const untagged = rows.filter((w) => !w.lead || !w.cause).length;
+      return `
+      <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+        <summary>
+          <span class="mtg-class-name">${escapeHtml(cls)}</span>
+          <span class="mtg-class-info${untagged && prefix === "woopen" ? " warn" : ""}">${rows.length} WO${
+            rows.length === 1 ? "" : "s"
+          }${untagged && prefix === "woopen" ? ` · ${untagged} untagged` : ""}</span>
+        </summary>
+        ${shown.map(renderWarrantyRow).join("")}
+        ${rows.length > shown.length ? `<div class="hint">…and ${rows.length - shown.length} more.</div>` : ""}
+      </details>`;
+    })
+    .join("");
+}
+
+function renderWarrantyRow(w) {
+  const id = escapeHtml(w.id);
+  return `
+  <div class="mtg-wo${w.open ? "" : " closed"}">
+    <div class="mtg-wo-top">
+      <span class="mtg-wo-who">#${escapeHtml(w.woNumber)} · ${escapeHtml(w.client)}${
+        w.city ? " · " + escapeHtml(w.city) : ""
+      }</span>
+      <span class="mtg-wo-meta">${escapeHtml(w.type)} · ${escapeHtml(
+        w.status || "OPEN"
+      )} · ${fmtMsDate(w.createdDate)}</span>
+    </div>
+    <div class="mtg-wo-tag">
+      <input type="text" maxlength="120" list="roster-list-dl" placeholder="Lead responsible" value="${escapeHtml(
+        w.lead
+      )}" data-wo="${id}" data-field="lead" />
+      <input type="text" maxlength="500" placeholder="Why did this happen?" value="${escapeHtml(
+        w.cause
+      )}" data-wo="${id}" data-field="cause" />
+    </div>
+  </div>`;
+}
+
+// ── §3 Pipeline ──
+function renderPipelineSection(v) {
+  const p = v.pipeline;
+  const uploadBar = `
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      p.available
+        ? `<strong>${p.totalJobs} jobs</strong> in the pipeline`
+        : "Upload the Builder Prime <strong>Production Pipeline Report</strong> to run these checks."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload pipeline</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="pipeline" hidden />
+      </label>
+    </div>
+  </div>`;
+  if (!p.available) return uploadBar;
+  let html = `${uploadBar}
+  <p class="card-help">Looking <b>ahead</b>: are the next two weeks full and evenly
+  scheduled? Plus jobs with <b>no start date</b> and scheduled jobs with
+  <b>no crew assigned</b>.</p>`;
+
+  for (const wk of p.weeks) {
+    html += `<h3 class="mtg-h3">Week of ${fmtDay(wk.weekStart)} – ${fmtDay(wk.weekEnd)} · ${
+      wk.jobCount
+    } jobs</h3>`;
+    if (!wk.classes.length) {
+      html += `<div class="empty small">Nothing scheduled to start this week yet.</div>`;
+      continue;
+    }
+    for (const cls of wk.classes) {
+      html += `<div class="mtg-load">
+        <div class="mtg-load-head"><b>${escapeHtml(cls.className)}</b>
+          <span>${cls.jobsThisWeek} jobs · ${fmtMoney0(cls.totalThisWeek)}</span></div>
+        <div class="mtg-days">
+          ${cls.days
+            .map(
+              (d) => `<span class="mtg-day load-${d.load}" title="${escapeHtml(d.date)}">
+                <i>${fmtDay(d.date).split(" ")[0]}</i>${d.jobs ? `${d.jobs} · ${fmtMoney0(d.total)}` : "—"}
+              </span>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+    }
+  }
+
+  html += renderPipelineList(
+    "nocrew",
+    `No labor assigned (${p.noCrew.length})`,
+    p.noCrew,
+    (j) =>
+      `${j.startsSoon ? "🔴 " : ""}#${escapeHtml(j.jobNumber)} · ${fmtMoney0(
+        j.soldAmount
+      )} · starts ${fmtMsDate(j.startDate)}`
+  );
+  html += renderPipelineList(
+    "nostart",
+    `Missing start / finish date (${p.unscheduled.length})`,
+    p.unscheduled,
+    (j) => {
+      const missing =
+        j.missingStart && j.missingFinish
+          ? "no start + finish"
+          : j.missingStart
+          ? "no start"
+          : "no finish";
+      return `<span class="mtg-badge warn">${missing}</span> #${escapeHtml(
+        j.jobNumber
+      )} · ${fmtMoney0(j.soldAmount)}${
+        j.startDate ? ` · starts ${fmtMsDate(j.startDate)}` : ""
+      }${j.salesPerson ? " · " + escapeHtml(j.salesPerson) : ""}`;
+    }
+  );
+  return html;
+}
+
+/** A pipeline flag list, grouped by location like every other meeting list. */
+function renderPipelineList(key, title, jobs, line) {
+  if (!jobs.length)
+    return `<div class="empty small">${escapeHtml(title)}: none 🎉</div>`;
+  let html = `<h3 class="mtg-h3">${escapeHtml(title)}</h3>`;
+  const byClass = new Map();
+  for (const j of jobs) {
+    const cls = j.className || "Unassigned";
+    if (!byClass.has(cls)) byClass.set(cls, []);
+    byClass.get(cls).push(j);
+  }
+  const MAX = 40;
+  html += [...byClass.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([cls, rows]) => {
+      const openKey = `pl:${key}:${cls}`;
+      const urgent = rows.filter((j) => j.startsSoon).length;
+      const total = rows.reduce((s, j) => s + (j.soldAmount || 0), 0);
+      const shown = rows.slice(0, MAX);
+      return `
+      <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+        <summary>
+          <span class="mtg-class-name">${escapeHtml(cls)}</span>
+          <span class="mtg-class-info${urgent ? " warn" : ""}">${rows.length} job${
+            rows.length === 1 ? "" : "s"
+          } · ${fmtMoney0(total)}${urgent ? ` · ${urgent} next week` : ""}</span>
+        </summary>
+        ${shown
+          .map(
+            (j) =>
+              `<div class="mtg-line">${line(j)}${
+                j.description
+                  ? `<span class="mtg-line-desc">${escapeHtml(j.description)}</span>`
+                  : ""
+              }</div>`
+          )
+          .join("")}
+        ${rows.length > shown.length ? `<div class="hint">…and ${rows.length - shown.length} more.</div>` : ""}
+      </details>`;
+    })
+    .join("");
+  return html;
+}
+
+// ── §4 Labor rates ──
+function renderLaborSection(v) {
+  const lab = v.labor;
+  let html = `
+  <p class="card-help">Labor rate for <b>last week (${fmtDay(lab.weekStart)} – ${fmtDay(
+    lab.weekEnd
+  )})</b> = <b>completed revenue ÷ (production payroll × ${lab.multiplier})</b>.
+  Upload the <b>Completed Projects</b> report, then enter (or pull from the
+  payroll workbook) each location's production payroll for that pay period.</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      lab.uploadedAt
+        ? `<strong>${escapeHtml(lab.sourceLabel || "Completed projects")}</strong> · uploaded ${fmtDate(lab.uploadedAt)}`
+        : "No completed-projects report uploaded."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload completed</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="completed" hidden />
+      </label>
+    </div>
+  </div>`;
+
+  if (!lab.rows.length) {
+    html += `<div class="empty small">Upload the completed-projects report to see revenue
+      per location, then upload each market's payroll workbook on its row.</div>`;
+    return html;
+  }
+
+  html += `<div class="mtg-labor">`;
+  for (const r of lab.rows) {
+    const cls = escapeHtml(r.className);
+    const rateHtml =
+      r.rate === null
+        ? `<span class="hint">enter payroll</span>`
+        : `<b class="mtg-rate ${r.rate >= 4 ? "good" : r.rate >= 2.5 ? "mid" : "bad"}">${r.rate.toFixed(2)}×</b>
+           <span class="mtg-rate-pct">labor ${(100 / r.rate).toFixed(0)}% of revenue</span>`;
+    const pending = meeting.payroll[r.className];
+    html += `
+    <div class="mtg-labor-row">
+      <div class="mtg-labor-head"><b>${cls}</b>${rateHtml}
+        <label class="btn-upload wo-btn mtg-payroll-btn"><span>⬆ Payroll</span>
+          <input type="file" accept=".xlsx,.xlsm,.xls" data-upload="payroll" data-class="${cls}" hidden />
+        </label>
+      </div>
+      ${
+        pending
+          ? `<div class="mtg-payroll-pick">
+              <b>${cls} payroll read.</b> Pick the pay-period sheet:
+              ${pending.sheets
+                .slice(0, 8)
+                .map(
+                  (s, i) => `<div class="mtg-resolve-row">
+                  <span><b>${escapeHtml(s.sheetName)}</b>${
+                    s.periodStart
+                      ? ` · ${escapeHtml(s.periodStart)} → ${escapeHtml(s.periodEnd || "?")}`
+                      : ""
+                  } · ${fmtMoney0(s.productionTotal)} production (${s.employeeCount} ppl)</span>
+                  <button type="button" class="btn-export" data-act="payroll-use" data-class="${cls}" data-idx="${i}">Use</button>
+                </div>`
+                )
+                .join("")}
+              <button type="button" class="btn-clear" data-act="payroll-cancel" data-class="${cls}">Cancel</button>
+            </div>`
+          : ""
+      }
+      <div class="fu-grid">
+        <label class="dlg-field">Completed revenue (${r.completedJobs} jobs)
+          <input type="number" min="0" step="0.01" inputmode="decimal"
+            placeholder="${r.completedRevenue}" value="${r.revenueOverride ?? ""}"
+            data-labor="${cls}" data-field="revenueOverride" />
+        </label>
+        <label class="dlg-field">Production payroll${r.sheetName ? ` <i>(${escapeHtml(r.sheetName)})</i>` : ""}
+          <input type="number" min="0" step="0.01" inputmode="decimal"
+            placeholder="from payroll sheet" value="${r.productionPayroll ?? ""}"
+            data-labor="${cls}" data-field="productionPayroll" />
+        </label>
+      </div>
+    </div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// ── §5–7 Dashboard checks ──
+const CHECK_COPY = {
+  reviews: {
+    help: "Log in to the review dashboard and check this week's new reviews.",
+    link: "Open review dashboard",
+  },
+  lytx: {
+    help: "Log in to Lytx and review this week's driving incidents.",
+    link: "Open Lytx",
+  },
+  ramp: {
+    help: "Log in to Ramp and review this week's spend incidents / flagged transactions.",
+    link: "Open Ramp",
+  },
+};
+
+function renderCheckSection(v, key) {
+  const check = v.checks[key];
+  const url = v.links[key];
+  const copy = CHECK_COPY[key];
+  return `
+  <p class="card-help">${escapeHtml(copy.help)}</p>
+  ${
+    url
+      ? `<a class="btn-export mtg-link" href="${escapeHtml(url)}" target="_blank" rel="noopener">🔗 ${escapeHtml(copy.link)}</a>`
+      : `<p class="hint">Set the dashboard URL in the environment (see README) to get a one-tap link.</p>`
+  }
+  <label class="dlg-field">What did you find? (incidents, counts, actions)
+    <textarea rows="3" maxlength="2000" data-check-notes="${key}" placeholder="e.g. 2 hard-braking events — coached both drivers.">${escapeHtml(
+      check.notes
+    )}</textarea>
+  </label>
+  <div class="fu-actions">
+    ${
+      check.status === "done"
+        ? `<button type="button" class="btn btn-secondary" data-act="check-toggle" data-check="${key}">Reviewed ✓ ${
+            check.by ? "by " + escapeHtml(check.by) : ""
+          } — undo</button>`
+        : `<button type="button" class="btn btn-primary" data-act="check-toggle" data-check="${key}">Mark reviewed ✓</button>`
+    }
+  </div>`;
+}
+
+// ── §8 Leads by area ──
+const LEAD_WINDOWS = [
+  { days: 7, label: "Last week" },
+  { days: 28, label: "Last 4 weeks" },
+  { days: 91, label: "Last quarter" },
+];
+
+function renderLeadsSection(v) {
+  let html = `
+  <p class="card-help">Where leads come from, per location — clustered by ZIP
+  prefix (761 = Fort Worth, 752 = Dallas…). <b>Share shift</b> compares this
+  window against the equal window before it, so you can see leads moving
+  toward or away from an area. Zips with volume but <b>zero sales ever</b> are
+  flagged.</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      v.leads
+        ? `<strong>${escapeHtml(v.leads.sourceLabel || v.leads.filename || "Clients list")}</strong> · ${v.leads.count.toLocaleString()} leads · uploaded ${fmtDate(v.leads.uploadedAt)}`
+        : "Upload the Builder Prime <strong>Clients List</strong> export."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload leads</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="leads" hidden />
+      </label>
+    </div>
+  </div>`;
+  if (!v.leads) return html;
+
+  html += `<div class="class-chips leads-windows">${LEAD_WINDOWS.map(
+    (w) => `<button type="button" class="chip-btn ${
+      meeting.leadsDays === w.days ? "active" : ""
+    }" data-act="leads-window" data-days="${w.days}">${w.label}</button>`
+  ).join("")}<button type="button" class="chip-btn map-open-btn" data-act="open-map">🗺 Heat map + all zips</button></div>`;
+
+  const a = meeting.leadsView;
+  if (!a || meeting.leadsKey !== `${v.leads.uploadedAt}|${meeting.leadsDays}`) {
+    fetchLeadsAnalysis();
+    return html + `<div class="loading">Crunching ${v.leads.count.toLocaleString()} leads…</div>`;
+  }
+
+  html += `<p class="hint">Window: ${escapeHtml(a.from)} → ${escapeHtml(a.to)} vs the ${a.windowDays} days before.</p>`;
+
+  for (const cls of a.classes) {
+    const openKey = `leads:${cls.className}`;
+    const trend =
+      cls.previous > 0
+        ? Math.round(((cls.current - cls.previous) / cls.previous) * 100)
+        : null;
+    const moveChips = [
+      ...cls.gaining.map(
+        (c) => `<span class="lead-move up">▲ ${escapeHtml(clusterLabel(c))} +${c.shareShiftPts}pts</span>`
+      ),
+      ...cls.fading.map(
+        (c) => `<span class="lead-move down">▼ ${escapeHtml(clusterLabel(c))} ${c.shareShiftPts}pts</span>`
+      ),
+    ].join("");
+
+    html += `
+    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+      <summary>
+        <span class="mtg-class-name">${escapeHtml(cls.className)}</span>
+        <span class="mtg-class-info">${cls.current} leads${
+          trend !== null ? ` · ${trend >= 0 ? "▲" : "▼"}${Math.abs(trend)}% vs prior` : ""
+        } · ${cls.soldCurrentCohort} sold</span>
+      </summary>
+      ${moveChips ? `<div class="lead-moves">${moveChips}</div>` : ""}
+      ${
+        cls.neverSells.length
+          ? `<div class="stg-warn">🕳 Leads but <b>zero sales ever</b>: ${cls.neverSells
+              .map(
+                (z) => `${escapeHtml(z.zip)}${z.city ? " " + escapeHtml(z.city) : ""} (${z.allTime})`
+              )
+              .join(" · ")}</div>`
+          : ""
+      }
+      <table class="mtg-table leads-table">
+        <thead><tr><th>Area</th><th>Leads</th><th>Prior</th><th>Shift</th><th>Conv.</th></tr></thead>
+        <tbody>
+        ${cls.clusters
+          .map(
+            (c) => `<tr>
+              <td>${escapeHtml(clusterLabel(c))}</td>
+              <td><b>${c.current}</b></td>
+              <td>${c.previous}</td>
+              <td class="${c.shareShiftPts > 0.5 ? "lead-up" : c.shareShiftPts < -0.5 ? "lead-down" : ""}">${
+                c.shareShiftPts > 0 ? "+" : ""
+              }${c.shareShiftPts}pts</td>
+              <td>${c.allTime >= 10 ? Math.round(c.conversion * 100) + "%" : "—"}</td>
+            </tr>
+            ${c.zips
+              .filter((z) => z.current > 0)
+              .slice(0, 5)
+              .map(
+                (z) => `<tr class="leads-ziprow">
+                  <td>· ${escapeHtml(z.zip)}${z.city ? " " + escapeHtml(z.city) : ""}</td>
+                  <td>${z.current}</td><td>${z.previous}</td><td></td>
+                  <td>${z.allTime >= 10 ? Math.round((z.soldAllTime / z.allTime) * 100) + "%" : "—"}</td>
+                </tr>`
+              )
+              .join("")}`
+          )
+          .join("")}
+        </tbody>
+      </table>
+    </details>`;
+  }
+  return html;
+}
+
+function clusterLabel(c) {
+  const cities = c.cities?.length ? ` ${c.cities.join("/")}` : "";
+  return c.cluster === "?" ? "No zip" : `${c.cluster}xx${cities}`;
+}
+
+async function fetchLeadsAnalysis() {
+  const v = meeting.view;
+  if (!v?.leads) return;
+  const key = `${v.leads.uploadedAt}|${meeting.leadsDays}`;
+  if (meeting.leadsKey === key || fetchLeadsAnalysis._busy === key) return;
+  fetchLeadsAnalysis._busy = key;
+  try {
+    const data = await meetingApi(`/api/leads?days=${meeting.leadsDays}`, "GET");
+    meeting.leadsView = data.analysis;
+    meeting.leadsKey = key;
+    renderMeeting();
+  } catch {
+    /* leave the loading state; a re-open retries */
+  } finally {
+    fetchLeadsAnalysis._busy = null;
+  }
+}
+
+// ── Event handling ──
+function meetingToggle(e) {
+  const key = e.target?.dataset?.open;
+  if (!key) return;
+  if (e.target.open) meeting.open.add(key);
+  else meeting.open.delete(key);
+}
+
+async function meetingChange(e) {
+  const t = e.target;
+  try {
+    if (t.dataset.upload) {
+      await handleMeetingUpload(t.dataset.upload, t.files[0], t.dataset.class);
+      t.value = "";
+      return;
+    }
+    if (t.dataset.fu && t.dataset.field) {
+      await meetingApi(`/api/meeting/followups/${encodeURIComponent(t.dataset.fu)}`, "PATCH", {
+        week: meeting.week,
+        [t.dataset.field]: t.dataset.field === "actionDate" ? t.value || null : t.value,
+        by: meetingUser() || undefined,
+      });
+      await loadMeeting();
+      return;
+    }
+    if (t.dataset.wo && t.dataset.field) {
+      const row = t.closest(".mtg-wo");
+      const lead = row.querySelector('[data-field="lead"]').value.trim();
+      const cause = row.querySelector('[data-field="cause"]').value.trim();
+      await meetingApi("/api/meeting/wonote", "PATCH", {
+        woId: t.dataset.wo,
+        lead,
+        cause,
+        by: meetingUser() || null,
+      });
+      await loadMeeting();
+      return;
+    }
+    if (t.dataset.labor && t.dataset.field) {
+      const value = t.value === "" ? null : Number(t.value);
+      await meetingApi("/api/meeting/labor", "PATCH", {
+        week: meeting.week,
+        className: t.dataset.labor,
+        [t.dataset.field]: value,
+        by: meetingUser() || null,
+      });
+      await loadMeeting();
+      return;
+    }
+    if (t.dataset.checkNotes) {
+      await meetingApi("/api/meeting/check", "PATCH", {
+        week: meeting.week,
+        key: t.dataset.checkNotes,
+        notes: t.value,
+        by: meetingUser() || undefined,
+      });
+      return; // no re-render needed for notes
+    }
+    if (t.dataset.sec) {
+      await meetingApi("/api/meeting/section", "PATCH", {
+        week: meeting.week,
+        key: t.dataset.sec,
+        done: t.checked,
+        by: meetingUser() || null,
+      });
+      await loadMeeting();
+      return;
+    }
+  } catch (err) {
+    toast(err.message || "Couldn't save.", "error");
+  }
+}
+
+async function meetingClick(e) {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const act = btn.dataset.act;
+  try {
+    if (act === "fu-resolve" || act === "fu-reopen") {
+      await meetingApi(`/api/meeting/followups/${encodeURIComponent(btn.dataset.fu)}`, "PATCH", {
+        week: meeting.week,
+        status: act === "fu-resolve" ? "resolved" : "open",
+        by: meetingUser() || undefined,
+      });
+      toast(act === "fu-resolve" ? "Marked resolved ✓" : "Reopened.", "success");
+      await loadMeeting();
+    } else if (act === "fu-note") {
+      const input = document.querySelector(`[data-note-for="${CSS.escape(btn.dataset.fu)}"]`);
+      const note = input?.value.trim();
+      if (!note) return toast("Type the update first.", "error");
+      await meetingApi(`/api/meeting/followups/${encodeURIComponent(btn.dataset.fu)}`, "PATCH", {
+        week: meeting.week,
+        note,
+        by: meetingUser() || undefined,
+      });
+      toast("Update added ✓", "success");
+      await loadMeeting();
+    } else if (act === "check-toggle") {
+      const key = btn.dataset.check;
+      const current = meeting.view.checks[key].status;
+      await meetingApi("/api/meeting/check", "PATCH", {
+        week: meeting.week,
+        key,
+        status: current === "done" ? "pending" : "done",
+        by: meetingUser() || undefined,
+      });
+      await loadMeeting();
+    } else if (act === "payroll-use") {
+      const className = btn.dataset.class;
+      const sheet = meeting.payroll[className].sheets[Number(btn.dataset.idx)];
+      await meetingApi("/api/meeting/labor", "PATCH", {
+        week: meeting.week,
+        className,
+        productionPayroll: sheet.productionTotal,
+        sheetName: sheet.sheetName,
+        by: meetingUser() || null,
+      });
+      delete meeting.payroll[className];
+      toast(`Payroll set for ${className} ✓`, "success");
+      await loadMeeting();
+    } else if (act === "payroll-cancel") {
+      delete meeting.payroll[btn.dataset.class];
+      renderMeeting();
+    } else if (act === "leads-window") {
+      meeting.leadsDays = Number(btn.dataset.days);
+      renderMeeting(); // triggers fetchLeadsAnalysis for the new window
+    } else if (act === "open-map") {
+      await openLeadMap();
+    }
+  } catch (err) {
+    toast(err.message || "Couldn't save.", "error");
+  }
+}
+
+async function handleMeetingUpload(kind, file, className) {
+  if (!file) return;
+  if (typeof XLSX === "undefined") {
+    toast("Spreadsheet reader didn't load — check your connection.", "error");
+    return;
+  }
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  const firstRows = () =>
+    XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {
+      header: 1,
+      raw: true,
+      blankrows: false,
+    });
+
+  if (kind === "pastdue") {
+    const data = await meetingApi("/api/meeting/pastdue", "POST", {
+      filename: file.name,
+      week: meeting.week,
+      rows: firstRows(),
+    });
+    toast(
+      `${data.count} invoices loaded · ${data.newCount} new${
+        data.missingCount ? ` · ${data.missingCount} likely paid` : ""
+      } ✓`,
+      "success"
+    );
+  } else if (kind === "completed") {
+    const data = await meetingApi("/api/meeting/completed", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    toast(`${data.count} completed jobs loaded ✓`, "success");
+  } else if (kind === "workorders") {
+    const data = await meetingApi("/api/workorders", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    toast(`${data.count} work orders loaded ✓`, "success");
+  } else if (kind === "pipeline") {
+    const data = await meetingApi("/api/pipeline", "POST", {
+      filename: file.name,
+      rows: firstRows(),
+    });
+    toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
+    refreshPipelineStatus(); // keep the Schedule tab's status bar in sync
+  } else if (kind === "leads") {
+    const data = await uploadLeadsChunked(file.name, firstRows());
+    toast(`${data.count.toLocaleString()} leads loaded ✓`, "success");
+    meeting.leadsKey = null; // force a fresh analysis
+    meeting.open.add("sec:leads");
+  } else if (kind === "payroll") {
+    // One payroll workbook per market. Each has one sheet per pay period —
+    // send them all and let the user pick the right week on that market's row.
+    const sheets = wb.SheetNames.map((name) => ({
+      name,
+      rows: XLSX.utils.sheet_to_json(wb.Sheets[name], {
+        header: 1,
+        raw: true,
+        blankrows: false,
+      }),
+    }));
+    const data = await meetingApi("/api/meeting/payroll", "POST", {
+      week: meeting.week,
+      sheets,
+    });
+    meeting.payroll[className] = { sheets: data.sheets };
+    meeting.open.add("sec:labor");
+  }
+  await loadMeeting();
+}
+
+// ─────────────────────────── Staging lists ───────────────────────────
+// What material each location pulls and sets out ahead of a week's installs.
+// Defaults to NEXT week: you stage this week for next week's jobs.
+
+const staging = { week: null, view: null };
+const inventory = { week: null, view: null };
+
+function nextWeekStartIso() {
+  return shiftWeekIso(currentWeekStartIso(), 1);
+}
+
+async function loadStaging(week) {
+  staging.week = week || staging.week || nextWeekStartIso();
+  try {
+    const res = await fetch(`/api/staging?week=${staging.week}`);
+    if (!res.ok) throw new Error("Couldn't load staging.");
+    staging.view = await res.json();
+    staging.week = staging.view.weekStart;
+    renderStaging();
+  } catch (err) {
+    $("staging-list").innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function stagingJobQty(j) {
+  const m = j.material;
+  if (m.kind === "flake") return `${fmtN(m.flakeBoxes)} bx · ${fmtN(m.flakePounds)} lb`;
+  if (m.kind === "rubber") return `${fmtN(m.rubberBags)} bags`;
+  return "—";
+}
+
+function renderStaging() {
+  const v = staging.view;
+  $("staging-week-range").textContent = `${fmtDay(v.weekStart)} – ${fmtDay(v.weekEnd)}`;
+  if (!v.classes.length) {
+    $("staging-list").innerHTML = `<div class="empty">Nothing scheduled for this week yet.
+      Upload the pipeline (Meeting or Schedule tab) and set SQFT + color per job.</div>`;
+    return;
+  }
+  $("staging-list").innerHTML = v.classes
+    .map((cls) => {
+      const t = cls.totals;
+      const coatRows = [
+        ["Polyurea basecoat A", t.basecoatAGallons, "gal"],
+        ["Polyurea basecoat B", t.basecoatBGallons, "gal"],
+        ["Polyaspartic topcoat A", t.topcoatAGallons, "gal"],
+        ["Polyaspartic topcoat B", t.topcoatBGallons, "gal"],
+        ["Rubber binder", t.binderBuckets, "buckets"],
+        ["Rubber primer", t.primerBuckets, "buckets"],
+      ].filter(([, qty]) => qty > 0);
+
+      return `
+      <div class="card stg-card">
+        <div class="stg-head">
+          <h2>${escapeHtml(cls.className)}</h2>
+          <span class="stg-meta">${cls.jobs.length} jobs · ${fmtN(
+            t.sqftFlake + t.sqftRubber,
+            0
+          )} sqft</span>
+        </div>
+        ${
+          cls.missingInfoCount
+            ? `<div class="stg-warn">⚠ ${cls.missingInfoCount} job${
+                cls.missingInfoCount === 1 ? "" : "s"
+              } missing SQFT or color — set them on the Schedule tab to stage material.</div>`
+            : ""
+        }
+        ${
+          cls.colors.length
+            ? `<table class="mtg-table stg-table">
+                <thead><tr><th>Pull</th><th>Jobs</th><th>Sqft</th><th>Qty</th></tr></thead>
+                <tbody>${cls.colors
+                  .map(
+                    (c) => `<tr>
+                      <td>${c.kind === "flake" ? "🎨" : "⬛"} ${escapeHtml(c.product)}</td>
+                      <td>${c.jobs}</td>
+                      <td>${fmtN(c.sqft, 0)}</td>
+                      <td><b>${
+                        c.kind === "flake"
+                          ? `${fmtN(c.flakeBoxes)} boxes (${fmtN(c.flakePounds)} lb)`
+                          : `${fmtN(c.rubberBags)} bags`
+                      }</b></td>
+                    </tr>`
+                  )
+                  .join("")}</tbody>
+              </table>`
+            : `<div class="empty small">No material to stage (no coating jobs).</div>`
+        }
+        ${
+          coatRows.length
+            ? `<div class="stg-coats">${coatRows
+                .map(([label, qty, unit]) => `<span>${label}: <b>${fmtN(qty)} ${unit}</b></span>`)
+                .join("")}</div>`
+            : ""
+        }
+        <details class="mtg-class stg-jobs">
+          <summary><span class="mtg-class-name">Jobs</span>
+            <span class="mtg-class-info">${cls.jobs.length}</span></summary>
+          ${cls.jobs
+            .map(
+              (j) => `<div class="mtg-line${j.missingInfo ? " stg-missing" : ""}">
+                ${j.dayLabel ? `<b>${escapeHtml(j.dayLabel)}</b> · ` : ""}#${escapeHtml(
+                  j.jobNumber
+                )} · ${escapeHtml(j.customer)}${j.crew ? ` · ${escapeHtml(j.crew)}` : ""}
+                <span class="mtg-line-desc">${escapeHtml(j.projectType)} · ${
+                  j.sqft ? fmtN(j.sqft, 0) + " sqft" : "no sqft"
+                } · ${escapeHtml(j.color || "no color")} · ${stagingJobQty(j)}${
+                  j.missingInfo ? " · ⚠ missing info" : ""
+                }</span>
+              </div>`
+            )
+            .join("")}
+        </details>
+      </div>`;
+    })
+    .join("");
+}
+
+// ─────────────────────────── Inventory ───────────────────────────
+async function loadInventory(week) {
+  inventory.week = week || inventory.week || nextWeekStartIso();
+  try {
+    const res = await fetch(`/api/inventory?week=${inventory.week}`);
+    if (!res.ok) throw new Error("Couldn't load inventory.");
+    inventory.view = await res.json();
+    inventory.week = inventory.view.weekStart;
+    renderInventory();
+  } catch (err) {
+    $("inventory-list").innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
 }
 
 function renderInventory() {
-  const status = $("inv-status");
-  const note = $("inv-note");
-  if (!invData || !invData.current) {
+  const v = inventory.view;
+  $("inv-week-range").textContent = `${fmtDay(v.weekStart)} – ${fmtDay(v.weekEnd)}`;
+  if (!v.classes.length) {
+    $("inventory-list").innerHTML = `<div class="empty">No locations yet — upload a
+      pipeline so staging needs show up, then record what's on hand.</div>`;
+    return;
+  }
+  $("inventory-list").innerHTML = v.classes
+    .map((cls) => {
+      const shortCount = cls.items.filter((i) => i.short > 0).length;
+      return `
+      <div class="card stg-card">
+        <div class="stg-head">
+          <h2>${escapeHtml(cls.className)}</h2>
+          <span class="stg-meta${shortCount ? " short" : ""}">${
+            shortCount ? `${shortCount} short` : "covered ✓"
+          }</span>
+        </div>
+        ${
+          cls.items.length
+            ? `<table class="mtg-table inv-table">
+                <thead><tr><th>Material</th><th>Need</th><th>On hand</th><th></th></tr></thead>
+                <tbody>${cls.items
+                  .map(
+                    (i) => `<tr>
+                      <td>${escapeHtml(i.label)}<span class="inv-unit">${escapeHtml(i.unit)}</span></td>
+                      <td>${i.needed ? fmtN(i.needed) : "—"}</td>
+                      <td><input type="number" min="0" step="0.5" inputmode="decimal"
+                        value="${i.onHand || ""}" placeholder="0"
+                        data-inv-class="${escapeHtml(cls.className)}" data-inv-key="${escapeHtml(i.key)}" /></td>
+                      <td>${
+                        i.short > 0
+                          ? `<span class="mtg-badge warn">short ${fmtN(i.short)}</span>`
+                          : i.needed
+                          ? `<span class="mtg-badge ok">ok</span>`
+                          : ""
+                      }</td>
+                    </tr>`
+                  )
+                  .join("")}</tbody>
+              </table>`
+            : `<div class="empty small">Nothing needed this week and nothing recorded.</div>`
+        }
+        ${
+          cls.updatedAt
+            ? `<p class="hint">Last counted ${fmtDate(cls.updatedAt)}${cls.by ? " by " + escapeHtml(cls.by) : ""}</p>`
+            : ""
+        }
+      </div>`;
+    })
+    .join("");
+}
+
+async function inventoryChange(e) {
+  const t = e.target;
+  if (!t.dataset.invClass || !t.dataset.invKey) return;
+  try {
+    const res = await fetch("/api/inventory", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        className: t.dataset.invClass,
+        key: t.dataset.invKey,
+        qty: Number(t.value) || 0,
+        by: localStorage.getItem("meetingUser") || null,
+      }),
+    });
+    if (!res.ok) throw new Error("Couldn't save.");
+    await loadInventory();
+  } catch (err) {
+    toast(err.message || "Couldn't save.", "error");
+  }
+}
+
+// ─────────────────────────── Xlsx exports (meeting + staging) ───────────────────────────
+function sheetFromRows(wb, name, rows, colWidths) {
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  if (colWidths) ws["!cols"] = colWidths.map((wch) => ({ wch }));
+  XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+}
+
+function exportStaging() {
+  if (!staging.view || typeof XLSX === "undefined") {
+    toast("Load the staging list first.", "error");
+    return;
+  }
+  buildStagingXlsx(staging.view);
+}
+
+/** Build + download the staging workbook from a staging view (live or snapshot). */
+function buildStagingXlsx(v) {
+  const wb = XLSX.utils.book_new();
+
+  // Summary sheet: every location's pull list on one page.
+  const summary = [
+    [`Staging — week of ${v.weekStart} to ${v.weekEnd}`],
+    [],
+    ["Location", "Product", "Type", "Jobs", "Sqft", "Boxes", "Pounds", "Bags"],
+  ];
+  for (const cls of v.classes) {
+    for (const c of cls.colors) {
+      summary.push([
+        cls.className,
+        c.product,
+        c.kind,
+        c.jobs,
+        c.sqft,
+        c.kind === "flake" ? c.flakeBoxes : "",
+        c.kind === "flake" ? c.flakePounds : "",
+        c.kind === "rubber" ? c.rubberBags : "",
+      ]);
+    }
+  }
+  sheetFromRows(wb, "All locations", summary, [16, 22, 8, 6, 8, 8, 9, 8]);
+
+  for (const cls of v.classes) {
+    const t = cls.totals;
+    const rows = [
+      [`${cls.className} — staging for ${v.weekStart} to ${v.weekEnd}`],
+      [],
+      ["PULL LIST"],
+      ["Product", "Type", "Jobs", "Sqft", "Quantity"],
+      ...cls.colors.map((c) => [
+        c.product,
+        c.kind,
+        c.jobs,
+        c.sqft,
+        c.kind === "flake"
+          ? `${c.flakeBoxes} boxes (${c.flakePounds} lb)`
+          : `${c.rubberBags} bags`,
+      ]),
+      [],
+      ["COATS & KITS"],
+      ["Polyurea basecoat A (gal)", t.basecoatAGallons],
+      ["Polyurea basecoat B (gal)", t.basecoatBGallons],
+      ["Polyaspartic topcoat A (gal)", t.topcoatAGallons],
+      ["Polyaspartic topcoat B (gal)", t.topcoatBGallons],
+      ["Rubber binder (buckets)", t.binderBuckets],
+      ["Rubber primer (buckets)", t.primerBuckets],
+      [],
+      ["JOBS"],
+      ["Day", "Job #", "Customer", "Crew", "Type", "Sqft", "Color", "Material", "Notes"],
+      ...cls.jobs.map((j) => [
+        j.dayLabel || "",
+        j.jobNumber,
+        j.customer,
+        j.crew,
+        j.projectType,
+        j.sqft ?? "",
+        j.color || "",
+        stagingJobQty(j),
+        j.missingInfo ? "MISSING SQFT/COLOR" : "",
+      ]),
+    ];
+    sheetFromRows(wb, cls.className, rows, [12, 10, 22, 18, 16, 7, 16, 22, 20]);
+  }
+
+  XLSX.writeFile(wb, `staging-${v.weekStart}.xlsx`);
+  toast("Staging list exported ✓", "success");
+}
+
+function exportMeeting() {
+  if (!meeting.view || typeof XLSX === "undefined") {
+    toast("Load the meeting first.", "error");
+    return;
+  }
+  buildMeetingXlsx(meeting.view);
+}
+
+/** Build + download the meeting workbook from a meeting view (live or snapshot). */
+function buildMeetingXlsx(v, leadsView) {
+  const wb = XLSX.utils.book_new();
+  const secTitle = Object.fromEntries(MEETING_SECTIONS.map((s) => [s.key, s.title]));
+
+  // Summary: progress, sign-offs, dashboard checks, labor rates.
+  const summary = [
+    [`Friday Production Meeting — week of ${v.week.weekStart} to ${v.week.weekEnd}`],
+    [`${v.doneCount} of ${v.sectionCount} sections done`],
+    [],
+    ["#", "Section", "Done", "Signed off by", "When"],
+    ...v.sections.map((s, i) => [
+      i + 1,
+      secTitle[s.key] || s.key,
+      s.done ? "YES" : "no",
+      s.manual?.by || "",
+      s.manual?.at ? s.manual.at.slice(0, 10) : "",
+    ]),
+    [],
+    ["DASHBOARD CHECKS"],
+    ["Check", "Status", "By", "Notes"],
+    ...["reviews", "lytx", "ramp"].map((k) => [
+      secTitle[k],
+      v.checks[k].status === "done" ? "Reviewed" : "Pending",
+      v.checks[k].by || "",
+      v.checks[k].notes || "",
+    ]),
+    [],
+    [`LABOR RATES — week of ${v.labor.weekStart} to ${v.labor.weekEnd} (revenue ÷ payroll × ${v.labor.multiplier})`],
+    ["Location", "Completed revenue", "Jobs", "Production payroll", "Rate", "Labor % of revenue"],
+    ...v.labor.rows.map((r) => [
+      r.className,
+      r.revenueOverride ?? r.completedRevenue,
+      r.completedJobs,
+      r.productionPayroll ?? "",
+      r.rate !== null ? Number(r.rate.toFixed(2)) : "",
+      r.rate ? Number((100 / r.rate).toFixed(1)) / 100 : "",
+    ]),
+  ];
+  sheetFromRows(wb, "Summary", summary, [10, 26, 10, 16, 14, 16]);
+
+  // Past due, one block per location.
+  const pd = [
+    [`Past due balances — ${v.pastDue.openCount} open`],
+    v.pastDue.meta?.sourceLabel ? [v.pastDue.meta.sourceLabel] : [],
+    [],
+    ["Location", "Client", "Inv #", "Balance", "Status", "Reason past due", "Owner", "Action date", "First seen", "Latest update"],
+  ];
+  for (const cls of v.pastDue.classes) {
+    for (const f of cls.items) {
+      pd.push([
+        cls.className,
+        f.client,
+        f.invoiceNumber,
+        f.balance ?? "",
+        f.status === "resolved" ? "RESOLVED" : f.carriedOver ? "carryover" : "open",
+        f.reason,
+        f.owner,
+        f.actionDate || "",
+        f.firstSeenWeek,
+        f.updates.length ? f.updates[f.updates.length - 1].note : "",
+      ]);
+    }
+  }
+  sheetFromRows(wb, "Past due", pd, [14, 20, 9, 11, 10, 30, 14, 11, 11, 34]);
+
+  // Warranties: rollup by lead, then every tagged/open WO by location.
+  const wo = [
+    [`Warranties — ${v.workOrders.totalOpen} open work orders`],
+    [],
+    ["NEEDS SCHEDULING — UNSCHEDULED OR PAST DATE, STILL OPEN"],
+    ["Location", "WO #", "Client", "Type", "Status", "Why", "Scheduled"],
+    ...(v.workOrders.attention || [])
+      .slice()
+      .sort((a, b) => a.className.localeCompare(b.className))
+      .map((a) => [
+        a.className,
+        a.woNumber,
+        a.client,
+        a.type,
+        a.status || "",
+        a.reason === "unscheduled" ? "unscheduled" : "past date",
+        a.startDate ? new Date(a.startDate).toISOString().slice(0, 10) : "",
+      ]),
+    [],
+    ["WARRANTIES BY LEAD"],
+    ["Lead", "Count", "Causes"],
+    ...v.workOrders.byLead.map((l) => [l.lead, l.count, l.causes.join("; ")]),
+    [],
+    ["OPEN WARRANTY WORK ORDERS"],
+    ["Location", "WO #", "Client", "Type", "Status", "Created", "Lead", "Cause"],
+    ...v.workOrders.warranties
+      .filter((w) => w.open)
+      .map((w) => [
+        w.className,
+        w.woNumber,
+        w.client,
+        w.type,
+        w.status || "",
+        w.createdDate ? new Date(w.createdDate).toISOString().slice(0, 10) : "",
+        w.lead,
+        w.cause,
+      ]),
+  ];
+  sheetFromRows(wb, "Warranties", wo, [14, 8, 20, 20, 12, 11, 14, 30]);
+
+  // Pipeline: look-ahead weeks + flags.
+  const pl = [["Pipeline look-ahead"], []];
+  for (const wk of v.pipeline.weeks) {
+    pl.push([`WEEK OF ${wk.weekStart} TO ${wk.weekEnd}`]);
+    pl.push(["Location", "Jobs", "Total $", "Empty days"]);
+    for (const cls of wk.classes) {
+      pl.push([
+        cls.className,
+        cls.jobsThisWeek,
+        cls.totalThisWeek,
+        cls.days.filter((d) => d.load === "empty").map((d) => fmtDay(d.date)).join(", "),
+      ]);
+    }
+    pl.push([]);
+  }
+  const byLocation = (a, b) =>
+    a.className.localeCompare(b.className) || (b.soldAmount || 0) - (a.soldAmount || 0);
+  pl.push(["NO LABOR ASSIGNED"]);
+  pl.push(["Location", "Job #", "Sold $", "Starts", "Next week?", "Description"]);
+  for (const j of [...v.pipeline.noCrew].sort(byLocation)) {
+    pl.push([
+      j.className,
+      j.jobNumber,
+      j.soldAmount,
+      j.startDate ? new Date(j.startDate).toISOString().slice(0, 10) : "",
+      j.startsSoon ? "YES" : "",
+      j.description || "",
+    ]);
+  }
+  pl.push([]);
+  pl.push(["MISSING START / FINISH DATE"]);
+  pl.push(["Location", "Job #", "Sold $", "Missing", "Starts", "Sales person", "Description"]);
+  for (const j of [...v.pipeline.unscheduled].sort(byLocation)) {
+    pl.push([
+      j.className,
+      j.jobNumber,
+      j.soldAmount,
+      j.missingStart && j.missingFinish ? "start + finish" : j.missingStart ? "start" : "finish",
+      j.startDate ? new Date(j.startDate).toISOString().slice(0, 10) : "",
+      j.salesPerson || "",
+      j.description || "",
+    ]);
+  }
+  sheetFromRows(wb, "Pipeline", pl, [16, 12, 11, 14, 12, 12, 34]);
+
+  // Leads by area — from the live analysis or a snapshot's frozen copy.
+  const leads = leadsView ?? (v === meeting.view ? meeting.leadsView : null);
+  if (leads) {
+    const ld = [
+      [`Leads by area — ${leads.from} to ${leads.to} (vs the ${leads.windowDays} days before)`],
+      [],
+    ];
+    for (const cls of leads.classes) {
+      ld.push([`${cls.className.toUpperCase()} — ${cls.current} leads (prior ${cls.previous}), ${cls.soldCurrentCohort} sold`]);
+      ld.push(["Area", "Cities", "Leads", "Prior", "Share shift (pts)", "All-time leads", "All-time sold", "Conversion"]);
+      for (const c of cls.clusters) {
+        ld.push([
+          c.cluster === "?" ? "No zip" : c.cluster + "xx",
+          c.cities.join(" / "),
+          c.current,
+          c.previous,
+          c.shareShiftPts,
+          c.allTime,
+          c.soldAllTime,
+          c.allTime >= 10 ? Math.round(c.conversion * 100) / 100 : "",
+        ]);
+      }
+      if (cls.neverSells.length) {
+        ld.push(["Zero sales ever:", cls.neverSells.map((z) => `${z.zip} ${z.city || ""} (${z.allTime})`).join(", ")]);
+      }
+      ld.push([]);
+    }
+    sheetFromRows(wb, "Leads", ld, [12, 24, 8, 8, 14, 12, 12, 11]);
+  }
+
+  XLSX.writeFile(wb, `friday-meeting-${v.week.weekStart}.xlsx`);
+  toast("Meeting exported ✓", "success");
+}
+
+/**
+ * The clients export is ~35k rows — far past serverless request limits as one
+ * JSON post (Vercel caps bodies at 4.5MB). Trim to the columns the analysis
+ * needs and send in chunks; every chunk repeats the header so the server can
+ * parse each piece independently.
+ */
+async function uploadLeadsChunked(filename, rows) {
+  const NEEDED = {
+    name: ["name", "client", "customer"],
+    state: ["state"],
+    city: ["city"],
+    zip: ["zip", "zip code", "zipcode"],
+    class: ["class"],
+    created: ["created"],
+    status: ["lead status", "status"],
+  };
+  const hdrIdx = rows.findIndex((r) =>
+    (r || []).some((c) => {
+      const t = String(c ?? "").trim().toLowerCase();
+      return t === "lead status" || t === "zip";
+    })
+  );
+  // No recognisable header — send as-is and let the server explain the format.
+  if (hdrIdx < 0) return meetingApi("/api/leads", "POST", { filename, rows });
+
+  const lower = rows[hdrIdx].map((c) => String(c ?? "").trim().toLowerCase());
+  const cols = Object.values(NEEDED).map((names) =>
+    lower.findIndex((c) => names.includes(c))
+  );
+  const pick = (row) => cols.map((i) => (i >= 0 ? row?.[i] ?? null : null));
+
+  // Keep the tiny title rows (they carry the "Data as of…" label).
+  const preamble = rows.slice(0, hdrIdx).map((r) => [r?.[0] ?? null, r?.[1] ?? null]);
+  const header = pick(rows[hdrIdx]);
+  const data = rows.slice(hdrIdx + 1).map(pick);
+
+  const CHUNK = 6000;
+  const chunks = Math.max(1, Math.ceil(data.length / CHUNK));
+  const uploadId = `u${Date.now()}`;
+  const label = document.querySelector('.mtg-section[data-open="sec:leads"] .btn-upload span');
+  let last;
+  for (let i = 0; i < chunks; i++) {
+    if (label && chunks > 1) label.textContent = `Uploading ${i + 1}/${chunks}…`;
+    last = await meetingApi("/api/leads", "POST", {
+      filename,
+      uploadId,
+      seq: i,
+      chunks,
+      rows: [...preamble, header, ...data.slice(i * CHUNK, (i + 1) * CHUNK)],
+    });
+  }
+  if (label) label.textContent = "Upload leads";
+  return last;
+}
+
+// ─────────────────────────── Lead heat map (zip choropleth) ───────────────────────────
+// A dedicated screen: every zip colored by lead volume (or jobs), with the
+// full per-zip table underneath. Zip polygons are Census ZCTA boundaries,
+// vendored at /vendor/tx-zips.json and loaded only when the map opens.
+
+const leadmap = {
+  days: 28,
+  mode: "leads", // "leads" (window) | "jobs" (sold, all-time)
+  className: null,
+  table: null, // /api/leads/zips payload for current days
+  tableKey: null,
+  geo: null, // zip → rings
+  centroids: null, // zip → [x, y]
+  sort: { col: "current", dir: -1 },
+  search: "",
+  selected: null,
+};
+
+// Sequential ramps (light → dark), one hue per measure.
+const MAP_RAMPS = {
+  leads: ["#dbe6f6", "#b3c9e9", "#7fa3d6", "#4a77b8", "#15396b"],
+  jobs: ["#d9f2e3", "#a9e0bf", "#6fc493", "#3aa268", "#1f8a4c"],
+};
+const MAP_ZERO = "#f0f1f4";
+
+const MAP_MODES = [
+  { key: "leads", label: "Leads (window)" },
+  { key: "jobs", label: "Jobs (all-time)" },
+];
+const MAP_WINDOWS = [
+  { days: 7, label: "Week" },
+  { days: 28, label: "4 weeks" },
+  { days: 91, label: "Quarter" },
+  { days: 3650, label: "All time" },
+];
+
+async function openLeadMap() {
+  showScreen("leadsmap");
+  try {
+    if (!leadmap.geo) {
+      $("map-holder").innerHTML = `<div class="loading">Loading zip boundaries…</div>`;
+      const res = await fetch("/vendor/tx-zips.json");
+      if (!res.ok) throw new Error("Couldn't load zip boundaries.");
+      leadmap.geo = await res.json();
+      leadmap.centroids = {};
+      for (const [zip, rings] of Object.entries(leadmap.geo)) {
+        const r = rings[0];
+        let sx = 0;
+        let sy = 0;
+        for (const [x, y] of r) {
+          sx += x;
+          sy += y;
+        }
+        leadmap.centroids[zip] = [sx / r.length, sy / r.length];
+      }
+    }
+    await loadLeadZips();
+  } catch (err) {
+    $("map-holder").innerHTML = `<div class="empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadLeadZips() {
+  const key = String(leadmap.days);
+  if (leadmap.tableKey !== key) {
+    const data = await meetingApi(`/api/leads/zips?days=${leadmap.days}`, "GET");
+    if (!data.table) {
+      $("map-holder").innerHTML = `<div class="empty">Upload the Clients List export
+        on the Meeting tab first.</div>`;
+      return;
+    }
+    leadmap.table = data.table;
+    leadmap.tableKey = key;
+  }
+  const classes = leadmap.table.classes.map((c) => c.className);
+  if (!leadmap.className || !classes.includes(leadmap.className)) {
+    leadmap.className = classes[0] ?? null;
+  }
+  renderLeadMap();
+}
+
+function mapMeasure(row) {
+  return leadmap.mode === "jobs" ? row.jobs : row.current;
+}
+
+function renderLeadMap() {
+  const cls = leadmap.table?.classes.find((c) => c.className === leadmap.className);
+  // Controls.
+  $("map-class-chips").innerHTML = (leadmap.table?.classes ?? [])
+    .map(
+      (c) => `<button type="button" class="chip-btn ${
+        c.className === leadmap.className ? "active" : ""
+      }" data-map-class="${escapeHtml(c.className)}">${escapeHtml(c.className)}</button>`
+    )
+    .join("");
+  $("map-mode-chips").innerHTML = MAP_MODES.map(
+    (m) => `<button type="button" class="chip-btn ${
+      leadmap.mode === m.key ? "active" : ""
+    }" data-map-mode="${m.key}">${m.label}</button>`
+  ).join("");
+  $("map-window-chips").innerHTML = MAP_WINDOWS.map(
+    (w) => `<button type="button" class="chip-btn ${
+      leadmap.days === w.days ? "active" : ""
+    }" data-map-days="${w.days}">${w.label}</button>`
+  ).join("");
+  if (!cls) return;
+
+  drawLeadMapSvg(cls);
+  renderLeadMapLegend(cls);
+  renderLeadMapTable(cls);
+  renderLeadMapInfo(cls);
+}
+
+function drawLeadMapSvg(cls) {
+  const geo = leadmap.geo;
+  const cent = leadmap.centroids;
+  const byZip = new Map(cls.rows.map((r) => [r.zip, r]));
+
+  // Service area = zips with any all-time leads that we have geometry for.
+  const active = cls.rows.filter((r) => r.zip !== "?" && r.allTime > 0 && geo[r.zip]);
+  if (!active.length) {
+    $("map-holder").innerHTML = `<div class="empty">No mappable zips for ${escapeHtml(
+      cls.className
+    )}.</div>`;
+    return;
+  }
+  // Trim outliers (remote one-off leads) with a 2–98 percentile bounding box.
+  const xs = active.map((r) => cent[r.zip][0]).sort((a, b) => a - b);
+  const ys = active.map((r) => cent[r.zip][1]).sort((a, b) => a - b);
+  const pct = (arr, p) => arr[Math.min(arr.length - 1, Math.floor((arr.length - 1) * p))];
+  const pad = 0.15;
+  let minX = pct(xs, 0.02);
+  let maxX = pct(xs, 0.98);
+  let minY = pct(ys, 0.02);
+  let maxY = pct(ys, 0.98);
+  const spanX = Math.max(maxX - minX, 0.2);
+  const spanY = Math.max(maxY - minY, 0.2);
+  minX -= spanX * pad;
+  maxX += spanX * pad;
+  minY -= spanY * pad;
+  maxY += spanY * pad;
+
+  const midLat = (minY + maxY) / 2;
+  const cos = Math.cos((midLat * Math.PI) / 180);
+  const W = 800;
+  let k = W / ((maxX - minX) * cos);
+  let H = (maxY - minY) * k;
+  if (H > 900) {
+    k *= 900 / H;
+    H = 900;
+  }
+  const px = (x) => (x - minX) * cos * k;
+  const py = (y) => (maxY - y) * k;
+  const inView = (zip) => {
+    const c = cent[zip];
+    return c && c[0] >= minX && c[0] <= maxX && c[1] >= minY && c[1] <= maxY;
+  };
+
+  const max = Math.max(1, ...active.map((r) => mapMeasure(r)));
+  const ramp = MAP_RAMPS[leadmap.mode];
+  const bucket = (v) => {
+    if (v <= 0) return -1;
+    return Math.min(ramp.length - 1, Math.floor((v / max) * ramp.length));
+  };
+
+  let paths = "";
+  for (const zip of Object.keys(geo)) {
+    if (!inView(zip)) continue;
+    const row = byZip.get(zip);
+    const v = row ? mapMeasure(row) : 0;
+    const b = bucket(v);
+    const d = geo[zip]
+      .map(
+        (ring) =>
+          "M" + ring.map(([x, y]) => `${px(x).toFixed(1)} ${py(y).toFixed(1)}`).join("L") + "Z"
+      )
+      .join("");
+    const sel = leadmap.selected === zip;
+    paths += `<path d="${d}" data-zip="${zip}" fill="${b < 0 ? MAP_ZERO : ramp[b]}"
+      stroke="${sel ? "#c0392b" : "#ffffff"}" stroke-width="${sel ? 2.5 : 0.6}"
+      ${sel ? 'class="map-selected"' : ""}></path>`;
+  }
+
+  // Label the biggest cities (by window leads) for orientation.
+  const cityBest = new Map();
+  for (const r of active) {
+    if (!r.city || !inView(r.zip)) continue;
+    const cur = cityBest.get(r.city);
+    const score = r.current + r.allTime / 100;
+    if (!cur || score > cur.score) cityBest.set(r.city, { zip: r.zip, score });
+  }
+  // Place up to 6 city labels, skipping any that would collide with one
+  // already placed (they'd be unreadable at phone scale).
+  const placed = [];
+  const labels = [...cityBest.entries()]
+    .sort((a, b) => b[1].score - a[1].score)
+    .slice(0, 12)
+    .map(([city, { zip }]) => {
+      if (placed.length >= 6) return "";
+      const [cx, cy] = cent[zip];
+      const x = px(cx);
+      const y = py(cy);
+      if (placed.some(([ox, oy]) => Math.abs(ox - x) < 170 && Math.abs(oy - y) < 40)) {
+        return "";
+      }
+      placed.push([x, y]);
+      return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="map-city">${escapeHtml(city)}</text>`;
+    })
+    .join("");
+
+  $("map-holder").innerHTML = `
+    <svg id="map-svg" viewBox="0 0 ${W} ${Math.round(H)}" role="img"
+      aria-label="Lead heat map for ${escapeHtml(cls.className)}">${paths}${labels}</svg>`;
+}
+
+function renderLeadMapLegend(cls) {
+  const active = cls.rows.filter((r) => r.zip !== "?" && r.allTime > 0);
+  const max = Math.max(1, ...active.map((r) => mapMeasure(r)));
+  const ramp = MAP_RAMPS[leadmap.mode];
+  const step = max / ramp.length;
+  const label = leadmap.mode === "jobs" ? "jobs (all-time)" : "leads in window";
+  $("map-legend").innerHTML =
+    `<span class="map-legend-title">${label}:</span>` +
+    `<span class="map-swatch" style="background:${MAP_ZERO}"></span><span class="map-range">0</span>` +
+    ramp
+      .map((c, i) => {
+        const lo = Math.floor(i * step) + 1;
+        const hi = Math.floor((i + 1) * step);
+        return `<span class="map-swatch" style="background:${c}"></span><span class="map-range">${
+          i === ramp.length - 1 ? `${lo}+` : `${lo}–${Math.max(hi, lo)}`
+        }</span>`;
+      })
+      .join("");
+}
+
+function renderLeadMapInfo(cls) {
+  if (!leadmap.selected) {
+    $("map-info").textContent =
+      `${cls.className}: ${cls.totals.current} leads in window · ` +
+      `${cls.totals.jobs} jobs all-time. Tap a zip for details.`;
+    return;
+  }
+  const r = cls.rows.find((x) => x.zip === leadmap.selected);
+  if (!r) {
+    $("map-info").textContent = `${leadmap.selected}: no leads recorded.`;
+    return;
+  }
+  $("map-info").innerHTML = `<b>${escapeHtml(r.zip)}${
+    r.city ? " " + escapeHtml(r.city) : ""
+  }</b> — ${r.current} leads (prior ${r.previous}) · ${r.allTime} all-time · ${r.jobs} job${
+    r.jobs === 1 ? "" : "s"
+  } · ${r.conversion !== null ? Math.round(r.conversion * 100) + "% conv." : "not enough data"}`;
+}
+
+const MAP_COLS = [
+  { col: "zip", label: "Zip" },
+  { col: "city", label: "City" },
+  { col: "current", label: "Leads" },
+  { col: "previous", label: "Prior" },
+  { col: "allTime", label: "All-time" },
+  { col: "jobs", label: "Jobs" },
+  { col: "conversion", label: "Conv." },
+];
+
+function renderLeadMapTable(cls) {
+  const q = leadmap.search.trim().toLowerCase();
+  let rows = cls.rows;
+  if (q) {
+    rows = rows.filter(
+      (r) => r.zip.includes(q) || (r.city ?? "").toLowerCase().includes(q)
+    );
+  }
+  const { col, dir } = leadmap.sort;
+  rows = [...rows].sort((a, b) => {
+    const av = a[col];
+    const bv = b[col];
+    if (typeof av === "string" || typeof bv === "string") {
+      return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
+    }
+    return ((av ?? -1) - (bv ?? -1)) * dir;
+  });
+
+  $("map-table").innerHTML = `
+  <table class="mtg-table zip-table">
+    <thead><tr>${MAP_COLS.map(
+      (c) => `<th data-sort="${c.col}" class="${
+        col === c.col ? "sorted" : ""
+      }">${c.label}${col === c.col ? (dir < 0 ? " ↓" : " ↑") : ""}</th>`
+    ).join("")}</tr></thead>
+    <tbody>
+      ${rows
+        .map(
+          (r) => `<tr data-zip="${escapeHtml(r.zip)}" class="${
+            leadmap.selected === r.zip ? "zip-selected" : ""
+          }${r.allTime >= 10 && r.jobs === 0 ? " zip-never" : ""}">
+          <td>${escapeHtml(r.zip)}</td>
+          <td>${escapeHtml(r.city ?? "—")}</td>
+          <td><b>${r.current}</b></td>
+          <td>${r.previous}</td>
+          <td>${r.allTime}</td>
+          <td>${r.jobs}</td>
+          <td>${r.conversion !== null ? Math.round(r.conversion * 100) + "%" : "—"}</td>
+        </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>
+  <p class="hint">${rows.length} zips · red rows = 10+ leads, zero jobs ever.</p>`;
+}
+
+function exportLeadMapTable() {
+  const cls = leadmap.table?.classes.find((c) => c.className === leadmap.className);
+  if (!cls || typeof XLSX === "undefined") {
+    toast("Load the map first.", "error");
+    return;
+  }
+  const t = leadmap.table;
+  const wb = XLSX.utils.book_new();
+  for (const c of t.classes) {
+    const rows = [
+      [`${c.className} — leads by zip, ${t.from} to ${t.to} (window ${t.windowDays}d)`],
+      [],
+      ["Zip", "City", "Leads (window)", "Prior window", "All-time leads", "Jobs (all-time)", "Conversion"],
+      ...c.rows.map((r) => [
+        r.zip,
+        r.city ?? "",
+        r.current,
+        r.previous,
+        r.allTime,
+        r.jobs,
+        r.conversion !== null ? Math.round(r.conversion * 1000) / 1000 : "",
+      ]),
+      [],
+      ["Totals", "", c.totals.current, c.totals.previous, c.totals.allTime, c.totals.jobs, ""],
+    ];
+    sheetFromRows(wb, c.className, rows, [8, 20, 13, 12, 13, 12, 11]);
+  }
+  XLSX.writeFile(wb, `leads-by-zip-${t.to}.xlsx`);
+  toast("Zip table exported ✓", "success");
+}
+
+function initLeadMapEvents() {
+  $("map-back").addEventListener("click", () => showScreen("meeting"));
+  $("map-export").addEventListener("click", exportLeadMapTable);
+  $("map-search").addEventListener("input", (e) => {
+    leadmap.search = e.target.value;
+    const cls = leadmap.table?.classes.find((c) => c.className === leadmap.className);
+    if (cls) renderLeadMapTable(cls);
+  });
+  $("screen-leadsmap").addEventListener("click", async (e) => {
+    const cls = e.target.closest("[data-map-class]");
+    const mode = e.target.closest("[data-map-mode]");
+    const days = e.target.closest("[data-map-days]");
+    const path = e.target.closest("path[data-zip]");
+    const rowEl = e.target.closest("tr[data-zip]");
+    const th = e.target.closest("th[data-sort]");
+    if (cls) {
+      leadmap.className = cls.dataset.mapClass;
+      leadmap.selected = null;
+      renderLeadMap();
+    } else if (mode) {
+      leadmap.mode = mode.dataset.mapMode;
+      renderLeadMap();
+    } else if (days) {
+      leadmap.days = Number(days.dataset.mapDays);
+      try {
+        await loadLeadZips();
+      } catch (err) {
+        toast(err.message || "Couldn't load.", "error");
+      }
+    } else if (path || rowEl) {
+      leadmap.selected = (path ?? rowEl).dataset.zip;
+      renderLeadMap();
+    } else if (th) {
+      const col = th.dataset.sort;
+      if (leadmap.sort.col === col) leadmap.sort.dir *= -1;
+      else leadmap.sort = { col, dir: col === "zip" || col === "city" ? 1 : -1 };
+      const c = leadmap.table?.classes.find((x) => x.className === leadmap.className);
+      if (c) renderLeadMapTable(c);
+    }
+  });
+}
+
+// ─────────────────────────── Weekly snapshots ───────────────────────────
+// "Save snapshot" freezes the computed meeting, next week's staging list, and
+// the inventory position server-side, so the week's record survives the next
+// round of uploads. Saved weeks list under the meeting and re-export anytime.
+
+async function saveSnapshot() {
+  const btn = $("meeting-snapshot");
+  btn.disabled = true;
+  try {
+    const data = await meetingApi("/api/snapshots", "POST", {
+      week: meeting.week,
+      by: meetingUser() || null,
+    });
+    toast(`Week of ${data.snapshot.weekStart} saved ✓`, "success");
+    await loadSnapshots();
+  } catch (err) {
+    toast(err.message || "Couldn't save the snapshot.", "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadSnapshots() {
+  const box = $("meeting-snapshots");
+  try {
+    const { snapshots } = await meetingApi("/api/snapshots", "GET");
+    if (!snapshots.length) {
+      box.innerHTML = `<div class="empty small">No weeks saved yet — tap
+        <b>📸 Save snapshot</b> at the end of the Friday meeting.</div>`;
+      return;
+    }
+    box.innerHTML = snapshots
+      .map(
+        (s) => `
+        <div class="history-row snap-row">
+          <span class="history-week">Week of ${escapeHtml(s.weekStart)}</span>
+          <span class="history-class">saved ${fmtDate(s.savedAt)}${
+            s.by ? " by " + escapeHtml(s.by) : ""
+          }</span>
+          <span class="snap-actions">
+            <button type="button" class="btn-export" data-snap="${escapeHtml(s.weekStart)}" data-kind="meeting">Meeting ⬇</button>
+            <button type="button" class="btn-export" data-snap="${escapeHtml(s.weekStart)}" data-kind="staging">Staging ⬇</button>
+          </span>
+        </div>`
+      )
+      .join("");
+  } catch {
+    box.innerHTML = `<div class="empty small">Couldn't load saved weeks.</div>`;
+  }
+}
+
+async function snapshotClick(e) {
+  const btn = e.target.closest("[data-snap]");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    const snap = await meetingApi(
+      `/api/snapshots/${encodeURIComponent(btn.dataset.snap)}`,
+      "GET"
+    );
+    if (btn.dataset.kind === "staging") buildStagingXlsx(snap.staging);
+    else buildMeetingXlsx(snap.meeting, snap.leads ?? null);
+  } catch (err) {
+    toast(err.message || "Couldn't download that snapshot.", "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ─────────────────────────── Navigation ───────────────────────────
+
+// ──────────────── Inventory counts & material cost (Production Management) ────────────────
+// Weekly Material Tracker counts → week-over-week usage priced from the PO
+// catalog. The card lives in the meeting screen and is re-parented directly
+// under the "Labor rates" section every time the meeting re-renders.
+let invCounts = null;
+let invCountsLoadedWeek;
+let invCountsCard = null;
+
+// The card is briefly detached while the meeting re-renders, and
+// getElementById can't see detached nodes — look inside the card first.
+function invEl(id) {
+  return (invCountsCard && invCountsCard.querySelector("#" + id)) || $(id);
+}
+
+function invCountsQuery() {
+  return meeting.week ? `?week=${meeting.week}` : "";
+}
+
+async function loadInvCounts() {
+  invCountsLoadedWeek = meeting.week;
+  try {
+    const res = await fetch(`/api/inventory-counts${invCountsQuery()}`);
+    if (!res.ok) throw new Error();
+    invCounts = await res.json();
+  } catch {
+    invCounts = null;
+  }
+  renderInvCounts();
+}
+
+function placeInvCountsCard() {
+  if (!invCountsCard) return;
+  const labor = document.querySelector('#screen-meeting [data-open="sec:labor"]');
+  if (labor) {
+    if (invCountsCard.previousElementSibling !== labor) {
+      labor.insertAdjacentElement("afterend", invCountsCard);
+    }
+  } else if (!invCountsCard.isConnected) {
+    $("meeting-sections").insertAdjacentElement("afterend", invCountsCard);
+  }
+  // The meeting week changed (◀ ▶) — refresh the counts for that week.
+  if (invCountsLoadedWeek !== meeting.week) loadInvCounts();
+}
+
+function renderInvCounts() {
+  const status = invEl("inv-status");
+  const note = invEl("inv-note");
+  if (!invCounts || !invCounts.current) {
     status.textContent = "No inventory count uploaded for this week yet.";
-    $("inv-used-count").textContent = "—";
-    $("inv-total").textContent = "—";
-    $("inv-apply").hidden = true;
-    $("inv-clear").hidden = true;
-    $("inv-usage").hidden = true;
+    invEl("inv-used-count").textContent = "—";
+    invEl("inv-total").textContent = "—";
+    invEl("inv-clear").hidden = true;
+    invEl("inv-usage").hidden = true;
     note.hidden = true;
     return;
   }
-  const { current, previous, usage, week } = invData;
+  const { current, previous, usage, week } = invCounts;
   status.innerHTML =
     `Count for week of <strong>${fmtWeekDay(week.weekStart)}</strong> — ${current.itemCount} items` +
     (current.sourceLabel
       ? `<br><span class="inv-source">${escapeHtml(current.sourceLabel)}</span>`
       : "");
-  $("inv-clear").hidden = false;
+  invEl("inv-clear").hidden = false;
 
   if (!previous) {
-    $("inv-used-count").textContent = "—";
-    $("inv-total").textContent = "—";
+    invEl("inv-used-count").textContent = "—";
+    invEl("inv-total").textContent = "—";
     note.textContent =
       "First count on record — upload next week's count and usage and cost " +
       "will be worked out from the difference.";
     note.hidden = false;
-    $("inv-usage").hidden = true;
-    $("inv-apply").hidden = true;
+    invEl("inv-usage").hidden = true;
     return;
   }
 
-  $("inv-used-count").textContent = String(usage.usedCount);
-  $("inv-total").textContent = fmtMoney(usage.totalCost);
+  invEl("inv-used-count").textContent = String(usage.usedCount);
+  invEl("inv-total").textContent = fmtMoney(usage.totalCost);
   const unpriced = usage.unpricedItems.length;
   note.textContent =
     `Compared with the count from the week of ${fmtWeekDay(previous.weekStart)}.` +
@@ -1722,15 +3617,14 @@ function renderInventory() {
       ? ` ${unpriced} used item${unpriced === 1 ? " has" : "s have"} no unit cost yet — enter unit costs below to include them.`
       : "");
   note.hidden = false;
-  renderInvUsageTable(usage);
-  $("inv-usage").hidden = false;
-  $("inv-apply").hidden = false;
+  renderInvCountsTable(usage);
+  invEl("inv-usage").hidden = false;
 }
 
-function renderInvUsageTable(usage) {
+function renderInvCountsTable(usage) {
   const rows = usage.lines.filter((l) => (l.used ?? 0) > 0);
   const restocked = usage.lines.filter((l) => l.restocked).length;
-  const box = $("inv-usage");
+  const box = invEl("inv-usage");
   if (!rows.length) {
     box.innerHTML = `<p class="hint">Nothing was used this week — no counts went down.</p>`;
     return;
@@ -1769,7 +3663,7 @@ function renderInvUsageTable(usage) {
         `price:${item}`,
         async () => {
           try {
-            const res = await fetch("/api/inventory/prices", {
+            const res = await fetch("/api/inventory-counts/prices", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1777,7 +3671,7 @@ function renderInvUsageTable(usage) {
               }),
             });
             if (!res.ok) throw new Error();
-            await loadInventory();
+            await loadInvCounts();
             toast("Unit cost saved ✓", "success");
           } catch {
             toast("Couldn't save that unit cost.", "error");
@@ -1789,20 +3683,20 @@ function renderInvUsageTable(usage) {
   );
 }
 
-async function postInventory(rows, filename) {
-  const res = await fetch("/api/inventory", {
+async function postInvCounts(rows, filename) {
+  const res = await fetch(`/api/inventory-counts${invCountsQuery()}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(filename ? { filename, rows } : { rows }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.message || "Upload failed.");
-  invData = data;
-  renderInventory();
+  invCounts = data;
+  renderInvCounts();
   toast(`Saved ${data.current.itemCount} inventory counts ✓`, "success");
 }
 
-async function handleInvFile(file) {
+async function handleInvCountsFile(file) {
   if (!file) return;
   if (typeof XLSX === "undefined") {
     toast("Spreadsheet reader didn't load — check your connection.", "error");
@@ -1813,7 +3707,7 @@ async function handleInvFile(file) {
     const wb = XLSX.read(buf, { type: "array" });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
-    await postInventory(rows, file.name);
+    await postInvCounts(rows, file.name);
   } catch (err) {
     toast(err.message || "Couldn't read that file.", "error");
   } finally {
@@ -1822,64 +3716,88 @@ async function handleInvFile(file) {
 }
 
 /** Pasted counts → rows: the trailing number on each line is the count. */
-function invTextToRows(textVal) {
+function invCountsTextToRows(textVal) {
   return String(textVal || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const m = line.match(/^(.*?)[\s ]+(-?\d[\d,]*(?:\.\d+)?)$/);
+      const m = line.match(/^(.*?)[\s ]+(-?\d[\d,]*(?:\.\d+)?)$/);
       return m ? [m[1], m[2]] : [line];
     });
 }
 
-async function clearInventory() {
+async function clearInvCounts() {
   if (!confirm("Remove this week's inventory count?")) return;
   try {
-    await fetch("/api/inventory", { method: "DELETE" });
+    await fetch(`/api/inventory-counts${invCountsQuery()}`, { method: "DELETE" });
   } catch {
     /* reload below shows the real state */
   }
-  await loadInventory();
+  await loadInvCounts();
 }
 
-function applyInventoryCost() {
-  if (!invData?.usage) return;
-  $("actualMaterials").value = invData.usage.totalCost;
-  recalc();
-  toast(`Actual materials set to ${fmtMoney(invData.usage.totalCost)} ✓`, "success");
+function initInvCounts() {
+  invCountsCard = $("inventory-card");
+  // The meeting re-render wipes #meeting-sections, so re-place the card (and
+  // follow week changes) every time it changes.
+  new MutationObserver(placeInvCountsCard).observe($("meeting-sections"), {
+    childList: true,
+  });
+  $("inv-file").addEventListener("change", (e) => handleInvCountsFile(e.target.files[0]));
+  $("inv-paste").addEventListener("click", () => {
+    $("inv-text").value = "";
+    $("inv-dialog").showModal();
+  });
+  $("inv-cancel").addEventListener("click", () => $("inv-dialog").close());
+  $("inv-form").addEventListener("submit", async (e) => {
+    const rows = invCountsTextToRows($("inv-text").value);
+    if (rows.length < 3) {
+      e.preventDefault();
+      toast("Paste the counts first.", "error");
+      return;
+    }
+    try {
+      await postInvCounts(rows, null);
+    } catch (err) {
+      toast(err.message || "Couldn't read those counts.", "error");
+    }
+  });
+  invEl("inv-clear").addEventListener("click", clearInvCounts);
 }
 
-// ─────────────────────────── Navigation ───────────────────────────
 const TITLES = {
+  meeting: "Production Management",
   schedule: "Weekly Schedule",
-  report: "Production Management",
+  staging: "Staging Lists",
+  inventory: "Inventory",
   pay: "Performance Pay",
   roster: "Roster",
   projects: "Projects",
+  leadsmap: "Lead Heat Map",
 };
-let reportLoaded = false;
 
 function showScreen(name) {
-  for (const s of ["schedule", "report", "pay", "roster", "projects"]) {
+  for (const s of ["meeting", "schedule", "staging", "inventory", "pay", "roster", "projects", "leadsmap"]) {
     $(`screen-${s}`).hidden = s !== name;
   }
   $("screen-title").textContent = TITLES[name];
-  $("save-bar").classList.toggle("hidden", name !== "report");
-  $("week-label").hidden = name !== "schedule" && name !== "report";
+  $("week-label").hidden = name !== "schedule";
   document.querySelectorAll(".tab").forEach((t) =>
-    t.classList.toggle("active", t.dataset.screen === name)
+    // The map is a drill-down from the meeting; keep that tab lit.
+    t.classList.toggle(
+      "active",
+      t.dataset.screen === (name === "leadsmap" ? "meeting" : name)
+    )
   );
   if (name === "projects" && !allProjects.length) loadProjects();
-  if (name === "report") {
-    if (!reportLoaded) {
-      reportLoaded = true;
-      loadReportClasses().then(loadReport);
-    } else {
-      loadReport();
-    }
-    loadInventory();
+  if (name === "meeting") {
+    loadMeeting();
+    loadSnapshots();
+    loadInvCounts();
   }
+  if (name === "staging") loadStaging();
+  if (name === "inventory") loadInventory();
   if (name === "schedule") loadSchedule();
   if (name === "pay") {
     loadReportClasses().then(() => {
@@ -1900,7 +3818,6 @@ async function init() {
     state.laborMultiplier = cfg.laborMultiplier ?? 1.2;
     schedule.coverage = cfg.coverage ?? null;
     dataSource = cfg.source ?? "sample";
-    $("mult-label").textContent = state.laborMultiplier + "×";
     if (cfg.usingSampleData) $("sample-banner").hidden = false;
     if (cfg.ephemeralStorage) $("storage-warning").hidden = false;
   } catch {
@@ -1918,12 +3835,6 @@ async function init() {
   $("wo-clear").addEventListener("click", clearWorkOrders);
   await refreshPipelineStatus();
   refreshWoStatus();
-
-  // Live recalc on every report input.
-  document.getElementById("report-form").addEventListener("input", recalc);
-
-  $("btn-save").addEventListener("click", () => saveReport(false));
-  $("btn-submit").addEventListener("click", () => saveReport(true));
 
   document.querySelectorAll(".tab").forEach((tab) =>
     tab.addEventListener("click", () => showScreen(tab.dataset.screen))
@@ -1944,30 +3855,39 @@ async function init() {
   });
   $("pay-export").addEventListener("click", exportPay);
   $("roster-form").addEventListener("submit", submitRosterForm);
-  loadRoster(); // also fills crew-name suggestions on the schedule
 
-  // Inventory counts (Production Management tab).
-  $("inv-file").addEventListener("change", (e) => handleInvFile(e.target.files[0]));
-  $("inv-paste").addEventListener("click", () => {
-    $("inv-text").value = "";
-    $("inv-dialog").showModal();
-  });
-  $("inv-cancel").addEventListener("click", () => $("inv-dialog").close());
-  $("inv-form").addEventListener("submit", async (e) => {
-    const rows = invTextToRows($("inv-text").value);
-    if (rows.length < 3) {
-      e.preventDefault();
-      toast("Paste the counts first.", "error");
-      return;
-    }
-    try {
-      await postInventory(rows, null);
-    } catch (err) {
-      toast(err.message || "Couldn't read those counts.", "error");
-    }
-  });
-  $("inv-clear").addEventListener("click", clearInventory);
-  $("inv-apply").addEventListener("click", applyInventoryCost);
+  // Friday meeting.
+  $("meeting-prev").addEventListener("click", () =>
+    loadMeeting(shiftWeekIso(meeting.week || currentWeekStartIso(), -1))
+  );
+  $("meeting-next").addEventListener("click", () =>
+    loadMeeting(shiftWeekIso(meeting.week || currentWeekStartIso(), 1))
+  );
+  $("meeting-today").addEventListener("click", () => loadMeeting(currentWeekStartIso()));
+  $("meeting-user").value = localStorage.getItem("meetingUser") || "";
+  $("meeting-user").addEventListener("change", () =>
+    localStorage.setItem("meetingUser", meetingUser())
+  );
+  const meetingRoot = $("meeting-sections");
+  meetingRoot.addEventListener("change", meetingChange);
+  meetingRoot.addEventListener("click", meetingClick);
+  // "toggle" doesn't bubble — listen in the capture phase.
+  meetingRoot.addEventListener("toggle", meetingToggle, true);
+  $("meeting-export").addEventListener("click", exportMeeting);
+  $("meeting-snapshot").addEventListener("click", saveSnapshot);
+  $("meeting-snapshots").addEventListener("click", snapshotClick);
+
+  // Staging + inventory.
+  $("staging-prev").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, -1)));
+  $("staging-next").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, 1)));
+  $("staging-nextweek").addEventListener("click", () => loadStaging(nextWeekStartIso()));
+  $("staging-export").addEventListener("click", exportStaging);
+  $("inv-prev").addEventListener("click", () => loadInventory(shiftWeekIso(inventory.week, -1)));
+  $("inv-next").addEventListener("click", () => loadInventory(shiftWeekIso(inventory.week, 1)));
+  $("inv-nextweek").addEventListener("click", () => loadInventory(nextWeekStartIso()));
+  $("inventory-list").addEventListener("change", inventoryChange);
+  initLeadMapEvents();
+  loadRoster(); // also fills crew-name suggestions on the schedule
 
   // Week navigation.
   $("week-prev").addEventListener("click", () =>
@@ -1981,10 +3901,12 @@ async function init() {
     if (e.target.value) goToWeek(e.target.value); // server snaps to that week's Sunday
   });
 
-  // Production Management (the report) is the default screen; the Schedule,
-  // Pay and Roster tabs are hidden for now but their code stays wired up.
+  initInvCounts();
+
+  // Production Management (the meeting) is the default screen; the Schedule,
+  // Staging, Inventory, Pay and Roster tabs are hidden but stay wired up.
   await loadColors();
-  showScreen("report");
+  showScreen("meeting");
 }
 
 init();

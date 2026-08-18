@@ -1,43 +1,31 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { InventoryCountLine } from "../domain/inventory.js";
 import type { KvClient } from "./kv/kvClient.js";
 
-/** One week's uploaded inventory count. */
-export interface StoredInventoryWeek {
-  weekStart: string;
-  uploadedAt: string;
-  filename: string | null;
-  sourceLabel: string | null;
-  lines: InventoryCountLine[];
+/**
+ * On-hand material counts per class/location, keyed by the staging item key
+ * (see domain/staging.ts). The inventory screen compares these against the
+ * upcoming week's staged needs to flag shortfalls.
+ */
+
+export interface ClassInventory {
+  /** itemKey → on-hand quantity (boxes / bags / gallons / buckets). */
+  items: Record<string, number>;
+  updatedAt: string | null;
+  by: string | null;
 }
 
-/** Unit costs by item key (lower-cased cleaned item name) → dollars per unit. */
-export type PriceMap = Record<string, number>;
+export type InventoryMap = Record<string, ClassInventory>;
 
 export interface InventoryStore {
-  getWeek(weekStart: string): Promise<StoredInventoryWeek | null>;
-  setWeek(week: StoredInventoryWeek): Promise<void>;
-  deleteWeek(weekStart: string): Promise<void>;
-  /** All stored week-start dates, ascending. */
-  listWeekStarts(): Promise<string[]>;
-  getPrices(): Promise<PriceMap>;
-  /** Merge `prices` into the stored map; entries with value <= 0 are removed. */
-  setPrices(prices: PriceMap): Promise<PriceMap>;
-}
-
-function mergePrices(current: PriceMap, updates: PriceMap): PriceMap {
-  const next = { ...current };
-  for (const [key, value] of Object.entries(updates)) {
-    if (Number.isFinite(value) && value > 0) next[key] = value;
-    else delete next[key];
-  }
-  return next;
-}
-
-interface InventoryFile {
-  weeks: Record<string, StoredInventoryWeek>;
-  prices: PriceMap;
+  getAll(): Promise<InventoryMap>;
+  setItem(
+    className: string,
+    itemKey: string,
+    qty: number,
+    by: string | null,
+    nowIso: string
+  ): Promise<void>;
 }
 
 export class JsonInventoryStore implements InventoryStore {
@@ -48,114 +36,79 @@ export class JsonInventoryStore implements InventoryStore {
     this.file = path.resolve(dataDir, "inventory.json");
   }
 
-  private async read(): Promise<InventoryFile> {
+  async getAll(): Promise<InventoryMap> {
     try {
-      return JSON.parse(await fs.readFile(this.file, "utf8")) as InventoryFile;
+      return JSON.parse(await fs.readFile(this.file, "utf8")) as InventoryMap;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT")
-        return { weeks: {}, prices: {} };
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
       throw err;
     }
   }
 
-  private async write(mutate: (f: InventoryFile) => void): Promise<InventoryFile> {
-    let result!: InventoryFile;
+  async setItem(
+    className: string,
+    itemKey: string,
+    qty: number,
+    by: string | null,
+    nowIso: string
+  ): Promise<void> {
     const run = async () => {
-      const current = await this.read();
-      mutate(current);
+      const all = await this.getAll();
+      const cls = all[className] ?? { items: {}, updatedAt: null, by: null };
+      cls.items[itemKey] = qty;
+      cls.updatedAt = nowIso;
+      cls.by = by;
+      all[className] = cls;
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify(current), "utf8");
+      await fs.writeFile(tmp, JSON.stringify(all), "utf8");
       await fs.rename(tmp, this.file);
-      result = current;
     };
     this.writeChain = this.writeChain.then(run, run);
     await this.writeChain;
-    return result;
-  }
-
-  async getWeek(weekStart: string): Promise<StoredInventoryWeek | null> {
-    return (await this.read()).weeks[weekStart] ?? null;
-  }
-  async setWeek(week: StoredInventoryWeek): Promise<void> {
-    await this.write((f) => {
-      f.weeks[week.weekStart] = week;
-    });
-  }
-  async deleteWeek(weekStart: string): Promise<void> {
-    await this.write((f) => {
-      delete f.weeks[weekStart];
-    });
-  }
-  async listWeekStarts(): Promise<string[]> {
-    return Object.keys((await this.read()).weeks).sort();
-  }
-  async getPrices(): Promise<PriceMap> {
-    return (await this.read()).prices ?? {};
-  }
-  async setPrices(prices: PriceMap): Promise<PriceMap> {
-    const next = await this.write((f) => {
-      f.prices = mergePrices(f.prices ?? {}, prices);
-    });
-    return next.prices;
   }
 }
 
 export class KvInventoryStore implements InventoryStore {
-  private static readonly WEEKS = "inventory:weeks";
-  private static readonly PRICES = "inventory:prices";
+  private static readonly KEY = "inventory:current";
   constructor(private readonly kv: KvClient) {}
 
-  async getWeek(weekStart: string): Promise<StoredInventoryWeek | null> {
-    const all = await this.kv.hgetall<StoredInventoryWeek>(KvInventoryStore.WEEKS);
-    return all?.[weekStart] ?? null;
+  async getAll(): Promise<InventoryMap> {
+    return (await this.kv.get<InventoryMap>(KvInventoryStore.KEY)) ?? {};
   }
-  async setWeek(week: StoredInventoryWeek): Promise<void> {
-    await this.kv.hset(KvInventoryStore.WEEKS, week.weekStart, week);
-  }
-  async deleteWeek(weekStart: string): Promise<void> {
-    // KvClient has no hdel; overwrite with a tombstone the reads filter out.
-    await this.kv.hset(KvInventoryStore.WEEKS, weekStart, null);
-  }
-  async listWeekStarts(): Promise<string[]> {
-    const all = await this.kv.hgetall<StoredInventoryWeek>(KvInventoryStore.WEEKS);
-    return Object.entries(all ?? {})
-      .filter(([, v]) => v && Array.isArray(v.lines))
-      .map(([k]) => k)
-      .sort();
-  }
-  async getPrices(): Promise<PriceMap> {
-    return (await this.kv.get<PriceMap>(KvInventoryStore.PRICES)) ?? {};
-  }
-  async setPrices(prices: PriceMap): Promise<PriceMap> {
-    const next = mergePrices(await this.getPrices(), prices);
-    await this.kv.set(KvInventoryStore.PRICES, next);
-    return next;
+  async setItem(
+    className: string,
+    itemKey: string,
+    qty: number,
+    by: string | null,
+    nowIso: string
+  ): Promise<void> {
+    const all = await this.getAll();
+    const cls = all[className] ?? { items: {}, updatedAt: null, by: null };
+    cls.items[itemKey] = qty;
+    cls.updatedAt = nowIso;
+    cls.by = by;
+    all[className] = cls;
+    await this.kv.set(KvInventoryStore.KEY, all);
   }
 }
 
 export class MemoryInventoryStore implements InventoryStore {
-  private weeks = new Map<string, StoredInventoryWeek>();
-  private prices: PriceMap = {};
-
-  async getWeek(weekStart: string) {
-    const w = this.weeks.get(weekStart);
-    return w ? structuredClone(w) : null;
+  private state: InventoryMap = {};
+  async getAll() {
+    return structuredClone(this.state);
   }
-  async setWeek(week: StoredInventoryWeek) {
-    this.weeks.set(week.weekStart, structuredClone(week));
-  }
-  async deleteWeek(weekStart: string) {
-    this.weeks.delete(weekStart);
-  }
-  async listWeekStarts() {
-    return [...this.weeks.keys()].sort();
-  }
-  async getPrices() {
-    return { ...this.prices };
-  }
-  async setPrices(prices: PriceMap) {
-    this.prices = mergePrices(this.prices, prices);
-    return { ...this.prices };
+  async setItem(
+    className: string,
+    itemKey: string,
+    qty: number,
+    by: string | null,
+    nowIso: string
+  ) {
+    const cls = this.state[className] ?? { items: {}, updatedAt: null, by: null };
+    cls.items[itemKey] = qty;
+    cls.updatedAt = nowIso;
+    cls.by = by;
+    this.state[className] = cls;
   }
 }
