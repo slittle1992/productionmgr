@@ -1519,7 +1519,8 @@ const sales = {
   sales: null, // weekly flow / rep scorecard / area sold $
   appts: null, // { weeks: [...] } appointments + cancellations
   daily: null, // daily rubber/flake lead flow + goal pacing
-  goals: null, // { flakeMonthly, rubberMonthly }
+  goals: null, // per-location goals + (unused) type goals
+  dailyTasks: null, // today's checks, recent contracts, rehash list
 };
 
 const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
@@ -2363,12 +2364,6 @@ function renderLeadsStep() {
       <label class="btn-upload"><span>Upload leads</span>
         <input type="file" accept=".xlsx,.xls" data-upload="leads" hidden />
       </label>
-      <label class="btn-upload"><span>Sold contracts</span>
-        <input type="file" accept=".xlsx,.xls" data-upload="sold" hidden />
-      </label>
-      <label class="btn-upload"><span>Lead perf.</span>
-        <input type="file" accept=".xlsx,.xls" data-upload="perf" hidden />
-      </label>
     </div>
   </div>`;
   if (!meta) return html;
@@ -2385,7 +2380,7 @@ function renderLeadsStep() {
   }
 
   html += `<p class="hint">Window: ${escapeHtml(a.from)} → ${escapeHtml(a.to)} vs the ${a.windowDays} days before.</p>`;
-  html += renderLeadsSales(sales.sales);
+  html += renderLeadsFlowTable(sales.sales);
 
   const areaSales = sales.sales?.byCluster || null;
   for (const cls of a.classes) {
@@ -2461,60 +2456,125 @@ function renderLeadsStep() {
   return html;
 }
 
-/** Weekly lead flow + rep scorecard, fed by the sold/perf uploads. */
-function renderLeadsSales(sales) {
-  if (!sales) return "";
-  let html = "";
+/** Weekly LEADS flow per market — step 1's week-to-week view. */
+function renderLeadsFlowTable(sd) {
+  const wf = sd?.weeklyFlow || [];
+  if (!wf.length) return "";
+  // Market columns: the busiest markets across the window.
+  const totals = {};
+  for (const w of wf) {
+    for (const [cls, n] of Object.entries(w.byClass || {})) {
+      totals[cls] = (totals[cls] || 0) + n;
+    }
+  }
+  const markets = Object.entries(totals)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([cls]) => cls);
+  return `
+  <details class="mtg-class" data-open="leads:flow" ${meeting.open.has("leads:flow") ? "open" : ""}>
+    <summary><span class="mtg-class-name">Weekly lead flow</span>
+      <span class="mtg-class-info">per market, vs last year</span>
+    </summary>
+    <div class="table-wrap">
+    <table class="mtg-table leads-table">
+      <thead><tr><th>Week</th><th>Leads</th><th>Last yr</th><th>Δ</th>${markets
+        .map((m) => `<th>${escapeHtml(m.slice(0, 3))}</th>`)
+        .join("")}</tr></thead>
+      <tbody>
+        ${wf
+          .map((w) => {
+            const delta =
+              w.leadsLastYear > 0
+                ? Math.round(((w.leads - w.leadsLastYear) / w.leadsLastYear) * 100)
+                : null;
+            return `<tr>
+              <td>${fmtDay(w.weekStart)}</td>
+              <td><b>${w.leads}</b></td>
+              <td>${w.leadsLastYear || "—"}</td>
+              <td class="${delta !== null && delta >= 0 ? "lead-up" : delta !== null ? "lead-down" : ""}">${delta !== null ? (delta >= 0 ? "+" : "") + delta + "%" : "—"}</td>
+              ${markets.map((m) => `<td>${w.byClass?.[m] || ""}</td>`).join("")}
+            </tr>`;
+          })
+          .join("")}
+      </tbody>
+    </table>
+    </div>
+  </details>`;
+}
 
-  if (sales.leadsNeedReupload) {
+/** Weekly step 3 — Sales: sold $ per market + week, and the rep scorecard. */
+function renderSalesStep() {
+  const sd = sales.sales;
+  let html = `
+  <p class="card-help">Sold $ week to week with the rubber/flake mix, sold $
+  per market this month, and each rep's close rate (<b>jobs sold ÷ leads
+  issued</b>) and NSLI (<b>net $ ÷ leads issued</b>).</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      sd?.soldMeta
+        ? `<strong>${escapeHtml(sd.soldMeta.sourceLabel || sd.soldMeta.filename || "Sold contracts")}</strong> · ${sd.soldMeta.count.toLocaleString()} contracts${sd.perfMeta ? ` · perf: ${sd.perfMeta.reps} reps` : ""}`
+        : "Upload the <strong>Total Sales (Contracts)</strong> and <strong>Lead Performance</strong> (by Sales Person) exports."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Sold contracts</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="sold" hidden />
+      </label>
+      <label class="btn-upload"><span>Lead perf.</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="perf" hidden />
+      </label>
+    </div>
+  </div>`;
+  if (!sd) return html;
+
+  if (sd.leadsNeedReupload) {
     html += `<p class="hint">⚠ Re-upload the Clients List once — the stored copy
-      predates name matching, so sold contracts can't be tied to areas yet.</p>`;
+      predates name matching, so sold contracts can't be tied to markets yet.</p>`;
   }
 
-  const wf = sales.weeklyFlow || [];
+  const wf = (sd.weeklyFlow || []).filter(() => Boolean(sd.soldMeta));
   if (wf.length) {
-    const haveSold = Boolean(sales.soldMeta);
     html += `
-    <details class="mtg-class" data-open="leads:flow" ${meeting.open.has("leads:flow") ? "open" : ""}>
-      <summary><span class="mtg-class-name">Weekly flow</span>
-        <span class="mtg-class-info">leads week to week vs last year${haveSold ? " · sold $ + mix" : ""}</span>
+    <details class="mtg-class" data-open="sales:flow" ${meeting.open.has("sales:flow") ? "open" : ""}>
+      <summary><span class="mtg-class-name">Weekly sold $</span>
+        <span class="mtg-class-info">with the rubber vs flake mix</span>
       </summary>
       <table class="mtg-table leads-table">
-        <thead><tr><th>Week</th><th>Leads</th><th>Last yr</th><th>Δ</th>${haveSold ? "<th>Sold</th><th>Sold $</th><th>Flake $</th><th>Rubber $</th>" : ""}</tr></thead>
+        <thead><tr><th>Week</th><th>Sold</th><th>Sold $</th><th>Flake $</th><th>Rubber $</th></tr></thead>
         <tbody>
           ${wf
-            .map((w) => {
-              const delta =
-                w.leadsLastYear > 0
-                  ? Math.round(((w.leads - w.leadsLastYear) / w.leadsLastYear) * 100)
-                  : null;
-              return `<tr>
-                <td>${fmtDay(w.weekStart)}</td>
-                <td><b>${w.leads}</b></td>
-                <td>${w.leadsLastYear || "—"}</td>
-                <td class="${delta !== null && delta >= 0 ? "lead-up" : delta !== null ? "lead-down" : ""}">${delta !== null ? (delta >= 0 ? "+" : "") + delta + "%" : "—"}</td>
-                ${haveSold ? `<td>${w.soldCount || "—"}</td><td>${w.soldNet ? fmtMoney0(w.soldNet) : "—"}</td><td>${w.flakeNet ? fmtMoney0(w.flakeNet) : "—"}</td><td>${w.rubberNet ? fmtMoney0(w.rubberNet) : "—"}</td>` : ""}
-              </tr>`;
-            })
+            .map(
+              (w) => `<tr>
+              <td>${fmtDay(w.weekStart)}</td>
+              <td>${w.soldCount || "—"}</td>
+              <td><b>${w.soldNet ? fmtMoney0(w.soldNet) : "—"}</b></td>
+              <td>${w.flakeNet ? fmtMoney0(w.flakeNet) : "—"}</td>
+              <td>${w.rubberNet ? fmtMoney0(w.rubberNet) : "—"}</td>
+            </tr>`
+            )
             .join("")}
         </tbody>
       </table>
-      ${sales.soldMeta ? "" : `<p class="hint">Upload the <b>Sold Contracts</b> detail export to add sold $ and the flake/rubber mix.</p>`}
     </details>`;
+  } else {
+    html += `<p class="hint">Upload the <b>Sold Contracts</b> detail export for
+      the weekly sold $ and the market/rep views.</p>`;
   }
 
-  if (sales.repScorecard) {
-    const rangeLabel = sales.perfMeta?.sourceLabel || "";
+  // Per-market sold $ MTD comes from the Daily card's By-location table —
+  // point there instead of duplicating it.
+  if (sd.repScorecard) {
+    const rangeLabel = sd.perfMeta?.sourceLabel || "";
     html += `
     <details class="mtg-class" data-open="leads:reps" ${meeting.open.has("leads:reps") ? "open" : ""}>
       <summary><span class="mtg-class-name">Rep scorecard</span>
         <span class="mtg-class-info">close rate = sold ÷ issued · NSLI = net $ ÷ issued</span>
       </summary>
-      ${rangeLabel ? `<p class="hint">${escapeHtml(rangeLabel)}${sales.soldMeta ? "" : " — upload the Sold Contracts export for NSLI dollars"}</p>` : ""}
+      ${rangeLabel ? `<p class="hint">${escapeHtml(rangeLabel)}${sd.soldMeta ? "" : " — upload the Sold Contracts export for NSLI dollars"}</p>` : ""}
       <table class="mtg-table leads-table">
         <thead><tr><th>Rep</th><th>Issued</th><th>Demos</th><th>Sold</th><th>Close</th><th>Net $</th><th>NSLI</th></tr></thead>
         <tbody>
-          ${sales.repScorecard
+          ${sd.repScorecard
             .map((r) => {
               const close = r.closeRate !== null ? Math.round(r.closeRate * 100) : null;
               return `<tr>
@@ -2529,7 +2589,7 @@ function renderLeadsSales(sales) {
             })
             .join("")}
           ${(() => {
-            const t = sales.repScorecard.reduce(
+            const t = sd.repScorecard.reduce(
               (acc, r) => ({
                 issued: acc.issued + r.issued,
                 demos: acc.demos + r.demos,
@@ -2549,13 +2609,13 @@ function renderLeadsSales(sales) {
         </tbody>
       </table>
     </details>`;
-  } else if (sales.soldMeta) {
+  } else if (sd.soldMeta) {
     html += `<p class="hint">Upload the <b>Lead Performance Summary</b> (by Sales Person) to add close rate and NSLI per rep.</p>`;
   }
 
-  if (sales.joinInfo && sales.joinInfo.total > 0) {
-    const pct = Math.round((sales.joinInfo.joined / sales.joinInfo.total) * 100);
-    html += `<p class="hint">Area sold-$ join: ${sales.joinInfo.joined}/${sales.joinInfo.total} contracts (${pct}%) matched to a lead's zip by client name.</p>`;
+  if (sd.joinInfo && sd.joinInfo.total > 0) {
+    const pct = Math.round((sd.joinInfo.joined / sd.joinInfo.total) * 100);
+    html += `<p class="hint">Market joins: ${sd.joinInfo.joined}/${sd.joinInfo.total} contracts (${pct}%) matched to a market by client name. Per-market sold $ MTD lives in the Daily card's By-location table.</p>`;
   }
   return html;
 }
@@ -2581,6 +2641,7 @@ async function loadSales() {
     sales.appts = data.appointments;
     sales.daily = data.daily;
     sales.goals = data.goals;
+    sales.dailyTasks = data.dailyTasks;
     renderSales();
   } catch (err) {
     toast(err.message || "Couldn't load the sales data.", "error");
@@ -2639,6 +2700,39 @@ function renderApptsStep() {
     </tbody>
   </table>`;
 
+  // Per-market appointments for the latest week (zips joined via the leads).
+  if (latest?.byClass?.length) {
+    const prior = weeks[1] || null;
+    const priorByCls = new Map((prior?.byClass || []).map((c) => [c.className, c]));
+    html += `
+    <details class="mtg-class" data-open="appts:markets" ${meeting.open.has("appts:markets") ? "open" : ""}>
+      <summary><span class="mtg-class-name">By market — week of ${fmtDay(latest.weekStart)}</span>
+        <span class="mtg-class-info">${latest.byClass.length} markets${prior ? ` · vs ${fmtDay(prior.weekStart)}` : ""}</span>
+      </summary>
+      <table class="mtg-table leads-table">
+        <thead><tr><th>Market</th><th>Appts</th>${prior ? "<th>Prior wk</th>" : ""}<th>Cancelled</th><th>Cancel %</th></tr></thead>
+        <tbody>
+          ${latest.byClass
+            .map((c) => {
+              const p = priorByCls.get(c.className);
+              const rate = c.total > 0 ? c.cancelled / c.total : null;
+              return `<tr>
+                <td>${escapeHtml(c.className)}</td>
+                <td><b>${c.total}</b></td>
+                ${prior ? `<td>${p ? p.total : "—"}</td>` : ""}
+                <td>${c.cancelled || ""}</td>
+                <td class="${rate !== null && rate >= 0.3 ? "lead-down" : ""}">${rate !== null && c.cancelled ? pct1(rate) : "—"}</td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </details>`;
+  } else if (latest) {
+    html += `<p class="hint">Re-upload this week's Meetings export to see the
+      market split (older uploads didn't store the appointment zips).</p>`;
+  }
+
   // Per-rep appointments for the latest week, with the prior week alongside.
   if (latest?.byRep?.length) {
     const prior = weeks[1] || null;
@@ -2689,42 +2783,30 @@ function renderDailyStep() {
       upload today's Clients List (step 1) to see today's leads.</div>`;
   }
 
-  // Goal pacing — the action signal.
-  if (d.pace.length) {
-    const label = { flake: "Flake", rubber: "Rubber", total: "Total" };
-    html += d.pace
-      .map((p) => {
-        const ahead = p.delta >= 0;
-        return `
-      <div class="pace-row${p.onTrack ? "" : " off"}">
-        <span class="pace-type">${label[p.type]}</span>
-        <span class="pace-mtd"><b>${p.mtd}</b> of ${p.goal} in ${d.month.label}</span>
-        <span class="pace-badge ${ahead ? "up" : "down"}">${ahead ? "▲" : "▼"} ${Math.abs(p.delta).toFixed(0)} ${ahead ? "ahead of" : "behind"} pace</span>
-        <span class="pace-note">${
-          p.neededPerDay !== null
-            ? `need <b>${p.neededPerDay.toFixed(1)}/day</b> · doing ${p.last7PerDay.toFixed(1)}/day → lands ≈ ${p.projected}`
-            : `month over — finished at ${p.mtd}`
-        }</span>
-      </div>`;
-      })
-      .join("");
-  } else {
-    html += `<p class="hint">Set the monthly lead goals below to see pace —
-      ahead/behind by today, and the per-day rate needed to finish the month.</p>`;
+  // Rubber vs flake mix — no goals per type, but the ticket gap (~$13.8k
+  // rubber vs ~$5.2k flake) means a flake-heavy month misses the $ quota
+  // even at full lead volume. Surface the mix as the diagnostic.
+  const mx = d.mix;
+  if (mx && d.hasType) {
+    const sharePct = (v) => (v === null ? "—" : Math.round(v * 100) + "%");
+    html += `
+    <div class="pace-row${mx.mixWarning ? " off" : ""}">
+      <span class="pace-type">Mix</span>
+      <span class="pace-mtd">MTD: <b>${mx.flakeMtd}</b> flake · <b>${mx.rubberMtd}</b> rubber
+        (rubber ${sharePct(mx.rubberShareMtd)}${mx.rubberSharePrev !== null ? `, last mo ${sharePct(mx.rubberSharePrev)}` : ""})</span>
+      ${
+        mx.flakeAvgTicket !== null || mx.rubberAvgTicket !== null
+          ? `<span class="pace-note">avg ticket: flake ${mx.flakeAvgTicket !== null ? fmtMoney0(mx.flakeAvgTicket) : "—"} · rubber ${mx.rubberAvgTicket !== null ? fmtMoney0(mx.rubberAvgTicket) : "—"}</span>`
+          : ""
+      }
+    </div>`;
+    if (mx.mixWarning) {
+      html += `<div class="stg-warn">⚠ $ is behind pace while lead volume isn't —
+        rubber share fell from ${Math.round(mx.rubberSharePrev * 100)}% to
+        ${Math.round(mx.rubberShareMtd * 100)}%. The miss is the <b>mix</b>
+        (rubber tickets run ~2.5× flake), not the lead count.</div>`;
+    }
   }
-
-  // Goal inputs.
-  html += `
-  <div class="goal-bar">
-    <label>Flake goal / mo
-      <input type="number" min="0" step="1" inputmode="numeric" data-goal="flakeMonthly"
-        value="${g.flakeMonthly ?? ""}" placeholder="—" />
-    </label>
-    <label>Rubber goal / mo
-      <input type="number" min="0" step="1" inputmode="numeric" data-goal="rubberMonthly"
-        value="${g.rubberMonthly ?? ""}" placeholder="—" />
-    </label>
-  </div>`;
 
   if (!d.hasType) {
     html += `<p class="hint">⚠ The stored leads have no project type — add the
@@ -2819,34 +2901,76 @@ function renderSales() {
     </details>`;
 
   const leadsSub = sales.meta
-    ? `${sales.meta.count.toLocaleString()} leads loaded${sales.sales?.perfMeta ? ` · ${sales.sales.perfMeta.reps} reps` : ""}`
+    ? `${sales.meta.count.toLocaleString()} leads loaded`
     : "upload the clients export";
   const apptsSub = latest
     ? `wk ${fmtDay(latest.weekStart)}: ${latest.total} appts · ${pct1(latest.cancelRate)} cancelled`
     : "upload the weekly meetings export";
+  const salesSub = sales.sales?.soldMeta
+    ? `${sales.sales.soldMeta.count.toLocaleString()} contracts${sales.sales.perfMeta ? ` · ${sales.sales.perfMeta.reps} reps` : ""}`
+    : "upload the sold + lead performance exports";
 
-  const pace = sales.daily?.pace || [];
-  const offPace = pace.filter((p) => !p.onTrack);
+  // Daily card subtitle: the Company pace row is the health signal.
+  const co = (sales.daily?.byClass || []).find((c) => c.className === "Company");
   const dailySub = !sales.meta
-    ? "needs the leads report from step 1"
-    : pace.length
-    ? offPace.length
-      ? `${offPace.map((p) => p.type).join(" + ")} behind goal`
-      : "on pace for the month"
-    : "set the monthly lead goals";
+    ? "needs the leads report (Weekly step 1)"
+    : co && (co.leadsDelta !== null || co.volDelta !== null)
+    ? [
+        co.leadsDelta !== null
+          ? `leads ${co.leadsDelta >= 0 ? "+" : ""}${Math.round(co.leadsDelta)} vs pace`
+          : null,
+        co.volDelta !== null
+          ? `$ ${co.volDelta >= 0 ? "+" : "−"}${Math.round(Math.abs(co.volDelta) / 1000)}k vs pace`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "set the monthly goals";
+
+  const checks = sales.dailyTasks?.checks || {};
+  const dailyDone = (key) => Boolean(checks[key]?.done);
+  const checkRow = (key, label) => `
+    <label class="mtg-signoff${dailyDone(key) ? " signed" : ""}">
+      <input type="checkbox" data-daily="${key}" ${dailyDone(key) ? "checked" : ""} />
+      <span>${dailyDone(key) ? `${label} — done today ✓` : label}</span>
+    </label>`;
+
+  const onPace =
+    Boolean(sales.meta) && co && (co.leadsDelta ?? 0) >= 0 && (co.volDelta ?? 0) >= 0;
 
   $("sales-sections").innerHTML = `
     <div class="sales-group">Daily</div>
+    ${step(1, "ssec:daily", "Lead flow vs goal — rubber & flake", dailySub, onPace, renderDailyStep())}
     ${step(
-      1,
-      "ssec:daily",
-      "Lead flow vs goal — rubber & flake",
-      dailySub,
-      Boolean(sales.meta) && pace.length > 0 && offPace.length === 0,
-      renderDailyStep()
+      2,
+      "ssec:contracts",
+      "Review sold contracts",
+      sales.dailyTasks?.recentSold?.length
+        ? `${sales.dailyTasks.recentSold.length} in the last 3 days`
+        : "needs a fresh sold-contracts upload",
+      dailyDone("contracts"),
+      renderContractsReviewStep() + checkRow("contracts", "Contracts reviewed")
+    )}
+    ${step(
+      3,
+      "ssec:rilla",
+      "Listen to Rilla recordings",
+      dailyDone("rilla") ? "done today" : "pick 2–3 reps' calls",
+      dailyDone("rilla"),
+      renderRillaStep() + checkRow("rilla", "Rilla recordings reviewed")
+    )}
+    ${step(
+      4,
+      "ssec:rehash",
+      "Call the no-sales (rehash)",
+      sales.dailyTasks?.rehash?.length
+        ? `${sales.dailyTasks.rehash.length} demos didn't close — call them`
+        : "needs this week's meetings export",
+      dailyDone("rehash"),
+      renderRehashStep() + checkRow("rehash", "Rehash calls made")
     )}
     <div class="sales-group">Weekly</div>
-    ${step(1, "ssec:leads", "Leads reports", leadsSub, Boolean(sales.meta), renderLeadsStep())}
+    ${step(1, "ssec:leads", "Leads — by market", leadsSub, Boolean(sales.meta), renderLeadsStep())}
     ${step(
       2,
       "ssec:appts",
@@ -2854,7 +2978,98 @@ function renderSales() {
       apptsSub,
       Boolean(latest),
       renderApptsStep()
+    )}
+    ${step(
+      3,
+      "ssec:sales",
+      "Sales — markets & reps",
+      salesSub,
+      Boolean(sales.sales?.soldMeta && sales.sales?.perfMeta),
+      renderSalesStep()
     )}`;
+}
+
+/** Daily 2 — eyeball yesterday's contracts: right price, right product. */
+function renderContractsReviewStep() {
+  const t = sales.dailyTasks || {};
+  let html = `
+  <p class="card-help">Check every new contract: sale amount vs the average
+  ticket, right project type, discounts in line. Needs a fresh <b>Sold
+  Contracts</b> upload (Weekly step 3) — the list shows the last 3 days.</p>`;
+  if (!t.recentSold?.length) {
+    html += `<p class="hint">${
+      t.soldUploadedAt
+        ? `No contracts in the last 3 days of the stored upload (from ${fmtDate(t.soldUploadedAt)}) — upload today's export to review today's sales.`
+        : "Upload the Sold Contracts export to see the contracts to review."
+    }</p>`;
+    return html;
+  }
+  html += `
+  <table class="mtg-table leads-table">
+    <thead><tr><th>Date</th><th>Rep</th><th>Client</th><th>Type</th><th>Sale $</th></tr></thead>
+    <tbody>
+      ${t.recentSold
+        .map(
+          (s) => `<tr>
+        <td>${fmtMsDate(s.saleMs)}</td>
+        <td>${escapeHtml(s.rep || "—")}</td>
+        <td>${escapeHtml(s.client || "—")}</td>
+        <td>${/rubber/i.test(s.projectType || "") ? "Rubber" : "Flake"}</td>
+        <td><b>${fmtMoney0(s.saleAmount)}</b></td>
+      </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>`;
+  return html;
+}
+
+/** Daily 3 — Rilla call recordings. */
+function renderRillaStep() {
+  const url = sales.dailyTasks?.rillaUrl;
+  return `
+  <p class="card-help">Listen to a few of yesterday's sales conversations —
+  rotate through the reps so everyone gets heard each week. Note coaching
+  points for the weekly one-on-ones.</p>
+  ${
+    url
+      ? `<a class="btn-upload" href="${escapeHtml(url)}" target="_blank" rel="noopener"><span>Open Rilla ↗</span></a>`
+      : `<p class="hint">Set the <code>RILLA_URL</code> environment variable to get a one-tap link here.</p>`
+  }`;
+}
+
+/** Daily 4 — rehash: demos that didn't close, with phone numbers. */
+function renderRehashStep() {
+  const t = sales.dailyTasks || {};
+  let html = `
+  <p class="card-help">Every demo that didn't close is a warm call — try to
+  save it or book a second look. Built from the latest <b>Meetings</b> upload
+  (statuses DEMO NO SALE / STILL INTERESTED).</p>`;
+  if (!t.rehash?.length) {
+    html += `<p class="hint">${
+      t.rehashWeek
+        ? "Re-upload this week's Meetings export — the stored week predates the call list."
+        : "Upload the weekly Meetings export (Weekly step 2) to build the call list."
+    }</p>`;
+    return html;
+  }
+  html += `<p class="hint">Week of ${fmtDay(t.rehashWeek)} — ${t.rehash.length} to call.</p>
+  <table class="mtg-table leads-table">
+    <thead><tr><th>Client</th><th>Phone</th><th>Rep</th><th>Status</th></tr></thead>
+    <tbody>
+      ${t.rehash
+        .map(
+          (r) => `<tr>
+        <td>${escapeHtml(r.client)}</td>
+        <td>${r.phone ? `<a href="tel:${escapeHtml(r.phone.replace(/[^0-9+]/g, ""))}">${escapeHtml(r.phone)}</a>` : "—"}</td>
+        <td>${escapeHtml(r.rep || "—")}</td>
+        <td>${escapeHtml(r.status)}</td>
+      </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>`;
+  return html;
 }
 
 async function handleSalesUpload(kind, file) {
@@ -2896,6 +3111,14 @@ async function handleSalesUpload(kind, file) {
 async function salesChange(e) {
   const t = e.target;
   try {
+    if (t.dataset.daily) {
+      await meetingApi("/api/leads/daily-check", "POST", {
+        key: t.dataset.daily,
+        done: t.checked,
+      });
+      await loadSales();
+      return;
+    }
     if (t.dataset.goalClass && t.dataset.goalField) {
       await meetingApi("/api/leads/goals", "POST", {
         className: t.dataset.goalClass,

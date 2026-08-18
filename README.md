@@ -185,62 +185,77 @@ staging workbook.
 ## Sales Management (Sales tab)
 
 The sales manager's own workflow, separate from the production meeting.
+The weekly review reads market-first — **Leads → Meetings → Sales** — and
+the daily cadence is four tasks, each with a per-day check that resets
+tomorrow.
 
-**Daily** — **Lead flow vs goal (rubber & flake)**, powered by the latest
-Clients List upload. Set a monthly lead goal for flake and one for rubber
-(saved in the app); the card then shows, per type and in total: **MTD leads
-vs where you should be by today** (goal spread evenly over the month, ▲/▼
-badge with the lead count ahead/behind), the **per-day rate needed** to
-still hit the goal, the trailing-7-day rate actually being run, and where
-the month **lands** at that rate — red when the projection misses. A
-**By location** table paces each market's month against its **monthly
-leads goal and sold-$ quota** (`src/data/defaultGoals.ts` seeds the
-numbers from the company's Quick Pacing tracker; edit any cell inline
-when the month's goals change — edits persist and win). Leads per
-location are exact; per-location sold $ joins contracts to leads by
-client name (the Company row is exact regardless). Below it, a **daily
-table of the last 14 days** split flake vs rubber. The split
-needs the **Project Type** column included in the Clients List export
-(the card says so if it's missing; totals work regardless), and a freshness
-note nudges "upload today's Clients List" whenever the newest lead in the
-data is older than today — making the upload itself the daily habit.
+**Daily**
+
+1. **Lead flow vs goal — rubber & flake**, powered by the latest Clients
+   List upload. A **By location** table paces each market's month against
+   its **monthly leads goal and sold-$ quota** (`src/data/defaultGoals.ts`
+   seeds the numbers from the company's Quick Pacing tracker; edit any
+   cell inline when the month's goals change — edits persist and win).
+   Leads per location are exact; per-location sold $ joins contracts to
+   leads by client name (the Company row is exact regardless). No goals
+   are set per project type, but the **mix is the diagnostic**: rubber
+   tickets run ~2.5× flake, so the card shows the MTD rubber share vs
+   last month and the avg ticket per type, and warns when **$ is behind
+   pace while lead volume isn't and rubber share fell** — the miss is the
+   mix, not the volume. Below it, a **daily table of the last 14 days**
+   split flake vs rubber. The split needs the **Project Type** column in
+   the Clients List export (the card says so if it's missing; totals work
+   regardless), and a freshness note nudges "upload today's Clients List"
+   whenever the newest lead is older than today — making the upload
+   itself part of the daily habit.
+2. **Review sold contracts** — the last 3 days of contracts (date, rep,
+   client, type, sale $) from the Sold Contracts upload, to catch
+   mispriced or mistyped deals while they're fresh.
+3. **Listen to Rilla recordings** — one-tap link (set `RILLA_URL`), with
+   a note to rotate through the reps.
+4. **Call the no-sales (rehash)** — every DEMO NO SALE / STILL INTERESTED
+   appointment from the latest Meetings upload, with tap-to-call phone
+   numbers and the rep who ran the demo.
 
 **Weekly** steps:
 
-1. **Leads reports** — upload the **Clients List** export. Leads group per
-   location, then by **ZIP cluster** (first three digits ≈ a metro: 752xx
-   Dallas, 761xx Fort Worth). Pick a window (last week / 4 weeks / quarter):
-   each cluster shows leads vs the prior equal window and its **share shift**
-   in points, with ▲/▼ movement chips per location. Zips with 10+ all-time
-   leads and **zero sales ever** are flagged. The **🗺 Heat map + all zips**
-   button opens a full-screen choropleth — every zip shaded by lead volume
-   (or jobs, all-time), tap a zip for its numbers — above a sortable,
-   searchable table of **every zip** with its own .xlsx export. Zip
-   boundaries are vendored US Census ZCTA polygons
-   (`public/vendor/tx-zips.json`, public-domain TIGER/Line data, simplified).
-   Two more Builder Prime exports make the step actionable:
-   **Total Sales (Contracts)** detail and the **Lead Performance Summary by
-   Sales Person** (upload buttons next to the Clients List). Together they add:
-   - **Weekly flow** — leads and sold $ per week with last-year comparison
-     (52 weeks back) and the **rubber vs flake mix** from each contract's
-     Project Type.
-   - **Rep scorecard** — close rate (**jobs sold ÷ leads issued**, Builder
-     Prime's true funnel, not per-appointment) and **NSLI** (net sold $ ÷
-     leads issued) per rep over the performance report's range, with a
-     computed company footer row.
-   - **Area sales** — sold $ and NSLI-per-lead per zip cluster, joined from
-     contracts to leads by client name (the exports carry no zip). By-area
-     close rate is per-lead conversion — Builder Prime doesn't report
-     issued-by-zip. Cancelled contracts are excluded everywhere.
+1. **Leads — by market** — upload the **Clients List** export. A
+   **weekly lead flow** table (total vs last year, plus a column per
+   market) leads into the by-location ZIP-cluster analysis: pick a
+   window (last week / 4 weeks / quarter); each cluster shows leads vs
+   the prior equal window and its **share shift** in points, with ▲/▼
+   movement chips per location. Zips with 10+ all-time leads and **zero
+   sales ever** are flagged. The **🗺 Heat map + all zips** button opens
+   a full-screen choropleth — every zip shaded by lead volume (or jobs,
+   all-time), tap a zip for its numbers — above a sortable, searchable
+   table of **every zip** with its own .xlsx export. Zip boundaries are
+   vendored US Census ZCTA polygons (`public/vendor/tx-zips.json`,
+   public-domain TIGER/Line data, simplified).
 2. **Meetings — appointments & cancellations** — upload the weekly
    **Meetings** export ("Meetings Between 08/09/2026 and 08/15/2026"; the
    title pins which week it saves to, so past weeks can be backfilled).
    Rows with a client count as appointments; OFF / UNAVAILABLE / TRAINING
-   blockers are skipped; **Cancelled** comes from the Meeting Status column.
-   Each upload replaces its week, and the step shows the **cancellation
-   rate week over week** (with the points-change vs the prior week) plus
-   **appointments per rep** for the latest week alongside the prior week's
-   count, high per-rep cancel rates flagged.
+   blockers are skipped; **Cancelled** comes from the Meeting Status
+   column. Each upload replaces its week. The step shows the
+   **cancellation rate week over week** (with the points-change vs the
+   prior week), the split **by market** (each appointment's zip comes
+   from the meeting title and joins to a market via the leads upload),
+   and **appointments per rep** alongside the prior week's count, high
+   per-rep cancel rates flagged.
+3. **Sales — markets & reps** — upload the **Total Sales (Contracts)**
+   detail and the **Lead Performance Summary by Sales Person** exports.
+   Together they power:
+   - **Weekly sold $** with the **rubber vs flake mix** from each
+     contract's Project Type.
+   - **Rep scorecard** — close rate (**jobs sold ÷ leads issued**,
+     Builder Prime's true funnel, not per-appointment) and **NSLI**
+     (net sold $ ÷ leads issued) per rep over the performance report's
+     range, with a computed company footer row.
+   - **Area sales** — sold $ and NSLI-per-lead per zip cluster in step
+     1's tables, joined from contracts to leads by client name (the
+     exports carry no zip). By-area close rate is per-lead conversion —
+     Builder Prime doesn't report issued-by-zip. Cancelled contracts are
+     excluded everywhere.
 
 ---
 

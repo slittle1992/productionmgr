@@ -14,6 +14,15 @@ export interface RepAppointments {
   cancelled: number;
 }
 
+/** A demo that didn't sell — the daily rehash call list. */
+export interface NoSaleRow {
+  client: string;
+  phone: string | null;
+  rep: string | null;
+  status: string;
+  projectType: string | null;
+}
+
 export interface MeetingsParseResult {
   fromMs: number | null;
   toMs: number | null;
@@ -21,6 +30,10 @@ export interface MeetingsParseResult {
   total: number;
   cancelled: number;
   byRep: RepAppointments[];
+  /** Appointments per zip3 prefix (from the title's trailing zip) — the
+   * server joins these to markets via the leads upload. */
+  byZip3: Record<string, { t: number; c: number }>;
+  noSales: NoSaleRow[];
 }
 
 const text = (v: unknown): string | null => {
@@ -32,6 +45,8 @@ const text = (v: unknown): string | null => {
 const CANCELLED_RE = /cancel/i;
 /** Calendar-blocker types that can still carry a client by accident. */
 const BLOCKER_TYPE_RE = /^(off|unavailable|training|home show)/i;
+/** Demo happened, no sale — worth a rehash call. */
+const NO_SALE_RE = /DEMO NO SALE|STILL INTERESTED/i;
 
 export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
   let header: { row: number; cols: Record<string, number> } | null = null;
@@ -84,6 +99,8 @@ export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
   }
 
   const perRep = new Map<string, RepAppointments>();
+  const byZip3: Record<string, { t: number; c: number }> = {};
+  const noSaleByClient = new Map<string, NoSaleRow>();
   let total = 0;
   let cancelled = 0;
   for (let r = h.row + 1; r < grid.length; r++) {
@@ -100,6 +117,25 @@ export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
     slot.total++;
     if (isCancelled) slot.cancelled++;
     perRep.set(rep, slot);
+
+    // The title carries the client's zip ("Joe Ybarra 78253").
+    const zip = text(cell(row, "title"))?.match(/(\d{5})\s*$/)?.[1] ?? null;
+    const z3 = zip ? zip.slice(0, 3) : "?";
+    (byZip3[z3] ??= { t: 0, c: 0 }).t++;
+    if (isCancelled) byZip3[z3]!.c++;
+
+    // Rehash list: demos that didn't sell (deduped per client, kept even if
+    // one of their meetings was cancelled — the status is what matters).
+    const status = text(cell(row, "status"));
+    if (status && NO_SALE_RE.test(status) && !isCancelled) {
+      noSaleByClient.set(client.toLowerCase(), {
+        client,
+        phone: text(cell(row, "phone")),
+        rep,
+        status,
+        projectType: text(cell(row, "project type")),
+      });
+    }
   }
   if (!total) {
     throw new PipelineFormatError(
@@ -114,5 +150,9 @@ export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
     total,
     cancelled,
     byRep: [...perRep.values()].sort((a, b) => b.total - a.total),
+    byZip3,
+    noSales: [...noSaleByClient.values()].sort((a, b) =>
+      a.client.localeCompare(b.client)
+    ),
   };
 }

@@ -220,3 +220,30 @@ describe("per-location goal pacing", () => {
     expect(d.volJoin).toEqual({ joined: 1, total: 2 });
   });
 });
+
+describe("rubber vs flake mix diagnostic", () => {
+  const NOW = Date.UTC(2026, 7, 18, 12);
+  const DAY = 86_400_000;
+  const mk = (daysAgo: number, pt: "rubber" | "flake"): CompactLead => ({
+    zip: "75201", className: "Dallas", city: null,
+    created: NOW - daysAgo * DAY, cat: "open", pt, name: `n${daysAgo}-${pt}-${Math.random()}`,
+  });
+
+  it("warns when $ lags pace but lead volume doesn't and rubber share fell", () => {
+    const leads: CompactLead[] = [];
+    for (let i = 0; i < 18; i++) leads.push(mk(i, "flake")); // 18 flake MTD
+    leads.push(mk(0, "rubber"), mk(1, "rubber")); // 2 rubber MTD (10%)
+    for (let i = 25; i < 30; i++) leads.push(mk(i, "flake"), mk(i, "rubber")); // July: 50%
+    const goals = {
+      flakeMonthly: null, rubberMonthly: null,
+      classGoals: { Dallas: { leads: 31, volume: 310000 } }, // leads on pace, $ at zero
+    };
+    const d = computeDailyLeadFlow(leads, goals, NOW, []);
+    expect(d.mix.rubberShareMtd).toBeCloseTo(0.1);
+    expect(d.mix.rubberSharePrev).toBeCloseTo(0.5);
+    const co = d.byClass.find((c) => c.className === "Company")!;
+    expect(co.leadsDelta).toBeGreaterThanOrEqual(0);
+    expect(co.volDelta).toBeLessThan(0);
+    expect(d.mix.mixWarning).toBe(true);
+  });
+});

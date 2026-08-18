@@ -221,6 +221,8 @@ export function leadsRouter(
           total: parsed.total,
           cancelled: parsed.cancelled,
           byRep: parsed.byRep,
+          byZip3: parsed.byZip3,
+          noSales: parsed.noSales,
           uploadedAt: new Date(now()).toISOString(),
           filename: body.filename ?? null,
           sourceLabel: parsed.sourceLabel,
@@ -280,6 +282,23 @@ export function leadsRouter(
     })
   );
 
+  // POST /api/leads/daily-check — tick/untick one of the daily tasks.
+  const dailyBody = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    key: z.enum(["contracts", "rilla", "rehash"]),
+    done: z.boolean(),
+  });
+  router.post(
+    "/leads/daily-check",
+    asyncHandler(async (req, res) => {
+      const body = dailyBody.parse(req.body);
+      const at = new Date(now()).toISOString();
+      const date = body.date ?? at.slice(0, 10);
+      await store.setDailyCheck(date, body.key, body.done, at);
+      res.json({ ok: true, date });
+    })
+  );
+
   // GET /api/leads?days=7|28|91 — analysis by location → zip cluster.
   router.get(
     "/leads",
@@ -291,28 +310,90 @@ export function leadsRouter(
         .max(365)
         .optional()
         .parse(req.query.days || undefined) ?? 28;
-      const [meta, leads, sold, perf, appts, storedGoals] = await Promise.all([
-        store.getMeta(),
-        store.getLeads(),
-        store.getSold(),
-        store.getPerf(),
-        store.getAppts(),
-        store.getGoals(),
-      ]);
+      const [meta, leads, sold, perf, appts, storedGoals, dailyChecks] =
+        await Promise.all([
+          store.getMeta(),
+          store.getLeads(),
+          store.getSold(),
+          store.getPerf(),
+          store.getAppts(),
+          store.getGoals(),
+          store.getDailyChecks(),
+        ]);
+      const nowMs = now();
+      const soldRows = sold?.rows ?? [];
       // Seeded per-location goals show until an edit stores an override.
       const goals = {
         ...storedGoals,
         classGoals: { ...DEFAULT_CLASS_GOALS, ...(storedGoals.classGoals ?? {}) },
       };
+
+      // zip3 → market, by majority of all-time leads — joins the meetings
+      // export's appointment zips to locations.
+      const zip3Class = new Map<string, Map<string, number>>();
+      for (const l of leads) {
+        if (l.zip === "?") continue;
+        const z3 = l.zip.slice(0, 3);
+        const m = zip3Class.get(z3) ?? new Map<string, number>();
+        m.set(l.className, (m.get(l.className) ?? 0) + 1);
+        zip3Class.set(z3, m);
+      }
+      const classOfZip3 = (z3: string): string => {
+        const m = zip3Class.get(z3);
+        if (!m) return "Unassigned";
+        return [...m.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+      };
       const appointments = {
         weeks: Object.values(appts)
           .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
           .slice(0, 12)
-          .map((w) => ({
-            ...w,
-            cancelRate: w.total > 0 ? w.cancelled / w.total : null,
-          })),
+          .map((w) => {
+            let byClass: { className: string; total: number; cancelled: number }[] | null =
+              null;
+            if (w.byZip3) {
+              const acc = new Map<string, { total: number; cancelled: number }>();
+              for (const [z3, v] of Object.entries(w.byZip3)) {
+                const cls = z3 === "?" ? "Unassigned" : classOfZip3(z3);
+                const slot = acc.get(cls) ?? { total: 0, cancelled: 0 };
+                slot.total += v.t;
+                slot.cancelled += v.c;
+                acc.set(cls, slot);
+              }
+              byClass = [...acc.entries()]
+                .map(([className, v]) => ({ className, ...v }))
+                .sort((a, b) => b.total - a.total);
+            }
+            return {
+              ...w,
+              byClass,
+              cancelRate: w.total > 0 ? w.cancelled / w.total : null,
+            };
+          }),
       };
+
+      // The daily tasks: today's ticks, the recent contracts to eyeball, and
+      // the rehash call list from the latest meetings upload.
+      const todayIso = new Date(nowMs).toISOString().slice(0, 10);
+      const latestAppts = appointments.weeks[0] ?? null;
+      const threeDaysAgo = nowMs - 3 * 86400000;
+      const dailyTasks = {
+        today: todayIso,
+        checks: dailyChecks[todayIso] ?? {},
+        rillaUrl: process.env.RILLA_URL ?? null,
+        recentSold: soldRows
+          .filter(
+            (s) =>
+              s.saleMs !== null &&
+              s.saleMs >= threeDaysAgo &&
+              !(s.status && /cancel/i.test(s.status))
+          )
+          .sort((a, b) => (b.saleMs ?? 0) - (a.saleMs ?? 0))
+          .slice(0, 30),
+        soldUploadedAt: sold?.uploadedAt ?? null,
+        rehash: latestAppts?.noSales ?? null,
+        rehashWeek: latestAppts?.weekStart ?? null,
+      };
+
       if (!meta) {
         res.json({
           meta: null,
@@ -320,12 +401,11 @@ export function leadsRouter(
           sales: null,
           appointments,
           daily: null,
+          dailyTasks,
           goals,
         });
         return;
       }
-      const nowMs = now();
-      const soldRows = sold?.rows ?? [];
       const named = leads.filter((l) => l.name).length;
       const area = sold
         ? salesByCluster(leads, soldRows, nowMs - days * 86400000, nowMs)
@@ -334,6 +414,7 @@ export function leadsRouter(
         meta,
         appointments,
         goals,
+        dailyTasks,
         daily: computeDailyLeadFlow(leads, goals, nowMs, soldRows),
         analysis: buildLeadsAnalysis(leads, nowMs, days),
         sales: {

@@ -352,6 +352,26 @@ export interface GoalPace {
   onTrack: boolean;
 }
 
+/**
+ * Rubber vs flake mix diagnostic — no goals are set per type, but the ticket
+ * sizes differ so much (~$13.8k rubber vs ~$5.2k flake) that a flake-heavy
+ * month misses the $ quota even when lead volume is on pace.
+ */
+export interface MixDiagnostic {
+  flakeMtd: number;
+  rubberMtd: number;
+  /** rubber ÷ (rubber + flake), MTD leads. Null with no typed leads. */
+  rubberShareMtd: number | null;
+  /** Same share over the previous full calendar month. */
+  rubberSharePrev: number | null;
+  /** Avg net ticket MTD per type from the sold contracts. */
+  flakeAvgTicket: number | null;
+  rubberAvgTicket: number | null;
+  /** True when $ is behind pace, lead volume isn't, and rubber share fell —
+   * the miss is the mix, not the volume. */
+  mixWarning: boolean;
+}
+
 export interface DailyLeadFlow {
   days: DailyLeadDay[];
   /** Whether any lead carries a project type (the export had the column). */
@@ -364,6 +384,7 @@ export interface DailyLeadFlow {
   byClass: ClassPace[];
   /** How many of the month's sold contracts joined to a location by name. */
   volJoin: { joined: number; total: number };
+  mix: MixDiagnostic;
 }
 
 const DAY_MS = 86_400_000;
@@ -382,6 +403,7 @@ export function computeDailyLeadFlow(
   const byDay = new Map<number, DailyLeadDay>();
   const now = new Date(nowMs);
   const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+  const prevMonthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1);
   const daysInMonth = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)
   ).getUTCDate();
@@ -393,6 +415,7 @@ export function computeDailyLeadFlow(
   const last7 = { flake: 0, rubber: 0, total: 0 };
   const classLeadsMtd = new Map<string, number>();
   const leadClassByName = new Map<string, string>();
+  const prevMix = { flake: 0, rubber: 0 };
   for (const l of leads) {
     if (l.name) leadClassByName.set(l.name, l.className);
     if (dataThroughMs === null || l.created > dataThroughMs) dataThroughMs = l.created;
@@ -420,6 +443,9 @@ export function computeDailyLeadFlow(
       if (l.pt === "flake") mtd.flake++;
       else if (l.pt === "rubber") mtd.rubber++;
       classLeadsMtd.set(l.className, (classLeadsMtd.get(l.className) ?? 0) + 1);
+    } else if (l.created >= prevMonthStart && l.created < monthStart) {
+      if (l.pt === "flake") prevMix.flake++;
+      else if (l.pt === "rubber") prevMix.rubber++;
     }
     if (l.created >= today - 6 * DAY_MS && l.created < today + DAY_MS) {
       last7.total++;
@@ -479,12 +505,20 @@ export function computeDailyLeadFlow(
   let volCompany = 0;
   let volJoined = 0;
   let volTotal = 0;
+  const soldMix = { flakeNet: 0, flakeCount: 0, rubberNet: 0, rubberCount: 0 };
   for (const s of sold) {
     if (s.saleMs === null || s.saleMs < monthStart || s.saleMs >= nowMs + DAY_MS)
       continue;
     if (s.status && CANCELLED_RE.test(s.status)) continue;
     volTotal++;
     volCompany += s.saleAmount;
+    if (/rubber/i.test(s.projectType ?? "")) {
+      soldMix.rubberNet += s.saleAmount;
+      soldMix.rubberCount++;
+    } else {
+      soldMix.flakeNet += s.saleAmount;
+      soldMix.flakeCount++;
+    }
     const cls = s.clientKey ? leadClassByName.get(s.clientKey) : undefined;
     if (!cls) continue;
     volJoined++;
@@ -536,6 +570,28 @@ export function computeDailyLeadFlow(
     volDelta: companyVolGoal ? r2(volCompany - companyVolGoal * share) : null,
   });
 
+  const typedMtd = mtd.flake + mtd.rubber;
+  const typedPrev = prevMix.flake + prevMix.rubber;
+  const rubberShareMtd = typedMtd > 0 ? r2(mtd.rubber / typedMtd) : null;
+  const rubberSharePrev = typedPrev > 0 ? r2(prevMix.rubber / typedPrev) : null;
+  const company = byClass[byClass.length - 1]!;
+  const mix: MixDiagnostic = {
+    flakeMtd: mtd.flake,
+    rubberMtd: mtd.rubber,
+    rubberShareMtd,
+    rubberSharePrev,
+    flakeAvgTicket:
+      soldMix.flakeCount > 0 ? r2(soldMix.flakeNet / soldMix.flakeCount) : null,
+    rubberAvgTicket:
+      soldMix.rubberCount > 0 ? r2(soldMix.rubberNet / soldMix.rubberCount) : null,
+    mixWarning:
+      (company.volDelta ?? 0) < 0 &&
+      (company.leadsDelta ?? 0) >= 0 &&
+      rubberShareMtd !== null &&
+      rubberSharePrev !== null &&
+      rubberShareMtd < rubberSharePrev,
+  };
+
   return {
     days: out,
     hasType,
@@ -548,6 +604,7 @@ export function computeDailyLeadFlow(
     pace,
     byClass,
     volJoin: { joined: volJoined, total: volTotal },
+    mix,
   };
 }
 

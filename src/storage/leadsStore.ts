@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { RepAppointments } from "../domain/appointments.js";
+import type { NoSaleRow, RepAppointments } from "../domain/appointments.js";
 import type { CompactLead } from "../domain/leads.js";
 import type { LeadGoals, PerfParseResult, SoldContract } from "../domain/sales.js";
 import type { KvClient } from "./kv/kvClient.js";
@@ -36,10 +36,16 @@ export interface StoredApptsWeek {
   total: number;
   cancelled: number;
   byRep: RepAppointments[];
+  /** Optional on weeks stored before these fields existed. */
+  byZip3?: Record<string, { t: number; c: number }>;
+  noSales?: NoSaleRow[];
   uploadedAt: string;
   filename: string | null;
   sourceLabel: string | null;
 }
+
+/** The daily task sign-offs (sold-contracts review, Rilla, rehash calls). */
+export type DailyChecks = Record<string, Record<string, { done: boolean; at: string }>>;
 
 export interface LeadsStore {
   getSold(): Promise<StoredSold | null>;
@@ -59,6 +65,8 @@ export interface LeadsStore {
   /** Monthly lead goals (flake/rubber) for the Daily pacing view. */
   getGoals(): Promise<LeadGoals>;
   setGoals(goals: LeadGoals): Promise<void>;
+  getDailyChecks(): Promise<DailyChecks>;
+  setDailyCheck(date: string, key: string, done: boolean, at: string): Promise<void>;
   getMeta(): Promise<LeadsMeta | null>;
   getLeads(): Promise<CompactLead[]>;
   set(leads: CompactLead[], meta: LeadsMeta): Promise<void>;
@@ -95,6 +103,7 @@ interface SalesFileShape {
   appts: Record<string, StoredApptsWeek>;
   goals: LeadGoals;
   pendingSold: PendingSold | null;
+  dailyChecks: DailyChecks;
 }
 
 export class JsonLeadsStore implements LeadsStore {
@@ -144,6 +153,7 @@ export class JsonLeadsStore implements LeadsStore {
         appts: {},
         goals: EMPTY_GOALS,
         pendingSold: null,
+        dailyChecks: {},
         ...raw,
       };
     } catch (err) {
@@ -154,6 +164,7 @@ export class JsonLeadsStore implements LeadsStore {
           appts: {},
           goals: EMPTY_GOALS,
           pendingSold: null,
+          dailyChecks: {},
         };
       throw err;
     }
@@ -225,6 +236,14 @@ export class JsonLeadsStore implements LeadsStore {
   async setGoals(goals: LeadGoals) {
     await this.writeSales((s) => {
       s.goals = goals;
+    });
+  }
+  async getDailyChecks() {
+    return (await this.readSales()).dailyChecks;
+  }
+  async setDailyCheck(date: string, key: string, done: boolean, at: string) {
+    await this.writeSales((s) => {
+      (s.dailyChecks[date] ??= {})[key] = { done, at };
     });
   }
   async getMeta() {
@@ -335,6 +354,15 @@ export class KvLeadsStore implements LeadsStore {
   async setGoals(goals: LeadGoals) {
     await this.kv.set(KvLeadsStore.GOALS, goals);
   }
+  private static readonly DAILY = "sales:dailychecks";
+  async getDailyChecks() {
+    return (await this.kv.get<DailyChecks>(KvLeadsStore.DAILY)) ?? {};
+  }
+  async setDailyCheck(date: string, key: string, done: boolean, at: string) {
+    const all = await this.getDailyChecks();
+    (all[date] ??= {})[key] = { done, at };
+    await this.kv.set(KvLeadsStore.DAILY, all);
+  }
 
   async getMeta() {
     return await this.kv.get<LeadsMeta>(KvLeadsStore.META);
@@ -417,6 +445,13 @@ export class MemoryLeadsStore implements LeadsStore {
   }
   async setGoals(goals: LeadGoals) {
     this.goals = structuredClone(goals);
+  }
+  private dailyChecks: DailyChecks = {};
+  async getDailyChecks() {
+    return structuredClone(this.dailyChecks);
+  }
+  async setDailyCheck(date: string, key: string, done: boolean, at: string) {
+    (this.dailyChecks[date] ??= {})[key] = { done, at };
   }
   private leads: CompactLead[] = [];
   private pendingId: string | null = null;
