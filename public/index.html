@@ -165,6 +165,13 @@
         </div>
       </section>
 
+      <!-- ─────────────────── Sales Management ─────────────────── -->
+      <section id="screen-sales" class="screen" hidden>
+        <div id="sales-sections">
+          <div class="loading">Loading…</div>
+        </div>
+      </section>
+
       <!-- ───────────────────────── Staging ───────────────────────── -->
       <section id="screen-staging" class="screen" hidden>
         <div class="week-bar">
@@ -245,7 +252,10 @@
     <!-- Bottom tabs: the weekly flow — Meeting → Schedule → Staging → Inventory -->
     <nav class="tabbar">
       <button class="tab active" data-screen="meeting" type="button">
-        <span class="tab-icon">✅</span><span>Production Management</span>
+        <span class="tab-icon">✅</span><span>Production</span>
+      </button>
+      <button class="tab" data-screen="sales" type="button">
+        <span class="tab-icon">📈</span><span>Sales</span>
       </button>
       <!-- Schedule, Staging, Inventory, Pay and Roster are hidden for now
            (code kept intact — remove `hidden` to bring one back). -->

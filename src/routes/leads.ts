@@ -5,7 +5,9 @@ import {
   buildZipTable,
   parseClientsExport,
 } from "../domain/leads.js";
+import { parseMeetingsExport } from "../domain/appointments.js";
 import { PipelineFormatError } from "../domain/pipeline.js";
+import { getReportingWeek } from "../domain/week.js";
 import type { LeadsStore } from "../storage/leadsStore.js";
 import {
   computeRepScorecard,
@@ -157,6 +159,49 @@ export function leadsRouter(
     })
   );
 
+  // POST /api/leads/meetings — the weekly Meetings export (appointments +
+  // cancellations). The report title pins the week; each upload replaces it.
+  router.post(
+    "/leads/meetings",
+    asyncHandler(async (req, res) => {
+      const body = gridBody.parse(req.body);
+      try {
+        const parsed = parseMeetingsExport(body.rows);
+        if (parsed.fromMs === null) {
+          res.status(400).json({
+            error: "invalid_meetings",
+            message:
+              'Couldn\'t find the week in the title ("Meetings Between …") — ' +
+              "export the report for one week so results save to the right week.",
+          });
+          return;
+        }
+        const week = getReportingWeek(parsed.fromMs, weekStartDay);
+        await store.setApptsWeek({
+          weekStart: week.weekStart,
+          total: parsed.total,
+          cancelled: parsed.cancelled,
+          byRep: parsed.byRep,
+          uploadedAt: new Date(now()).toISOString(),
+          filename: body.filename ?? null,
+          sourceLabel: parsed.sourceLabel,
+        });
+        res.json({
+          ok: true,
+          weekStart: week.weekStart,
+          total: parsed.total,
+          cancelled: parsed.cancelled,
+        });
+      } catch (err) {
+        if (err instanceof PipelineFormatError) {
+          res.status(400).json({ error: "invalid_meetings", message: err.message });
+          return;
+        }
+        throw err;
+      }
+    })
+  );
+
   // GET /api/leads?days=7|28|91 — analysis by location → zip cluster.
   router.get(
     "/leads",
@@ -168,14 +213,24 @@ export function leadsRouter(
         .max(365)
         .optional()
         .parse(req.query.days || undefined) ?? 28;
-      const [meta, leads, sold, perf] = await Promise.all([
+      const [meta, leads, sold, perf, appts] = await Promise.all([
         store.getMeta(),
         store.getLeads(),
         store.getSold(),
         store.getPerf(),
+        store.getAppts(),
       ]);
+      const appointments = {
+        weeks: Object.values(appts)
+          .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+          .slice(0, 12)
+          .map((w) => ({
+            ...w,
+            cancelRate: w.total > 0 ? w.cancelled / w.total : null,
+          })),
+      };
       if (!meta) {
-        res.json({ meta: null, analysis: null, sales: null });
+        res.json({ meta: null, analysis: null, sales: null, appointments });
         return;
       }
       const nowMs = now();
@@ -186,6 +241,7 @@ export function leadsRouter(
         : null;
       res.json({
         meta,
+        appointments,
         analysis: buildLeadsAnalysis(leads, nowMs, days),
         sales: {
           soldMeta: sold

@@ -197,7 +197,7 @@ export function meetingRouter(service: MeetingService): Router {
   // PATCH /api/meeting/section — manual per-section sign-off.
   const sectionBody = z.object({
     week: isoWeek,
-    key: z.enum(["pastdue", "workorders", "pipeline", "labor", "materials", "reviews", "lytx", "ramp", "leads", "vip"]),
+    key: z.enum(["pastdue", "workorders", "pipeline", "labor", "materials", "reviews", "lytx", "ramp", "vip"]),
     done: z.boolean(),
     by: z.string().trim().max(120).nullable().optional(),
   });

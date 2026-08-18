@@ -4,11 +4,13 @@ A phone-first web app that replaces the weekly production-report spreadsheet.
 It pulls everything Builder Prime can supply, does all the math, and leaves the
 manager with only the handful of fields a human actually has to enter.
 
-The visible screen is **Production Management** — the Friday meeting
+Two visible tabs, one per workflow: **Production** — the Friday meeting
 checklist with the scoreboard, labor rates, and the weekly inventory-count →
-material-cost section. The Schedule, Staging, Inventory, Pay, Roster, and
-Projects screens are built and fully wired but hidden from the tab bar for
-now (remove `hidden` from a button in `public/index.html` to bring one back).
+material-cost section — and **Sales** — the sales manager's own cadence
+(leads reports, appointments & cancellations). The Schedule, Staging,
+Inventory, Pay, Roster, and Projects screens are built and fully wired but
+hidden from the tab bar for now (remove `hidden` from a button in
+`public/index.html` to bring one back).
 
 ---
 
@@ -48,15 +50,20 @@ Then `npm start` again — the banner disappears and real projects load.
 
 ## What the manager sees
 
-One visible tab — **Production Management** (the meeting, the default
-screen). The Schedule, Staging, Inventory, Pay, Roster, and Projects tabs
-are hidden for now: their code is intact, remove `hidden` from a button in
-`public/index.html` to bring one back. All built for a thumb:
+Two visible tabs — **Production** (the meeting, the default screen) and
+**Sales** (the sales manager's workflow). The Schedule, Staging, Inventory,
+Pay, Roster, and Projects tabs are hidden for now: their code is intact,
+remove `hidden` from a button in `public/index.html` to bring one back. All
+built for a thumb:
 
-- **Production Management** *(default screen)* — the Friday Production
+- **Production** *(default screen)* — the Friday Production
   Meeting checklist (below). The pipeline uploaded here feeds the Schedule.
   Checklist item №5 is **Inventory counts & material cost** — see the
   meeting section below.
+- **Sales** — the sales manager's step-by-step cadence: a Daily section
+  (steps coming) and the Weekly steps — leads reports and the Meetings
+  export (appointments per rep + cancellation rate, saved week over week).
+  See **Sales Management** below.
 - **Schedule** *(hidden)* — the weekly production schedule that
   replaces the spreadsheet. Jobs are pulled from Builder Prime, grouped by
   **class**, each showing Customer, Job #, project type, scheduled day, SQFT,
@@ -79,7 +86,7 @@ endpoints still exist server-side.)
 
 ## Friday Production Meeting (Meeting tab)
 
-A 10-item weekly checklist that the owner, production manager, or an admin can
+A 9-item weekly checklist that the owner, production manager, or an admin can
 run from a phone or desktop. A **"What you'll need"** strip at the top lists
 every input the meeting takes (exports, payroll, counts, material spend) with
 a live ✓ as each one lands — tap a chip to jump to its section. Below it, a
@@ -88,7 +95,7 @@ labor rate, material $ and %, **spec material $** (completed jobs joined to
 their pipeline SQFT and run through the coverage math at PO prices), and the
 **usage multiple** (actual ÷ spec — 1.0× means crews used exactly what the
 spec calls for), color-coded. Each section shows a progress ring; the header
-tracks "N of 10 done". Enter your name once at the top — it's stamped on every
+tracks "N of 9 done". Enter your name once at the top — it's stamped on every
 sign-off, note, and update so next week you know who owns what.
 
 1. **Past due balances** — upload the Builder Prime **Unpaid Invoices** export.
@@ -152,39 +159,12 @@ sign-off, note, and update so next week you know who owns what.
    (configurable via `REVIEWS_DASHBOARD_URL`, `LYTX_DASHBOARD_URL`,
    `RAMP_DASHBOARD_URL`), a notes box for what you found (incidents, counts,
    actions taken), and a *Mark reviewed* sign-off.
-9. **Leads by area** — upload the **Clients List** export. Leads group per
-   location, then by **ZIP cluster** (first three digits ≈ a metro: 752xx
-   Dallas, 761xx Fort Worth). Pick a window (last week / 4 weeks / quarter):
-   each cluster shows leads vs the prior equal window and its **share shift**
-   in points, with ▲/▼ movement chips per location ("leads moving toward
-   Plano, away from Fort Worth"). Zips with 10+ all-time leads and **zero
-   sales ever** are flagged. Included in the meeting export and snapshots.
-   The **🗺 Heat map + all zips** button opens a full-screen choropleth —
-   every zip shaded by lead volume (or jobs, all-time), tap a zip for its
-   numbers — above a sortable, searchable table of **every zip** (leads,
-   prior window, all-time, jobs, conversion) with its own .xlsx export.
-   Zip boundaries are vendored US Census ZCTA polygons
-   (`public/vendor/tx-zips.json`, public-domain TIGER/Line data, simplified).
-   Two more Builder Prime exports make the section actionable:
-   **Total Sales (Contracts)** detail and the **Lead Performance Summary by
-   Sales Person** (upload buttons next to the Clients List). Together they add:
-   - **Weekly flow** — leads and sold $ per week with last-year comparison
-     (52 weeks back) and the **rubber vs flake mix** from each contract's
-     Project Type.
-   - **Rep scorecard** — close rate (**jobs sold ÷ leads issued**, Builder
-     Prime's true funnel, not per-appointment) and **NSLI** (net sold $ ÷
-     leads issued) per rep over the performance report's range, with a
-     computed company footer row.
-   - **Area sales** — sold $ and NSLI-per-lead per zip cluster, joined from
-     contracts to leads by client name (the exports carry no zip). By-area
-     close rate is per-lead conversion — Builder Prime doesn't report
-     issued-by-zip. Cancelled contracts are excluded everywhere.
-10. **VIP Lead — To-Dos & Crews** — the closing check: open VIP Lead
-    (one-tap link via `VIP_LEAD_URL`), clear the Production To-Do bucket
-    (nothing unclaimed or stale), and check each VIP Crew channel against
-    the roster — right people in the right crew channels, posting on the
-    expected cadence. Notes box + *Mark reviewed* sign-off, like the other
-    dashboard checks.
+9. **VIP Lead — To-Dos & Crews** — the closing check: open VIP Lead
+   (one-tap link via `VIP_LEAD_URL`), clear the Production To-Do bucket
+   (nothing unclaimed or stale), and check each VIP Crew channel against
+   the roster — right people in the right crew channels, posting on the
+   expected cadence. Notes box + *Mark reviewed* sign-off, like the other
+   dashboard checks.
 
 Every section also has a manual **sign-off** row recording who completed it
 and when. Follow-ups, tags, and per-week state persist in the shared database,
@@ -199,6 +179,48 @@ whole week server-side — the computed meeting, next week's staging list, and
 the inventory position. Later uploads can't change a saved week; the "Saved
 weeks" list under the meeting re-downloads any archived week's meeting or
 staging workbook.
+
+---
+
+## Sales Management (Sales tab)
+
+The sales manager's own workflow, separate from the production meeting. A
+**Daily** section (steps to come) and the **Weekly** steps:
+
+1. **Leads reports** — upload the **Clients List** export. Leads group per
+   location, then by **ZIP cluster** (first three digits ≈ a metro: 752xx
+   Dallas, 761xx Fort Worth). Pick a window (last week / 4 weeks / quarter):
+   each cluster shows leads vs the prior equal window and its **share shift**
+   in points, with ▲/▼ movement chips per location. Zips with 10+ all-time
+   leads and **zero sales ever** are flagged. The **🗺 Heat map + all zips**
+   button opens a full-screen choropleth — every zip shaded by lead volume
+   (or jobs, all-time), tap a zip for its numbers — above a sortable,
+   searchable table of **every zip** with its own .xlsx export. Zip
+   boundaries are vendored US Census ZCTA polygons
+   (`public/vendor/tx-zips.json`, public-domain TIGER/Line data, simplified).
+   Two more Builder Prime exports make the step actionable:
+   **Total Sales (Contracts)** detail and the **Lead Performance Summary by
+   Sales Person** (upload buttons next to the Clients List). Together they add:
+   - **Weekly flow** — leads and sold $ per week with last-year comparison
+     (52 weeks back) and the **rubber vs flake mix** from each contract's
+     Project Type.
+   - **Rep scorecard** — close rate (**jobs sold ÷ leads issued**, Builder
+     Prime's true funnel, not per-appointment) and **NSLI** (net sold $ ÷
+     leads issued) per rep over the performance report's range, with a
+     computed company footer row.
+   - **Area sales** — sold $ and NSLI-per-lead per zip cluster, joined from
+     contracts to leads by client name (the exports carry no zip). By-area
+     close rate is per-lead conversion — Builder Prime doesn't report
+     issued-by-zip. Cancelled contracts are excluded everywhere.
+2. **Meetings — appointments & cancellations** — upload the weekly
+   **Meetings** export ("Meetings Between 08/09/2026 and 08/15/2026"; the
+   title pins which week it saves to, so past weeks can be backfilled).
+   Rows with a client count as appointments; OFF / UNAVAILABLE / TRAINING
+   blockers are skipped; **Cancelled** comes from the Meeting Status column.
+   Each upload replaces its week, and the step shows the **cancellation
+   rate week over week** (with the points-change vs the prior week) plus
+   **appointments per rep** for the latest week alongside the prior week's
+   count, high per-rep cancel rates flagged.
 
 ---
 

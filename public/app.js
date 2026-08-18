@@ -1497,8 +1497,7 @@ const MEETING_SECTIONS = [
   { key: "reviews", n: 6, title: "Reviews dashboard" },
   { key: "lytx", n: 7, title: "Lytx incidents" },
   { key: "ramp", n: 8, title: "Ramp spend" },
-  { key: "leads", n: 9, title: "Leads by area" },
-  { key: "vip", n: 10, title: "VIP Lead — To-Dos & Crews" },
+  { key: "vip", n: 9, title: "VIP Lead — To-Dos & Crews" },
 ];
 
 const meeting = {
@@ -1509,10 +1508,16 @@ const meeting = {
   // Pending payroll-workbook uploads awaiting a "use this sheet" pick,
   // keyed by class — each market uploads its own payroll workbook.
   payroll: {},
-  // Leads analysis: window in days + cached analysis keyed by upload+window.
-  leadsDays: 28,
-  leadsView: null,
-  leadsKey: null,
+};
+
+// Sales Management tab state: leads-by-area analysis + the weekly
+// appointments (Meetings export) rollups. Shares meeting.open for <details>.
+const sales = {
+  meta: null, // leads upload meta from GET /api/leads
+  days: 28,
+  analysis: null, // leads-by-area view
+  sales: null, // weekly flow / rep scorecard / area sold $
+  appts: null, // { weeks: [...] } appointments + cancellations
 };
 
 const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
@@ -1646,7 +1651,6 @@ function renderMeetingPrep(v) {
     { sec: "labor", icon: "🧾", label: "Payroll per location", done: payrollDone },
     { sec: "materials", icon: "📦", label: "Inventory counts (all locations)", done: counts > 0, note: counts ? `${counts} in` : "" },
     { sec: "materials", icon: "💵", label: "Material spend $ per location", done: spendDone },
-    { sec: "leads", icon: "📍", label: "Clients List export", done: Boolean(v.leads) },
   ];
   const ready = items.filter((i) => i.done).length;
   const el = $("meeting-prep");
@@ -1691,7 +1695,6 @@ function renderMeeting() {
     reviews: renderCheckSection(v, "reviews"),
     lytx: renderCheckSection(v, "lytx"),
     ramp: renderCheckSection(v, "ramp"),
-    leads: renderLeadsSection(v),
     vip: renderCheckSection(v, "vip"),
   };
   const subs = {
@@ -1712,9 +1715,6 @@ function renderMeeting() {
     reviews: v.checks.reviews.status === "done" ? "reviewed" : "needs review",
     lytx: v.checks.lytx.status === "done" ? "reviewed" : "needs review",
     ramp: v.checks.ramp.status === "done" ? "reviewed" : "needs review",
-    leads: v.leads
-      ? `${v.leads.count.toLocaleString()} leads loaded`
-      : "upload the clients export",
     vip: v.checks.vip.status === "done" ? "reviewed" : "needs review",
   };
 
@@ -2336,7 +2336,8 @@ const LEAD_WINDOWS = [
   { days: 91, label: "Last quarter" },
 ];
 
-function renderLeadsSection(v) {
+function renderLeadsStep() {
+  const meta = sales.meta;
   let html = `
   <p class="card-help">Where leads come from, per location — clustered by ZIP
   prefix (761 = Fort Worth, 752 = Dallas…). <b>Share shift</b> compares this
@@ -2345,8 +2346,8 @@ function renderLeadsSection(v) {
   flagged.</p>
   <div class="pipeline-bar">
     <div class="pipeline-status">${
-      v.leads
-        ? `<strong>${escapeHtml(v.leads.sourceLabel || v.leads.filename || "Clients list")}</strong> · ${v.leads.count.toLocaleString()} leads · uploaded ${fmtDate(v.leads.uploadedAt)}`
+      meta
+        ? `<strong>${escapeHtml(meta.sourceLabel || meta.filename || "Clients list")}</strong> · ${meta.count.toLocaleString()} leads · uploaded ${fmtDate(meta.uploadedAt)}`
         : "Upload the Builder Prime <strong>Clients List</strong> export."
     }</div>
     <div class="pipeline-actions">
@@ -2361,24 +2362,23 @@ function renderLeadsSection(v) {
       </label>
     </div>
   </div>`;
-  if (!v.leads) return html;
+  if (!meta) return html;
 
   html += `<div class="class-chips leads-windows">${LEAD_WINDOWS.map(
     (w) => `<button type="button" class="chip-btn ${
-      meeting.leadsDays === w.days ? "active" : ""
+      sales.days === w.days ? "active" : ""
     }" data-act="leads-window" data-days="${w.days}">${w.label}</button>`
   ).join("")}<button type="button" class="chip-btn map-open-btn" data-act="open-map">🗺 Heat map + all zips</button></div>`;
 
-  const a = meeting.leadsView;
-  if (!a || meeting.leadsKey !== `${v.leads.uploadedAt}|${meeting.leadsDays}`) {
-    fetchLeadsAnalysis();
-    return html + `<div class="loading">Crunching ${v.leads.count.toLocaleString()} leads…</div>`;
+  const a = sales.analysis;
+  if (!a) {
+    return html + `<div class="loading">Crunching ${meta.count.toLocaleString()} leads…</div>`;
   }
 
   html += `<p class="hint">Window: ${escapeHtml(a.from)} → ${escapeHtml(a.to)} vs the ${a.windowDays} days before.</p>`;
-  html += renderLeadsSales(meeting.leadsSales);
+  html += renderLeadsSales(sales.sales);
 
-  const areaSales = meeting.leadsSales?.byCluster || null;
+  const areaSales = sales.sales?.byCluster || null;
   for (const cls of a.classes) {
     const openKey = `leads:${cls.className}`;
     const trend =
@@ -2556,22 +2556,212 @@ function clusterLabel(c) {
   return c.cluster === "?" ? "No zip" : `${c.cluster}xx${cities}`;
 }
 
-async function fetchLeadsAnalysis() {
-  const v = meeting.view;
-  if (!v?.leads) return;
-  const key = `${v.leads.uploadedAt}|${meeting.leadsDays}`;
-  if (meeting.leadsKey === key || fetchLeadsAnalysis._busy === key) return;
-  fetchLeadsAnalysis._busy = key;
+// ─────────────────────────── Sales Management tab ───────────────────────────
+// The sales manager's own workflow: a Daily section (coming) and the Weekly
+// steps — 1) upload the leads reports, 2) upload the Meetings export for
+// appointments per rep + the cancellation rate, saved week over week.
+
+async function loadSales() {
+  if (loadSales._busy) return;
+  loadSales._busy = true;
   try {
-    const data = await meetingApi(`/api/leads?days=${meeting.leadsDays}`, "GET");
-    meeting.leadsView = data.analysis;
-    meeting.leadsSales = data.sales;
-    meeting.leadsKey = key;
-    renderMeeting();
-  } catch {
-    /* leave the loading state; a re-open retries */
+    const data = await meetingApi(`/api/leads?days=${sales.days}`, "GET");
+    sales.meta = data.meta;
+    sales.analysis = data.analysis;
+    sales.sales = data.sales;
+    sales.appts = data.appointments;
+    renderSales();
+  } catch (err) {
+    toast(err.message || "Couldn't load the sales data.", "error");
   } finally {
-    fetchLeadsAnalysis._busy = null;
+    loadSales._busy = false;
+  }
+}
+
+const pct1 = (x) => (x === null || x === undefined ? "—" : (x * 100).toFixed(1) + "%");
+
+function renderApptsStep() {
+  const weeks = sales.appts?.weeks || [];
+  const latest = weeks[0] || null;
+  let html = `
+  <p class="card-help">Export the Builder Prime <b>Meetings</b> report for one
+  week (Sun–Sat) — the title pins which week it saves to, so you can backfill
+  past weeks too. Appointments are rows with a client; <b>Cancelled</b> comes
+  from the Meeting Status column. Re-uploading a week replaces it.</p>
+  <div class="pipeline-bar">
+    <div class="pipeline-status">${
+      latest
+        ? `<strong>Week of ${fmtDay(latest.weekStart)}</strong> · ${latest.total} appointments · ${latest.cancelled} cancelled · uploaded ${fmtDate(latest.uploadedAt)}`
+        : "Upload the weekly <strong>Meetings</strong> export to start."
+    }</div>
+    <div class="pipeline-actions">
+      <label class="btn-upload"><span>Upload meetings</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="meetings" hidden />
+      </label>
+    </div>
+  </div>`;
+  if (!weeks.length) return html;
+
+  // Week-over-week cancellation trend.
+  html += `
+  <table class="mtg-table leads-table">
+    <thead><tr><th>Week</th><th>Appts</th><th>Cancelled</th><th>Cancel %</th><th>Δ vs prior</th></tr></thead>
+    <tbody>
+      ${weeks
+        .map((w, i) => {
+          const prior = weeks[i + 1];
+          const delta =
+            prior && w.cancelRate !== null && prior.cancelRate !== null
+              ? (w.cancelRate - prior.cancelRate) * 100
+              : null;
+          return `<tr>
+            <td>${fmtDay(w.weekStart)}</td>
+            <td><b>${w.total}</b></td>
+            <td>${w.cancelled}</td>
+            <td><b>${pct1(w.cancelRate)}</b></td>
+            <td class="${delta !== null && delta > 0.5 ? "lead-down" : delta !== null && delta < -0.5 ? "lead-up" : ""}">${
+              delta !== null ? (delta > 0 ? "+" : "") + delta.toFixed(1) + " pts" : "—"
+            }</td>
+          </tr>`;
+        })
+        .join("")}
+    </tbody>
+  </table>`;
+
+  // Per-rep appointments for the latest week, with the prior week alongside.
+  if (latest?.byRep?.length) {
+    const prior = weeks[1] || null;
+    const priorByRep = new Map((prior?.byRep || []).map((r) => [r.rep, r]));
+    const openKey = "appts:reps";
+    html += `
+    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+      <summary><span class="mtg-class-name">Appointments per rep — week of ${fmtDay(latest.weekStart)}</span>
+        <span class="mtg-class-info">${latest.byRep.length} reps${prior ? ` · vs ${fmtDay(prior.weekStart)}` : ""}</span>
+      </summary>
+      <table class="mtg-table leads-table">
+        <thead><tr><th>Rep</th><th>Appts</th>${prior ? "<th>Prior wk</th>" : ""}<th>Cancelled</th><th>Cancel %</th></tr></thead>
+        <tbody>
+          ${latest.byRep
+            .map((r) => {
+              const p = priorByRep.get(r.rep);
+              const rate = r.total > 0 ? r.cancelled / r.total : null;
+              return `<tr>
+                <td>${escapeHtml(r.rep)}</td>
+                <td><b>${r.total}</b></td>
+                ${prior ? `<td>${p ? p.total : "—"}</td>` : ""}
+                <td>${r.cancelled || ""}</td>
+                <td class="${rate !== null && rate >= 0.3 ? "lead-down" : ""}">${rate !== null && r.cancelled ? pct1(rate) : "—"}</td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </details>`;
+  }
+  return html;
+}
+
+function renderSales() {
+  const weeks = sales.appts?.weeks || [];
+  const latest = weeks[0] || null;
+  const step = (n, key, title, sub, done, body) => `
+    <details class="card mtg-section${done ? " done" : ""}" data-open="${key}" ${
+    meeting.open.has(key) ? "open" : ""
+  }>
+      <summary>
+        <span class="mtg-num${done ? " ok" : ""}">${done ? "✓" : n}</span>
+        <span class="mtg-head">
+          <span class="mtg-title">${escapeHtml(title)}</span>
+          <span class="mtg-sub">${escapeHtml(sub)}</span>
+        </span>
+        <span class="mtg-chev">▾</span>
+      </summary>
+      <div class="mtg-body">${body}</div>
+    </details>`;
+
+  const leadsSub = sales.meta
+    ? `${sales.meta.count.toLocaleString()} leads loaded${sales.sales?.perfMeta ? ` · ${sales.sales.perfMeta.reps} reps` : ""}`
+    : "upload the clients export";
+  const apptsSub = latest
+    ? `wk ${fmtDay(latest.weekStart)}: ${latest.total} appts · ${pct1(latest.cancelRate)} cancelled`
+    : "upload the weekly meetings export";
+
+  $("sales-sections").innerHTML = `
+    <div class="sales-group">Daily</div>
+    <div class="card sales-placeholder">Daily steps are next — the weekly cadence is below.</div>
+    <div class="sales-group">Weekly</div>
+    ${step(1, "ssec:leads", "Leads reports", leadsSub, Boolean(sales.meta), renderLeadsStep())}
+    ${step(
+      2,
+      "ssec:appts",
+      "Meetings — appointments & cancellations",
+      apptsSub,
+      Boolean(latest),
+      renderApptsStep()
+    )}`;
+}
+
+async function handleSalesUpload(kind, file) {
+  if (!file) return;
+  if (typeof XLSX === "undefined") {
+    toast("Spreadsheet reader didn't load — check your connection.", "error");
+    return;
+  }
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {
+    header: 1,
+    raw: true,
+    blankrows: false,
+  });
+
+  if (kind === "leads") {
+    const data = await uploadLeadsChunked(file.name, rows);
+    toast(`${data.count.toLocaleString()} leads loaded ✓`, "success");
+    sales.analysis = null;
+    meeting.open.add("ssec:leads");
+  } else if (kind === "sold") {
+    const data = await meetingApi("/api/leads/sold", "POST", { filename: file.name, rows });
+    toast(`${data.count.toLocaleString()} sold contracts loaded ✓`, "success");
+  } else if (kind === "perf") {
+    const data = await meetingApi("/api/leads/perf", "POST", { filename: file.name, rows });
+    toast(`Lead performance loaded — ${data.reps} reps ✓`, "success");
+  } else if (kind === "meetings") {
+    const data = await meetingApi("/api/leads/meetings", "POST", { filename: file.name, rows });
+    toast(
+      `Week of ${fmtDay(data.weekStart)} saved — ${data.total} appointments, ${data.cancelled} cancelled ✓`,
+      "success"
+    );
+    meeting.open.add("ssec:appts");
+  }
+  await loadSales();
+}
+
+async function salesChange(e) {
+  const t = e.target;
+  if (!t.dataset.upload) return;
+  try {
+    await handleSalesUpload(t.dataset.upload, t.files[0]);
+  } catch (err) {
+    toast(err.message || "Couldn't upload that file.", "error");
+  }
+  t.value = "";
+}
+
+async function salesClick(e) {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  try {
+    if (btn.dataset.act === "leads-window") {
+      sales.days = Number(btn.dataset.days);
+      sales.analysis = null;
+      renderSales(); // shows the loading state
+      await loadSales();
+    } else if (btn.dataset.act === "open-map") {
+      await openLeadMap();
+    }
+  } catch (err) {
+    toast(err.message || "Couldn't load.", "error");
   }
 }
 
@@ -2698,11 +2888,6 @@ async function meetingClick(e) {
     } else if (act === "payroll-cancel") {
       delete meeting.payroll[btn.dataset.class];
       renderMeeting();
-    } else if (act === "leads-window") {
-      meeting.leadsDays = Number(btn.dataset.days);
-      renderMeeting(); // triggers fetchLeadsAnalysis for the new window
-    } else if (act === "open-map") {
-      await openLeadMap();
     }
   } catch (err) {
     toast(err.message || "Couldn't save.", "error");
@@ -2742,20 +2927,6 @@ async function handleMeetingUpload(kind, file, className) {
       rows: firstRows(),
     });
     toast(`${data.count} completed jobs loaded ✓`, "success");
-  } else if (kind === "sold") {
-    const data = await meetingApi("/api/leads/sold", "POST", {
-      filename: file.name,
-      rows: firstRows(),
-    });
-    meeting.leadsKey = null; // sales feed into the leads analysis
-    toast(`${data.count.toLocaleString()} sold contracts loaded ✓`, "success");
-  } else if (kind === "perf") {
-    const data = await meetingApi("/api/leads/perf", "POST", {
-      filename: file.name,
-      rows: firstRows(),
-    });
-    meeting.leadsKey = null;
-    toast(`Lead performance loaded — ${data.reps} reps ✓`, "success");
   } else if (kind === "workorders") {
     const data = await meetingApi("/api/workorders", "POST", {
       filename: file.name,
@@ -2769,11 +2940,6 @@ async function handleMeetingUpload(kind, file, className) {
     });
     toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
     refreshPipelineStatus(); // keep the Schedule tab's status bar in sync
-  } else if (kind === "leads") {
-    const data = await uploadLeadsChunked(file.name, firstRows());
-    toast(`${data.count.toLocaleString()} leads loaded ✓`, "success");
-    meeting.leadsKey = null; // force a fresh analysis
-    meeting.open.add("sec:leads");
   } else if (kind === "payroll") {
     // One payroll workbook per market. Each has one sheet per pay period —
     // send them all and let the user pick the right week on that market's row.
@@ -3276,8 +3442,9 @@ function buildMeetingXlsx(v, leadsView) {
   }
   sheetFromRows(wb, "Pipeline", pl, [16, 12, 11, 14, 12, 12, 34]);
 
-  // Leads by area — from the live analysis or a snapshot's frozen copy.
-  const leads = leadsView ?? (v === meeting.view ? meeting.leadsView : null);
+  // Leads by area — only from a snapshot's frozen copy (leads now live on
+  // the Sales tab; old snapshots keep their sheet).
+  const leads = leadsView ?? null;
   if (leads) {
     const ld = [
       [`Leads by area — ${leads.from} to ${leads.to} (vs the ${leads.windowDays} days before)`],
@@ -3349,7 +3516,7 @@ async function uploadLeadsChunked(filename, rows) {
   const CHUNK = 6000;
   const chunks = Math.max(1, Math.ceil(data.length / CHUNK));
   const uploadId = `u${Date.now()}`;
-  const label = document.querySelector('.mtg-section[data-open="sec:leads"] .btn-upload span');
+  const label = document.querySelector('.mtg-section[data-open="ssec:leads"] .btn-upload span');
   let last;
   for (let i = 0; i < chunks; i++) {
     if (label && chunks > 1) label.textContent = `Uploading ${i + 1}/${chunks}…`;
@@ -3707,7 +3874,7 @@ function exportLeadMapTable() {
 }
 
 function initLeadMapEvents() {
-  $("map-back").addEventListener("click", () => showScreen("meeting"));
+  $("map-back").addEventListener("click", () => showScreen("sales"));
   $("map-export").addEventListener("click", exportLeadMapTable);
   $("map-search").addEventListener("input", (e) => {
     leadmap.search = e.target.value;
@@ -4388,6 +4555,7 @@ function initInvCounts() {
 
 const TITLES = {
   meeting: "Production Management",
+  sales: "Sales Management",
   schedule: "Weekly Schedule",
   staging: "Staging Lists",
   inventory: "Inventory",
@@ -4398,16 +4566,16 @@ const TITLES = {
 };
 
 function showScreen(name) {
-  for (const s of ["meeting", "schedule", "staging", "inventory", "pay", "roster", "projects", "leadsmap"]) {
+  for (const s of ["meeting", "sales", "schedule", "staging", "inventory", "pay", "roster", "projects", "leadsmap"]) {
     $(`screen-${s}`).hidden = s !== name;
   }
   $("screen-title").textContent = TITLES[name];
   $("week-label").hidden = name !== "schedule";
   document.querySelectorAll(".tab").forEach((t) =>
-    // The map is a drill-down from the meeting; keep that tab lit.
+    // The map is a drill-down from the sales tab; keep that tab lit.
     t.classList.toggle(
       "active",
-      t.dataset.screen === (name === "leadsmap" ? "meeting" : name)
+      t.dataset.screen === (name === "leadsmap" ? "sales" : name)
     )
   );
   if (name === "projects" && !allProjects.length) loadProjects();
@@ -4416,6 +4584,7 @@ function showScreen(name) {
     loadSnapshots();
     loadInvCounts();
   }
+  if (name === "sales") loadSales();
   if (name === "staging") loadStaging();
   if (name === "inventory") loadInventory();
   if (name === "schedule") loadSchedule();
@@ -4496,6 +4665,12 @@ async function init() {
   $("meeting-export").addEventListener("click", exportMeeting);
   $("meeting-snapshot").addEventListener("click", saveSnapshot);
   $("meeting-snapshots").addEventListener("click", snapshotClick);
+
+  // Sales Management tab.
+  const salesRoot = $("sales-sections");
+  salesRoot.addEventListener("change", salesChange);
+  salesRoot.addEventListener("click", salesClick);
+  salesRoot.addEventListener("toggle", meetingToggle, true);
 
   // Staging + inventory.
   $("staging-prev").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, -1)));

@@ -2514,3 +2514,22 @@ details.inv-loc[open] {
   border-top: 2px solid var(--brand);
   background: #f4f7fc;
 }
+
+/* ── Sales Management tab ── */
+.sales-group {
+  margin: 18px 2px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sales-group:first-child {
+  margin-top: 4px;
+}
+.sales-placeholder {
+  padding: 14px 16px;
+  color: var(--muted);
+  font-size: 13.5px;
+  border-style: dashed;
+}

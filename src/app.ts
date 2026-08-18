@@ -259,7 +259,6 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
     provider,
     config,
     now,
-    leadsStore,
     pipelineStore
   );
 

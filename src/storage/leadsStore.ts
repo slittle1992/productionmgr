@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import type { RepAppointments } from "../domain/appointments.js";
 import type { CompactLead } from "../domain/leads.js";
 import type { PerfParseResult, SoldContract } from "../domain/sales.js";
 import type { KvClient } from "./kv/kvClient.js";
@@ -29,11 +30,25 @@ export interface StoredPerf extends PerfParseResult {
   filename: string | null;
 }
 
+/** One week's Meetings-export rollup, kept week over week for the sales tab. */
+export interface StoredApptsWeek {
+  weekStart: string;
+  total: number;
+  cancelled: number;
+  byRep: RepAppointments[];
+  uploadedAt: string;
+  filename: string | null;
+  sourceLabel: string | null;
+}
+
 export interface LeadsStore {
   getSold(): Promise<StoredSold | null>;
   setSold(sold: StoredSold): Promise<void>;
   getPerf(): Promise<StoredPerf | null>;
   setPerf(perf: StoredPerf): Promise<void>;
+  /** Appointment rollups keyed by weekStart (re-upload replaces the week). */
+  getAppts(): Promise<Record<string, StoredApptsWeek>>;
+  setApptsWeek(week: StoredApptsWeek): Promise<void>;
   getMeta(): Promise<LeadsMeta | null>;
   getLeads(): Promise<CompactLead[]>;
   set(leads: CompactLead[], meta: LeadsMeta): Promise<void>;
@@ -55,6 +70,12 @@ interface LeadsFileShape {
   meta: LeadsMeta | null;
   leads: CompactLead[];
   pendingId: string | null;
+}
+
+interface SalesFileShape {
+  sold: StoredSold | null;
+  perf: StoredPerf | null;
+  appts: Record<string, StoredApptsWeek>;
 }
 
 export class JsonLeadsStore implements LeadsStore {
@@ -95,18 +116,17 @@ export class JsonLeadsStore implements LeadsStore {
   private get salesFile(): string {
     return this.file.replace(/leads\.json$/, "sales.json");
   }
-  private async readSales(): Promise<{ sold: StoredSold | null; perf: StoredPerf | null }> {
+  private async readSales(): Promise<SalesFileShape> {
     try {
-      return JSON.parse(await fs.readFile(this.salesFile, "utf8"));
+      const raw = JSON.parse(await fs.readFile(this.salesFile, "utf8"));
+      return { sold: null, perf: null, appts: {}, ...raw };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT")
-        return { sold: null, perf: null };
+        return { sold: null, perf: null, appts: {} };
       throw err;
     }
   }
-  private async writeSales(
-    mutate: (s: { sold: StoredSold | null; perf: StoredPerf | null }) => void
-  ): Promise<void> {
+  private async writeSales(mutate: (s: SalesFileShape) => void): Promise<void> {
     const run = async () => {
       const current = await this.readSales();
       mutate(current);
@@ -132,6 +152,14 @@ export class JsonLeadsStore implements LeadsStore {
   async setPerf(perf: StoredPerf) {
     await this.writeSales((s) => {
       s.perf = perf;
+    });
+  }
+  async getAppts() {
+    return (await this.readSales()).appts;
+  }
+  async setApptsWeek(week: StoredApptsWeek) {
+    await this.writeSales((s) => {
+      s.appts[week.weekStart] = week;
     });
   }
   async getMeta() {
@@ -184,6 +212,7 @@ export class KvLeadsStore implements LeadsStore {
   private static readonly PENDING = "leads:pending";
   private static readonly SOLD = "sales:sold";
   private static readonly PERF = "sales:perf";
+  private static readonly APPTS = "sales:appts";
   constructor(private readonly kv: KvClient) {}
 
   async getSold() {
@@ -197,6 +226,17 @@ export class KvLeadsStore implements LeadsStore {
   }
   async setPerf(perf: StoredPerf) {
     await this.kv.set(KvLeadsStore.PERF, perf);
+  }
+  async getAppts() {
+    return (
+      (await this.kv.get<Record<string, StoredApptsWeek>>(KvLeadsStore.APPTS)) ??
+      {}
+    );
+  }
+  async setApptsWeek(week: StoredApptsWeek) {
+    const all = await this.getAppts();
+    all[week.weekStart] = week;
+    await this.kv.set(KvLeadsStore.APPTS, all);
   }
 
   async getMeta() {
@@ -249,6 +289,13 @@ export class MemoryLeadsStore implements LeadsStore {
   }
   async setPerf(perf: StoredPerf) {
     this.perf = structuredClone(perf);
+  }
+  private appts: Record<string, StoredApptsWeek> = {};
+  async getAppts() {
+    return structuredClone(this.appts);
+  }
+  async setApptsWeek(week: StoredApptsWeek) {
+    this.appts[week.weekStart] = structuredClone(week);
   }
   private leads: CompactLead[] = [];
   private pendingId: string | null = null;

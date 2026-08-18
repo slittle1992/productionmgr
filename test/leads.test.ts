@@ -138,14 +138,13 @@ describe("leads API", () => {
     expect(dallas.current).toBe(3); // 8/1, 8/2, 7/30 within 7 days of 8/4
     expect(dallas.soldCurrentCohort).toBe(1);
 
-    // The meeting view reports the upload and the leads section auto-status.
+    // Leads live on the Sales tab now — the production meeting has 9 sections
+    // and no leads section.
     const meeting = await request(app).get("/api/meeting?week=2026-08-02");
-    expect(meeting.body.leads.count).toBe(4);
-    expect(meeting.body.sectionCount).toBe(10);
-    const leadsSection = meeting.body.sections.find(
-      (s: { key: string }) => s.key === "leads"
-    );
-    expect(leadsSection.autoDone).toBe(true);
+    expect(meeting.body.sectionCount).toBe(9);
+    expect(
+      meeting.body.sections.some((s: { key: string }) => s.key === "leads")
+    ).toBe(false);
   });
 });
 
