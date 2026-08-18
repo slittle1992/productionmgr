@@ -223,6 +223,7 @@ export function leadsRouter(
           byRep: parsed.byRep,
           byZip3: parsed.byZip3,
           noSales: parsed.noSales,
+          days: parsed.days,
           uploadedAt: new Date(now()).toISOString(),
           filename: body.filename ?? null,
           sourceLabel: parsed.sourceLabel,
@@ -343,7 +344,44 @@ export function leadsRouter(
         if (!m) return "Unassigned";
         return [...m.entries()].sort((a, b) => b[1] - a[1])[0]![0];
       };
+      // Appointments per day across every stored week, zips joined to
+      // markets — feeds the daily appointments chart.
+      const apptDays: {
+        date: string;
+        t: number;
+        c: number;
+        f: number;
+        r: number;
+        byClass: Record<string, { t: number; c: number; f: number; r: number }>;
+        byRep: Record<string, { t: number; c: number; f: number; r: number }>;
+      }[] = [];
+      for (const w of Object.values(appts)) {
+        for (const [date, day] of Object.entries(w.days ?? {})) {
+          const byClass: Record<string, { t: number; c: number; f: number; r: number }> =
+            {};
+          for (const [z3, v] of Object.entries(day.byZip3)) {
+            const cls = z3 === "?" ? "Unassigned" : classOfZip3(z3);
+            const slot = (byClass[cls] ??= { t: 0, c: 0, f: 0, r: 0 });
+            slot.t += v.t;
+            slot.c += v.c;
+            slot.f += v.f;
+            slot.r += v.r;
+          }
+          apptDays.push({
+            date,
+            t: day.t,
+            c: day.c,
+            f: day.f,
+            r: day.r,
+            byClass,
+            byRep: day.byRep,
+          });
+        }
+      }
+      apptDays.sort((a, b) => a.date.localeCompare(b.date));
+
       const appointments = {
+        days: apptDays,
         weeks: Object.values(appts)
           .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
           .slice(0, 12)

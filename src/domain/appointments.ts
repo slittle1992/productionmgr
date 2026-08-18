@@ -1,3 +1,4 @@
+import { projectTypeOf } from "./leads.js";
 import { PipelineFormatError, type RawGrid } from "./pipeline.js";
 
 /**
@@ -23,6 +24,20 @@ export interface NoSaleRow {
   projectType: string | null;
 }
 
+/** total / cancelled / flake / rubber. */
+export interface ApptCounts {
+  t: number;
+  c: number;
+  f: number;
+  r: number;
+}
+
+/** One day's appointments, split by zip3 (→ market) and by rep. */
+export interface ApptDay extends ApptCounts {
+  byZip3: Record<string, ApptCounts>;
+  byRep: Record<string, ApptCounts>;
+}
+
 export interface MeetingsParseResult {
   fromMs: number | null;
   toMs: number | null;
@@ -33,6 +48,8 @@ export interface MeetingsParseResult {
   /** Appointments per zip3 prefix (from the title's trailing zip) — the
    * server joins these to markets via the leads upload. */
   byZip3: Record<string, { t: number; c: number }>;
+  /** Per-day counts keyed by ISO date (from each meeting's Start). */
+  days: Record<string, ApptDay>;
   noSales: NoSaleRow[];
 }
 
@@ -100,9 +117,16 @@ export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
 
   const perRep = new Map<string, RepAppointments>();
   const byZip3: Record<string, { t: number; c: number }> = {};
+  const days: Record<string, ApptDay> = {};
   const noSaleByClient = new Map<string, NoSaleRow>();
   let total = 0;
   let cancelled = 0;
+  const bump = (a: ApptCounts, cxl: boolean, pt: "rubber" | "flake" | null) => {
+    a.t++;
+    if (cxl) a.c++;
+    if (pt === "flake") a.f++;
+    else if (pt === "rubber") a.r++;
+  };
   for (let r = h.row + 1; r < grid.length; r++) {
     const row = grid[r] ?? [];
     const client = text(cell(row, "client"));
@@ -123,6 +147,22 @@ export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
     const z3 = zip ? zip.slice(0, 3) : "?";
     (byZip3[z3] ??= { t: 0, c: 0 }).t++;
     if (isCancelled) byZip3[z3]!.c++;
+
+    // Per-day: the Start column ("08/15/26 @ 5:00 pm") gives the day.
+    const pt = projectTypeOf(text(cell(row, "project type")));
+    const dm = text(cell(row, "start"))?.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (dm) {
+      const yy = Number(dm[3]);
+      const iso = new Date(
+        Date.UTC(yy < 100 ? 2000 + yy : yy, Number(dm[1]) - 1, Number(dm[2]))
+      )
+        .toISOString()
+        .slice(0, 10);
+      const day = (days[iso] ??= { t: 0, c: 0, f: 0, r: 0, byZip3: {}, byRep: {} });
+      bump(day, isCancelled, pt);
+      bump((day.byZip3[z3] ??= { t: 0, c: 0, f: 0, r: 0 }), isCancelled, pt);
+      bump((day.byRep[rep] ??= { t: 0, c: 0, f: 0, r: 0 }), isCancelled, pt);
+    }
 
     // Rehash list: demos that didn't sell (deduped per client, kept even if
     // one of their meetings was cancelled — the status is what matters).
@@ -151,6 +191,7 @@ export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
     cancelled,
     byRep: [...perRep.values()].sort((a, b) => b.total - a.total),
     byZip3,
+    days,
     noSales: [...noSaleByClient.values()].sort((a, b) =>
       a.client.localeCompare(b.client)
     ),

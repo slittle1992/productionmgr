@@ -1521,7 +1521,9 @@ const sales = {
   daily: null, // daily rubber/flake lead flow + goal pacing
   goals: null, // per-location goals + (unused) type goals
   dailyTasks: null, // today's checks, recent contracts, rehash list
-  chartClass: null, // daily chart market filter (null = all markets)
+  chartClass: null, // daily lead chart market filter (null = all markets)
+  apptClass: null, // appointments chart market filter
+  apptRep: null, // appointments chart rep filter (overrides market)
 };
 
 const fmtMoney0 = (n) => "$" + Math.round(Number(n) || 0).toLocaleString();
@@ -2675,6 +2677,8 @@ function renderApptsStep() {
   </div>`;
   if (!weeks.length) return html;
 
+  html += renderApptDayChart();
+
   // Week-over-week cancellation trend.
   html += `
   <table class="mtg-table leads-table">
@@ -2937,7 +2941,7 @@ function renderLeadBarChart(d) {
     const label = `${sel ? sel + " — " : ""}${fmtDay(day.date)}: ${day.total} lead${day.total === 1 ? "" : "s"}${
       stacked ? ` — ${day.flake} flake · ${day.rubber} rubber${day.other ? ` · ${day.other} untyped` : ""}` : ""
     }`;
-    hits += `<rect class="lb-hit js-bar-hit" data-cap="${escapeHtml(label)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}"><title>${escapeHtml(label)}</title></rect>`;
+    hits += `<rect class="lb-hit js-bar-hit" data-capfor="lead-chart-cap" data-cap="${escapeHtml(label)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}"><title>${escapeHtml(label)}</title></rect>`;
   }
 
   const gridVals = [yMax / 2, yMax];
@@ -3002,6 +3006,146 @@ function renderLeadBarChart(d) {
     </table>
     </div>
   </details>`;
+}
+
+/**
+ * Appointments per day — stacked flake/rubber/untyped columns across every
+ * stored Meetings week, filterable by market (chips) or by rep (select).
+ */
+function renderApptDayChart() {
+  const days = sales.appts?.days || [];
+  if (!days.length) {
+    return `<p class="hint">Re-upload the weekly Meetings exports to build the
+      per-day chart (older uploads didn't store the day-by-day counts).</p>`;
+  }
+
+  const clsSet = new Set();
+  const repTotals = new Map();
+  for (const d of days) {
+    for (const c of Object.keys(d.byClass || {})) {
+      if (c !== "Unassigned") clsSet.add(c);
+    }
+    for (const [r, v] of Object.entries(d.byRep || {})) {
+      repTotals.set(r, (repTotals.get(r) || 0) + v.t);
+    }
+  }
+  const markets = [...clsSet].sort();
+  const reps = [...repTotals.entries()].sort((a, b) => b[1] - a[1]).map(([r]) => r);
+  if (sales.apptClass && !clsSet.has(sales.apptClass)) sales.apptClass = null;
+  if (sales.apptRep && !repTotals.has(sales.apptRep)) sales.apptRep = null;
+  const selCls = sales.apptClass;
+  const selRep = sales.apptRep;
+  const selLabel = selRep || selCls || "";
+
+  // Continuous date range (gap-filled) from first to last stored day.
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const first = Date.parse(days[0].date + "T12:00:00Z");
+  const last = Date.parse(days[days.length - 1].date + "T12:00:00Z");
+  const zero = { t: 0, c: 0, f: 0, r: 0 };
+  const series = [];
+  for (let ms = first; ms <= last; ms += 86400000) {
+    const iso = new Date(ms).toISOString().slice(0, 10);
+    const d = byDate.get(iso);
+    const v = !d
+      ? zero
+      : selRep
+      ? d.byRep[selRep] ?? zero
+      : selCls
+      ? d.byClass[selCls] ?? zero
+      : d;
+    series.push({ date: iso, t: v.t, c: v.c, f: v.f, r: v.r });
+  }
+
+  const n = series.length;
+  const PAD_L = 30;
+  const PAD_T = 8;
+  const PAD_B = 18;
+  const H = 140;
+  // Adapt the slot so few days don't blow up the uniform SVG scale.
+  const SLOT = Math.max(3, Math.min(28, Math.floor(424 / n)));
+  const BW = Math.min(24, Math.max(2.4, SLOT * 0.7));
+  const W = PAD_L + n * SLOT + 6;
+  const plotH = H - PAD_T - PAD_B;
+  const max = Math.max(1, ...series.map((d) => d.t));
+  const pow = Math.pow(10, Math.floor(Math.log10(max)));
+  const yMax = [1, 2, 5, 10].map((m) => m * pow).find((v) => v >= max) || max;
+  const y = (v) => PAD_T + plotH * (1 - v / yMax);
+  const GAP = 1.5;
+
+  let bars = "";
+  let months = "";
+  let hits = "";
+  let lastMonth = -1;
+  for (let i = 0; i < n; i++) {
+    const d = series[i];
+    const x = (PAD_L + i * SLOT).toFixed(1);
+    const untyped = Math.max(0, d.t - d.f - d.r);
+    let base = 0;
+    for (const [cls, v] of [
+      ["lb-flake", d.f],
+      ["lb-rubber", d.r],
+      ["lb-other", untyped],
+    ]) {
+      if (!v) continue;
+      const top = y(base + v);
+      const bottom = y(base) - (base > 0 ? GAP : 0);
+      bars += `<rect class="${cls}" x="${x}" width="${BW.toFixed(1)}" y="${top.toFixed(1)}" height="${Math.max(0.8, bottom - top).toFixed(1)}" rx="1.2"/>`;
+      base += v;
+    }
+    const dt = new Date(d.date + "T12:00:00Z");
+    if (dt.getUTCMonth() !== lastMonth) {
+      lastMonth = dt.getUTCMonth();
+      months += `<line class="lb-grid" x1="${x}" x2="${x}" y1="${PAD_T}" y2="${H - PAD_B + 3}"/>
+        <text class="lb-txt" x="${Number(x) + 2}" y="${H - 5}">${dt.toLocaleDateString(undefined, { month: "short", timeZone: "UTC" })}</text>`;
+    }
+    const label = `${selLabel ? selLabel + " — " : ""}${fmtDay(d.date)}: ${d.t} appt${d.t === 1 ? "" : "s"}${
+      d.t ? ` — ${d.f} flake · ${d.r} rubber${untyped ? ` · ${untyped} untyped` : ""}${d.c ? ` · ${d.c} cancelled` : ""}` : ""
+    }`;
+    hits += `<rect class="lb-hit js-bar-hit" data-capfor="appt-chart-cap" data-cap="${escapeHtml(label)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}"><title>${escapeHtml(label)}</title></rect>`;
+  }
+
+  const latest = series[n - 1];
+  const defaultCap = latest
+    ? `${selLabel ? selLabel + " — " : ""}${fmtDay(latest.date)}: ${latest.t} appts${latest.c ? ` · ${latest.c} cancelled` : ""}`
+    : "";
+
+  return `
+  <div class="prep-head" style="margin-top:12px">
+    <span class="prep-title">Appointments per day${selLabel ? ` · ${escapeHtml(selLabel)}` : ""}</span>
+    <span class="lb-legend"><i class="lb-sw lb-flake"></i>Flake <i class="lb-sw lb-rubber"></i>Rubber <i class="lb-sw lb-other"></i>Untyped</span>
+  </div>
+  <div class="class-chips lb-chips">
+    <button type="button" class="chip-btn ${!selCls && !selRep ? "active" : ""}" data-act="appt-class">All markets</button>
+    ${markets
+      .map(
+        (m) => `<button type="button" class="chip-btn ${selCls === m ? "active" : ""}" data-act="appt-class" data-cls="${escapeHtml(m)}">${escapeHtml(m)}</button>`
+      )
+      .join("")}
+    <select class="ab-select ${selRep ? "active" : ""}" data-appt-rep aria-label="Filter by sales rep">
+      <option value="">Rep…</option>
+      ${reps
+        .map(
+          (r) => `<option value="${escapeHtml(r)}" ${selRep === r ? "selected" : ""}>${escapeHtml(r)}</option>`
+        )
+        .join("")}
+    </select>
+  </div>
+  <div class="lb-cap" id="appt-chart-cap">${escapeHtml(defaultCap)}</div>
+  <div class="lb-wrap">
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Appointments per day">
+      ${[yMax / 2, yMax]
+        .map(
+          (v) => `<line class="lb-grid" x1="${PAD_L - 3}" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+        <text class="lb-txt" x="${PAD_L - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`
+        )
+        .join("")}
+      <line class="lb-grid" x1="${PAD_L - 3}" x2="${W}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}"/>
+      ${months}${bars}${hits}
+    </svg>
+  </div>
+  <p class="hint">Zips from each meeting's title map appointments to markets via
+  the leads upload; the rep filter overrides the market chips. Cancelled counts
+  show in the readout when you tap a day.</p>`;
 }
 
 function renderSales() {
@@ -3233,6 +3377,12 @@ async function handleSalesUpload(kind, file) {
 async function salesChange(e) {
   const t = e.target;
   try {
+    if (t.dataset.apptRep !== undefined) {
+      sales.apptRep = t.value || null;
+      if (sales.apptRep) sales.apptClass = null;
+      renderSales();
+      return;
+    }
     if (t.dataset.daily) {
       await meetingApi("/api/leads/daily-check", "POST", {
         key: t.dataset.daily,
@@ -3270,7 +3420,7 @@ async function salesChange(e) {
 async function salesClick(e) {
   const hit = e.target.closest?.(".js-bar-hit");
   if (hit) {
-    const cap = $("lead-chart-cap");
+    const cap = $(hit.dataset.capfor || "lead-chart-cap");
     if (cap) cap.textContent = hit.dataset.cap;
     return;
   }
@@ -3279,6 +3429,12 @@ async function salesClick(e) {
   try {
     if (btn.dataset.act === "chart-class") {
       sales.chartClass = btn.dataset.cls || null;
+      renderSales();
+      return;
+    }
+    if (btn.dataset.act === "appt-class") {
+      sales.apptClass = btn.dataset.cls || null;
+      sales.apptRep = null;
       renderSales();
       return;
     }
@@ -5249,7 +5405,7 @@ async function init() {
   salesRoot.addEventListener("mouseover", (e) => {
     const hit = e.target.closest?.(".js-bar-hit");
     if (!hit) return;
-    const cap = $("lead-chart-cap");
+    const cap = $(hit.dataset.capfor || "lead-chart-cap");
     if (cap) cap.textContent = hit.dataset.cap;
   });
 

@@ -58,6 +58,12 @@ describe("meetings (appointments) parsing", () => {
     ]);
     // Zips come from the title; no-sales become the rehash call list.
     expect(r.byZip3).toEqual({ "760": { t: 5, c: 2 } });
+    // Per-day counts (all fixture meetings start 08/15) with rep splits.
+    expect(Object.keys(r.days)).toEqual(["2026-08-15"]);
+    const day = r.days["2026-08-15"]!;
+    expect(day).toMatchObject({ t: 5, c: 2 });
+    expect(day.byRep["Kyle Cook"]).toMatchObject({ t: 3, c: 1 });
+    expect(day.byZip3["760"]).toMatchObject({ t: 5, c: 2 });
     expect(r.noSales).toEqual([
       {
         client: "Fay Farr",
@@ -112,6 +118,14 @@ describe("meetings API", () => {
     expect(wk.byClass).toEqual([
       { className: "Unassigned", total: 5, cancelled: 2 },
     ]);
+    // Per-day series for the appointments chart.
+    expect(res.body.appointments.days).toHaveLength(1);
+    expect(res.body.appointments.days[0]).toMatchObject({
+      date: "2026-08-15",
+      t: 5,
+      c: 2,
+    });
+    expect(res.body.appointments.days[0].byClass.Unassigned.t).toBe(5);
     // The rehash call list rides along for the daily tasks.
     expect(res.body.dailyTasks.rehash).toHaveLength(1);
     expect(res.body.dailyTasks.rehash[0].client).toBe("Fay Farr");

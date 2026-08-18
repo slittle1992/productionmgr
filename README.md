@@ -240,11 +240,14 @@ tomorrow.
    title pins which week it saves to, so past weeks can be backfilled).
    Rows with a client count as appointments; OFF / UNAVAILABLE / TRAINING
    blockers are skipped; **Cancelled** comes from the Meeting Status
-   column. Each upload replaces its week. The step shows the
-   **cancellation rate week over week** (with the points-change vs the
-   prior week), the split **by market** (each appointment's zip comes
-   from the meeting title and joins to a market via the leads upload),
-   and **appointments per rep** alongside the prior week's count, high
+   column. Each upload replaces its week. The step shows an
+   **appointments-per-day chart** spanning every stored week — stacked
+   flake/rubber columns (each meeting's Project Type), filterable by
+   **market chips or a rep selector** (zips from the meeting titles map
+   to markets via the leads upload; cancellations show in the tap
+   readout) — plus the **cancellation rate week over week** (with the
+   points-change vs the prior week), the split **by market**, and
+   **appointments per rep** alongside the prior week's count, high
    per-rep cancel rates flagged.
 3. **Sales — markets & reps** — upload the **Total Sales (Contracts)**
    detail and the **Lead Performance Summary by Sales Person** exports.

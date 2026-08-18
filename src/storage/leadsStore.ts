@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import type { NoSaleRow, RepAppointments } from "../domain/appointments.js";
+import type { ApptDay, NoSaleRow, RepAppointments } from "../domain/appointments.js";
 import type { CompactLead } from "../domain/leads.js";
 import type { LeadGoals, PerfParseResult, SoldContract } from "../domain/sales.js";
 import type { KvClient } from "./kv/kvClient.js";
@@ -39,6 +39,7 @@ export interface StoredApptsWeek {
   /** Optional on weeks stored before these fields existed. */
   byZip3?: Record<string, { t: number; c: number }>;
   noSales?: NoSaleRow[];
+  days?: Record<string, ApptDay>;
   uploadedAt: string;
   filename: string | null;
   sourceLabel: string | null;
