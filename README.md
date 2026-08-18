@@ -4,11 +4,11 @@ A phone-first web app that replaces the weekly production-report spreadsheet.
 It pulls everything Builder Prime can supply, does all the math, and leaves the
 manager with only the handful of fields a human actually has to enter.
 
-The visible screens are **Production Management** (the Friday meeting
-checklist with labor rates and the weekly inventory-count → material-cost
-card) and a view-only **Projects** list. The Schedule, Staging, Inventory,
-Pay, and Roster screens are built and fully wired but hidden from the tab
-bar for now.
+The visible screen is **Production Management** — the Friday meeting
+checklist with the scoreboard, labor rates, and the weekly inventory-count →
+material-cost section. The Schedule, Staging, Inventory, Pay, Roster, and
+Projects screens are built and fully wired but hidden from the tab bar for
+now (remove `hidden` from a button in `public/index.html` to bring one back).
 
 ---
 
@@ -48,10 +48,10 @@ Then `npm start` again — the banner disappears and real projects load.
 
 ## What the manager sees
 
-Two visible tabs — **Production Management** (the meeting, the default
-screen) and **Projects**. The Schedule, Staging, Inventory, Pay, and Roster
-tabs are hidden for now: their code is intact, remove `hidden` from a button
-in `public/index.html` to bring one back. All built for a thumb:
+One visible tab — **Production Management** (the meeting, the default
+screen). The Schedule, Staging, Inventory, Pay, Roster, and Projects tabs
+are hidden for now: their code is intact, remove `hidden` from a button in
+`public/index.html` to bring one back. All built for a thumb:
 
 - **Production Management** *(default screen)* — the Friday Production
   Meeting checklist (below). The pipeline uploaded here feeds the Schedule.
@@ -68,8 +68,9 @@ in `public/index.html` to bring one back. All built for a thumb:
   primer totals; jobs missing SQFT or color are flagged. Exports to .xlsx.
 - **Inventory** *(hidden)* — on-hand counts per location vs the selected week's staging
   needs; anything short is flagged so you can order before staging day.
-- **Projects** — active projects with client, address, value, status, and who's
-  assigned (PM / foreman / salesperson). Search and a "show cancelled" toggle.
+- **Projects** *(hidden)* — active projects with client, address, value, status,
+  and who's assigned (PM / foreman / salesperson). Search and a "show
+  cancelled" toggle.
 
 (The old Weekly Report tab was replaced by the Staging list; the report API
 endpoints still exist server-side.)
