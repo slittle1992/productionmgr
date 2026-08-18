@@ -79,7 +79,7 @@ endpoints still exist server-side.)
 
 ## Friday Production Meeting (Meeting tab)
 
-A 9-item weekly checklist that the owner, production manager, or an admin can
+A 10-item weekly checklist that the owner, production manager, or an admin can
 run from a phone or desktop. A **"What you'll need"** strip at the top lists
 every input the meeting takes (exports, payroll, counts, material spend) with
 a live ✓ as each one lands — tap a chip to jump to its section. Below it, a
@@ -88,7 +88,7 @@ labor rate, material $ and %, **spec material $** (completed jobs joined to
 their pipeline SQFT and run through the coverage math at PO prices), and the
 **usage multiple** (actual ÷ spec — 1.0× means crews used exactly what the
 spec calls for), color-coded. Each section shows a progress ring; the header
-tracks "N of 9 done". Enter your name once at the top — it's stamped on every
+tracks "N of 10 done". Enter your name once at the top — it's stamped on every
 sign-off, note, and update so next week you know who owns what.
 
 1. **Past due balances** — upload the Builder Prime **Unpaid Invoices** export.
@@ -165,6 +165,12 @@ sign-off, note, and update so next week you know who owns what.
    prior window, all-time, jobs, conversion) with its own .xlsx export.
    Zip boundaries are vendored US Census ZCTA polygons
    (`public/vendor/tx-zips.json`, public-domain TIGER/Line data, simplified).
+10. **VIP Lead — To-Dos & Crews** — the closing check: open VIP Lead
+    (one-tap link via `VIP_LEAD_URL`), clear the Production To-Do bucket
+    (nothing unclaimed or stale), and check each VIP Crew channel against
+    the roster — right people in the right crew channels, posting on the
+    expected cadence. Notes box + *Mark reviewed* sign-off, like the other
+    dashboard checks.
 
 Every section also has a manual **sign-off** row recording who completed it
 and when. Follow-ups, tags, and per-week state persist in the shared database,

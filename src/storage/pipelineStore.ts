@@ -103,6 +103,7 @@ export class JsonPipelineStore implements PipelineStore {
   async mergeJobFacts(facts: Record<string, JobFacts>): Promise<void> {
     const run = async () => {
       const current = await this.getJobFacts();
+      await fs.mkdir(path.dirname(this.factsFile), { recursive: true });
       const tmp = `${this.factsFile}.tmp`;
       await fs.writeFile(tmp, JSON.stringify(mergeFactMaps(current, facts)), "utf8");
       await fs.rename(tmp, this.factsFile);

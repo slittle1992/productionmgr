@@ -159,7 +159,7 @@ export function meetingRouter(service: MeetingService): Router {
   // PATCH /api/meeting/check — Reviews / Lytx / Ramp dashboard sign-off.
   const checkBody = z.object({
     week: isoWeek,
-    key: z.enum(["reviews", "lytx", "ramp"]),
+    key: z.enum(["reviews", "lytx", "ramp", "vip"]),
     status: z.enum(["pending", "done"]).optional(),
     notes: z.string().max(2000).optional(),
     by: z.string().trim().max(120).optional(),
@@ -197,7 +197,7 @@ export function meetingRouter(service: MeetingService): Router {
   // PATCH /api/meeting/section — manual per-section sign-off.
   const sectionBody = z.object({
     week: isoWeek,
-    key: z.enum(["pastdue", "workorders", "pipeline", "labor", "materials", "reviews", "lytx", "ramp", "leads"]),
+    key: z.enum(["pastdue", "workorders", "pipeline", "labor", "materials", "reviews", "lytx", "ramp", "leads", "vip"]),
     done: z.boolean(),
     by: z.string().trim().max(120).nullable().optional(),
   });

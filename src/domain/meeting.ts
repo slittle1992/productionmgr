@@ -16,8 +16,8 @@ import { completedRevenue } from "./completedProjects.js";
 
 // ───────────────────────── Per-week meeting document ─────────────────────────
 
-export type CheckKey = "reviews" | "lytx" | "ramp";
-export const CHECK_KEYS: CheckKey[] = ["reviews", "lytx", "ramp"];
+export type CheckKey = "reviews" | "lytx" | "ramp" | "vip";
+export const CHECK_KEYS: CheckKey[] = ["reviews", "lytx", "ramp", "vip"];
 
 export interface ManualCheck {
   status: "pending" | "done";
@@ -57,6 +57,7 @@ export const SECTION_KEYS: SectionKey[] = [
   "lytx",
   "ramp",
   "leads",
+  "vip",
 ];
 
 export interface SectionState {
@@ -79,7 +80,7 @@ export function emptyWeekDoc(weekStart: string): MeetingWeekDoc {
   const check = (): ManualCheck => ({ status: "pending", notes: "", by: "", at: null });
   return {
     weekStart,
-    checks: { reviews: check(), lytx: check(), ramp: check() },
+    checks: { reviews: check(), lytx: check(), ramp: check(), vip: check() },
     labor: {},
     sections: {},
     updatedAt: null,

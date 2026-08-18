@@ -1498,6 +1498,7 @@ const MEETING_SECTIONS = [
   { key: "lytx", n: 7, title: "Lytx incidents" },
   { key: "ramp", n: 8, title: "Ramp spend" },
   { key: "leads", n: 9, title: "Leads by area" },
+  { key: "vip", n: 10, title: "VIP Lead — To-Dos & Crews" },
 ];
 
 const meeting = {
@@ -1691,6 +1692,7 @@ function renderMeeting() {
     lytx: renderCheckSection(v, "lytx"),
     ramp: renderCheckSection(v, "ramp"),
     leads: renderLeadsSection(v),
+    vip: renderCheckSection(v, "vip"),
   };
   const subs = {
     pastdue: pastDueSubtitle(v.pastDue),
@@ -1713,6 +1715,7 @@ function renderMeeting() {
     leads: v.leads
       ? `${v.leads.count.toLocaleString()} leads loaded`
       : "upload the clients export",
+    vip: v.checks.vip.status === "done" ? "reviewed" : "needs review",
   };
 
   $("meeting-sections").innerHTML = MEETING_SECTIONS.map((s) => {
@@ -2287,6 +2290,14 @@ const CHECK_COPY = {
   ramp: {
     help: "Log in to Ramp and review this week's spend incidents / flagged transactions.",
     link: "Open Ramp",
+  },
+  vip: {
+    help:
+      "Open VIP Lead: clear the Production To-Do bucket (nothing unclaimed or stale), " +
+      "then check each VIP Crew channel against the roster — right people in the " +
+      "right crew channels, and the crews posting on the expected cadence " +
+      "(daily job updates, photos, end-of-day numbers).",
+    link: "Open VIP Lead",
   },
 };
 
@@ -2978,7 +2989,7 @@ function buildMeetingXlsx(v, leadsView) {
     [],
     ["DASHBOARD CHECKS"],
     ["Check", "Status", "By", "Notes"],
-    ...["reviews", "lytx", "ramp"].map((k) => [
+    ...["reviews", "lytx", "ramp", "vip"].map((k) => [
       secTitle[k],
       v.checks[k].status === "done" ? "Reviewed" : "Pending",
       v.checks[k].by || "",

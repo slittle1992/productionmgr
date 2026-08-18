@@ -80,6 +80,7 @@ export interface AppConfig {
     reviews: string | null;
     lytx: string | null;
     ramp: string | null;
+    vip: string | null;
   };
 }
 
@@ -146,6 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       reviews: env.REVIEWS_DASHBOARD_URL?.trim() || null,
       lytx: env.LYTX_DASHBOARD_URL?.trim() || "https://user.lytx.com",
       ramp: env.RAMP_DASHBOARD_URL?.trim() || "https://app.ramp.com",
+      vip: env.VIP_LEAD_URL?.trim() || null,
     },
   };
 }

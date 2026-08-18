@@ -95,7 +95,7 @@ export interface MeetingView {
   /** Spec material cost for the labor week's completed jobs (per location). */
   materialsExpected: ExpectedMaterialsRow[];
   checks: Record<CheckKey, ManualCheck>;
-  links: { reviews: string | null; lytx: string | null; ramp: string | null };
+  links: { reviews: string | null; lytx: string | null; ramp: string | null; vip: string | null };
   /** Leads upload status; the analysis itself is served by GET /api/leads. */
   leads: LeadsMeta | null;
   sections: SectionProgress[];
@@ -335,6 +335,9 @@ export class MeetingService {
       getReportingWeek(week.startMs + n * 7 * 86_400_000, this.config.weekStartDay)
     );
     const pipeline = buildPipelineChecks(projects, lookAhead, this.config.customFields);
+    // Week docs saved before the VIP Lead check existed lack the key.
+    doc.checks.vip ??= { status: "pending", notes: "", by: "", at: null };
+
     const laborWeek = this.laborWeek(week);
     // Remember every job's SQFT/color: completed jobs age out of the current
     // pipeline export, so the join reads this history.
@@ -495,6 +498,7 @@ export class MeetingService {
       lytx: doc.checks.lytx.status === "done",
       ramp: doc.checks.ramp.status === "done",
       leads: leadsLoaded,
+      vip: doc.checks.vip.status === "done",
     };
 
     return SECTION_KEYS.map((key) => {
