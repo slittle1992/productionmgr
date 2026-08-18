@@ -11,7 +11,7 @@
  * Processed messages are labelled so nothing is sent twice.
  */
 var APP_URL = "https://productionmgr.vercel.app";
-var GMAIL_QUERY = 'has:attachment filename:pdf subject:("purchase order" OR "PO")';
+var GMAIL_QUERY = 'has:attachment filename:pdf subject:("purchase order" OR "PO") newer_than:14d';
 var DONE_LABEL = "PM-app-sent";
 
 function sendNewPurchaseOrders() {
@@ -41,13 +41,19 @@ function sendNewPurchaseOrders() {
 /** Alternative: watch the Drive folder the POs are already filed into. */
 var DRIVE_FOLDER_ID = "1OcdqY9C97jcWpSysuXCtZwDa3HsaAfVt";
 
+// Ignore POs older than this many days (stops the first run from flooding
+// the app with the whole folder history).
+var MAX_AGE_DAYS = 14;
+
 function sendNewDrivePos() {
   var props = PropertiesService.getScriptProperties();
   var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+  var cutoff = Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
   var files = folder.getFiles();
   while (files.hasNext()) {
     var file = files.next();
     if (file.getMimeType() !== "application/pdf") continue;
+    if (file.getDateCreated().getTime() < cutoff) continue;
     if (props.getProperty("sent-" + file.getId())) continue;
     var payload = {
       filename: file.getName(),
