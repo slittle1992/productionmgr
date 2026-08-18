@@ -1557,9 +1557,53 @@ async function loadMeeting(week) {
   }
 }
 
+/** "What you'll need" checklist at the top of the meeting, with live status. */
+function renderMeetingPrep(v) {
+  const payrollDone =
+    v.labor.rows.length > 0 &&
+    v.labor.rows
+      .filter((r) => r.completedRevenue > 0 || r.revenueOverride !== null)
+      .every((r) => r.productionPayroll !== null);
+  const counts = invCountsFresh() ? invCounts.classes.length : 0;
+  const spendDone =
+    invCountsFresh() &&
+    counts > 0 &&
+    invCounts.totals.missingPurchases.length === 0;
+  const items = [
+    { sec: "pastdue", icon: "💰", label: "Unpaid Invoices export", done: Boolean(v.pastDue.meta) },
+    { sec: "workorders", icon: "🛠", label: "Work orders export", done: Boolean(v.workOrders.uploadedAt) },
+    { sec: "pipeline", icon: "📊", label: "Production Pipeline report", done: v.pipeline.available },
+    { sec: "labor", icon: "✅", label: "Completed Projects report", done: Boolean(v.labor.uploadedAt) },
+    { sec: "labor", icon: "🧾", label: "Payroll per location", done: payrollDone },
+    { sec: "materials", icon: "📦", label: "Inventory counts (all locations)", done: counts > 0, note: counts ? `${counts} in` : "" },
+    { sec: "materials", icon: "💵", label: "Material spend $ per location", done: spendDone },
+    { sec: "leads", icon: "📍", label: "Clients List export", done: Boolean(v.leads) },
+  ];
+  const ready = items.filter((i) => i.done).length;
+  const el = $("meeting-prep");
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="prep-head">
+      <span class="prep-title">What you'll need</span>
+      <span class="prep-count${ready === items.length ? " all" : ""}">${ready}/${items.length} ready</span>
+    </div>
+    <div class="prep-chips">
+      ${items
+        .map(
+          (i) => `
+        <button class="prep-chip${i.done ? " done" : ""}" type="button" data-goto="${i.sec}">
+          <span class="prep-ic">${i.done ? "✓" : i.icon}</span>
+          <span>${i.label}${i.note ? ` <b>· ${i.note}</b>` : ""}</span>
+        </button>`
+        )
+        .join("")}
+    </div>`;
+}
+
 function renderMeeting() {
   const v = meeting.view;
   if (!v) return;
+  renderMeetingPrep(v);
   $("meeting-week-range").textContent = `${fmtDay(v.week.weekStart)} – ${fmtDay(v.week.weekEnd)}`;
   $("meeting-progress-label").textContent = `${v.doneCount} of ${v.sectionCount} done`;
   $("meeting-progress-fill").style.width =
@@ -3674,10 +3718,25 @@ function renderMaterialsSection(v) {
 
       const deltaValue =
         c.beginValue !== null ? c.beginValue - c.endValue : null;
+      // Deliveries reveal themselves: counts that ROSE this week, valued at
+      // PO prices, are a floor for what landed at this location.
+      const arrivals = c.usage.lines.reduce(
+        (n, l) =>
+          n +
+          (l.prevCount !== null && l.count > l.prevCount && l.unitCost !== null
+            ? (l.count - l.prevCount) * l.unitCost
+            : 0),
+        0
+      );
+      const arrivalsR = Math.round(arrivals * 100) / 100;
+      const suggest =
+        arrivalsR > 0 && c.purchases === null
+          ? `<button class="inv-use" type="button" data-invuse="${escapeHtml(c.className)}" data-amount="${arrivalsR}">arrivals detected ≈ ${fmtMoney(arrivalsR)} — use</button>`
+          : "";
       const mathRows = `
       <div class="inv-math">
         <div class="derived-row">
-          <span>Purchases this week <span class="inv-dim">(material spend — POs/Ramp)</span></span>
+          <span>Purchases this week <span class="inv-dim">(material received — POs/Ramp)</span>${suggest}</span>
           <span class="money-inline">$ <input class="js-purchase" data-class="${escapeHtml(c.className)}"
             type="number" min="0" step="0.01" inputmode="decimal"
             value="${c.purchases ?? ""}" placeholder="0" /></span>
@@ -3911,6 +3970,18 @@ function saveInvPrice(input) {
   }, 400);
 }
 
+function initMeetingPrep() {
+  $("meeting-prep").addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-goto]");
+    if (!chip) return;
+    const sec = document.querySelector(`[data-open="sec:${chip.dataset.goto}"]`);
+    if (!sec) return;
+    sec.open = true;
+    meeting.open.add(`sec:${chip.dataset.goto}`);
+    sec.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
 function initInvCounts() {
   const root = $("meeting-sections");
   // The section re-renders often, so everything is event-delegated.
@@ -3932,6 +4003,15 @@ function initInvCounts() {
     if (del) {
       e.preventDefault();
       deleteInvCounts(del.dataset.invdel);
+      return;
+    }
+    const use = e.target.closest("[data-invuse]");
+    if (use) {
+      e.preventDefault();
+      saveInvPurchases({
+        dataset: { class: use.dataset.invuse },
+        value: use.dataset.amount,
+      });
       return;
     }
     if (e.target.closest("#inv-paste")) {
@@ -4093,6 +4173,7 @@ async function init() {
   });
 
   initInvCounts();
+  initMeetingPrep();
 
   // Production Management (the meeting) is the default screen; the Schedule,
   // Staging, Inventory, Pay and Roster tabs are hidden but stay wired up.

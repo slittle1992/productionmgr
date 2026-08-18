@@ -79,7 +79,9 @@ endpoints still exist server-side.)
 ## Friday Production Meeting (Meeting tab)
 
 A 9-item weekly checklist that the owner, production manager, or an admin can
-run from a phone or desktop. Each section shows a progress ring; the header
+run from a phone or desktop. A **"What you'll need"** strip at the top lists
+every input the meeting takes (exports, payroll, counts, material spend) with
+a live ✓ as each one lands — tap a chip to jump to its section. Each section shows a progress ring; the header
 tracks "N of 9 done". Enter your name once at the top — it's stamped on every
 sign-off, note, and update so next week you know who owns what.
 
@@ -121,7 +123,10 @@ sign-off, note, and update so next week you know who owns what.
    counts × the PO-derived unit-cost catalog. Because a delivery raises
    stock and purchases equally, big PO weeks don't spike the number — and
    a negative cost means the purchases entry is too low, which the section
-   flags rather than hides. Item movement (counts that went down) stays as
+   flags rather than hides. Deliveries are hard to track across locations,
+   so the section detects them: counts that **rose**, valued at PO prices,
+   show as "arrivals detected ≈ $X — use", one tap to fill the purchases
+   box (a floor for what landed; type the real PO total when known). Item movement (counts that went down) stays as
    a collapsible detail per location, with unit costs from
    `src/data/materialPrices.ts` editable inline. Included in the meeting
    export.
