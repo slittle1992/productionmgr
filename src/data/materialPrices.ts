@@ -12,11 +12,17 @@ import { itemKey } from "../domain/inventory.js";
  * the flat tier price is applied to every color in each tier, including
  * the few not on that PO.
  *
+ * Resins and binders come from the Polyval POs (UV Resin $175, UV Primer
+ * $158, Paving Binder $85 per pail) and the Simiron Trowel Glide PO ($73).
+ * The numbered "UV Resin Binder" batches are priced as the PO's UV RESIN
+ * BINDER line; UV PAVING RESIN as the paving binder line.
+ *
  * Not covered by any PO (enter in the app when known): Rubaroc-sourced
- * black EPDM, RevaPave, Rubaroc UV Resin/Primer, Paving Binder, Fumed
- * Silica, Trowel Glide, Tek Grip, Ballistix Vapor Lock, kit-size
- * (1.5/2 gal) coatings, and the off-list Torginol flake colors (Bengal,
- * Cherokee, Crimson, Pheasant).
+ * black EPDM, RevaPave, Fumed Silica, Trowel Glide MS, the extreme-heat
+ * aliphatic binder, RevaSEAL, Tek Grip, Ballistix Vapor Lock, kit-size
+ * (1.5/2 gal) coatings, boxes of squeegees (per-box count unknown), and
+ * the off-list Torginol flake colors (Bengal, Cherokee, Crimson,
+ * Pheasant).
  */
 const NAMED_UNIT_COSTS: Record<string, number> = {
   // ── Flake colors — Simiron 40 lb boxes at $62 (POs 111088-112258) ──
@@ -98,6 +104,17 @@ const NAMED_UNIT_COSTS: Record<string, number> = {
   // ── Mender — $175 per 5-gal ──
   "REVAFLEX MENDER PART A 5 GAL": 175,
   "REVAFLEX SUMMER MENDER PART B 5 GAL": 175,
+
+  // ── Rubber resins & binders — Polyval / Simiron POs ──
+  "Rubaroc UV Resin (RESIN-UVRESIN)": 175,
+  "UV Resin Binder 4469": 175,
+  "UV Resin Binder 5609": 175,
+  "UV Resin Binder 8000": 175,
+  "UV Resin Binder V2": 175,
+  "Rubaroc UV Primer (RESIN-UVPRIMER)": 158,
+  "Paving Binder": 85,
+  "UV PAVING RESIN - X 61-7501": 85,
+  "Trowel Glide": 73,
 
   // ── Solvents ──
   "ACETONE - 5 GALLON": 51.2,

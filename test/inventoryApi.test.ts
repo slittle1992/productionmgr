@@ -24,7 +24,7 @@ const week1Rows = [
   ["Autumn Brown", 36],
   ["Glacier", 40],
   ["RUBBER BINDER & RESIN", "Count"],
-  ["Paving Binder", 18],
+  ["FUMED SILICA", 18],
 ];
 const week2Rows = [
   ["Submitted 8/17/2026, 7:59:59 AM · by John Blake · 4 trailers"],
@@ -33,7 +33,7 @@ const week2Rows = [
   ["Autumn Brown", 36],
   ["Glacier", 44],
   ["RUBBER BINDER & RESIN", "Count"],
-  ["Paving Binder", 14],
+  ["FUMED SILICA", 14],
 ];
 
 describe("inventory API", () => {
@@ -64,16 +64,16 @@ describe("inventory API", () => {
     expect(up2.body.previous.weekStart).toBe("2026-08-09");
     expect(up2.body.current.sourceLabel).toMatch(/^Submitted 8\/17\/2026/);
 
-    // Claystone is priced from the PO defaults (10 used × $82.40); Paving
-    // Binder has no default and is flagged so the total isn't silently low.
+    // Claystone is priced from the PO defaults (10 used × $82.40); Fumed
+    // Silica has no default and is flagged so the total isn't silently low.
     expect(up2.body.usage.usedCount).toBe(2);
     expect(up2.body.usage.totalCost).toBe(824);
-    expect(up2.body.usage.unpricedItems).toEqual(["Paving Binder"]);
+    expect(up2.body.usage.unpricedItems).toEqual(["FUMED SILICA"]);
 
-    // Override the default and price the binder.
+    // Override the default and price the silica.
     const priced = await request(app)
       .post("/api/inventory/prices")
-      .send({ prices: { Claystone: 84.2, "Paving Binder": 100 } });
+      .send({ prices: { Claystone: 84.2, "FUMED SILICA": 100 } });
     expect(priced.status).toBe(200);
     expect(priced.body.prices.claystone).toBe(84.2);
 
