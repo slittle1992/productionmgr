@@ -7,10 +7,16 @@ import { itemKey } from "../domain/inventory.js";
  * a PM can override any of these from the usage table in the app — stored
  * prices always win over these defaults.
  *
- * Not covered by any PO (enter in the app when known): EPDM rubber bags,
- * Rubaroc UV Resin/Primer, Paving Binder, Fumed Silica, Trowel Glide,
- * Tek Grip, Ballistix Vapor Lock, kit-size (1.5/2 gal) coatings, and the
- * off-list Torginol flake colors (Bengal, Cherokee, Crimson, Pheasant).
+ * EPDM granules come from the Fieldmaster PO FM-DALLAS-091025: flat
+ * $34.75/bag for base colors and $36.25/bag for custom-mix (CM) blends —
+ * the flat tier price is applied to every color in each tier, including
+ * the few not on that PO.
+ *
+ * Not covered by any PO (enter in the app when known): Rubaroc-sourced
+ * black EPDM, RevaPave, Rubaroc UV Resin/Primer, Paving Binder, Fumed
+ * Silica, Trowel Glide, Tek Grip, Ballistix Vapor Lock, kit-size
+ * (1.5/2 gal) coatings, and the off-list Torginol flake colors (Bengal,
+ * Cherokee, Crimson, Pheasant).
  */
 const NAMED_UNIT_COSTS: Record<string, number> = {
   // ── Flake colors — Simiron 40 lb boxes at $62 (POs 111088-112258) ──
@@ -35,6 +41,44 @@ const NAMED_UNIT_COSTS: Record<string, number> = {
   // Torginol boxes.
   Claystone: 82.4,
   "All Other Flake Colors (combined count of colors not listed)": 60.4,
+
+  // ── EPDM base colors — Fieldmaster $34.75 per 55 lb bag ──
+  "EPDM - BEIGE - CH02": 34.75,
+  "EPDM - BLACK - CH57 (Fieldmaster)": 34.75,
+  "EPDM - BRIGHT GREEN - CH42": 34.75,
+  "EPDM - BROWN - CH58": 34.75,
+  "EPDM - DARK BLUE - CH53": 34.75,
+  "EPDM - DARK GREY CH43": 34.75,
+  "EPDM - EGGSHELL CH14": 34.75,
+  "EPDM - IRON GREEN - CH49": 34.75,
+  "EPDM - LIGHT BLUE CH39": 34.75,
+  "EPDM - LIGHT GREEN CH27": 34.75,
+  "EPDM - LIGHT GREY CH15": 34.75,
+  "EPDM - MEDIUM GREY CH22": 34.75,
+  "EPDM - ORANGE - CH38": 34.75,
+  "EPDM - PINK - CH24": 34.75,
+  "EPDM - PURPLE - CH40": 34.75,
+  "EPDM - RED CH59": 34.75,
+  "EPDM - TEAL - CH04": 34.75,
+  "EPDM - WHITE CH07": 34.75,
+  "EPDM - YELLOW - CH37": 34.75,
+
+  // ── EPDM custom-mix blends — Fieldmaster $36.25 per 55 lb bag ──
+  "EPDM Atlantis": 36.25,
+  "EPDM Brownstone": 36.25,
+  "EPDM Caspian": 36.25,
+  "EPDM Lilypad": 36.25,
+  "EPDM Limestone": 36.25,
+  "EPDM Mocha": 36.25,
+  "EPDM Nickel": 36.25,
+  "EPDM Platinum": 36.25,
+  "EPDM Sandalwood": 36.25,
+  "EPDM Sandstone": 36.25,
+  "EPDM Santa Fe": 36.25,
+  "EPDM Seminole": 36.25,
+  "EPDM Slate": 36.25,
+  "EPDM Sterling": 36.25,
+  "EPDM Terra Cotta": 36.25,
 
   // ── RevaFlex basecoat — $125 per 5-gal (all Part A variants + Part B) ──
   "REVAFLEX BASECOAT ACTIVATOR PART B 5 GAL": 125,
