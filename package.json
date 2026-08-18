@@ -19,6 +19,7 @@
     "@neondatabase/serverless": "^1.1.0",
     "@upstash/redis": "^1.38.0",
     "express": "^4.21.2",
+    "pdfjs-dist": "^4.10.38",
     "zod": "^3.24.1"
   },
   "devDependencies": {

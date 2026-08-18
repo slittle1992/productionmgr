@@ -43,6 +43,7 @@ export type SectionKey =
   | "workorders"
   | "pipeline"
   | "labor"
+  | "materials"
   | "leads"
   | CheckKey;
 
@@ -51,6 +52,7 @@ export const SECTION_KEYS: SectionKey[] = [
   "workorders",
   "pipeline",
   "labor",
+  "materials",
   "reviews",
   "lytx",
   "ramp",

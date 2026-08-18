@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cleanItemName,
+  textLinesToGrid,
   computeInventoryUsage,
   itemKey,
   parseInventory,
@@ -58,6 +59,21 @@ describe("parseInventory", () => {
       category: "FLAKE COLOR",
       count: 36,
     });
+  });
+
+  it("reads the location from the sheet title and splits pasted lines", () => {
+    const grid = textLinesToGrid([
+      "Deluxe Garages - Austin — Inventory Count",
+      "Submitted 8/10/2026, 8:07:26 AM · by John Blake · 4 trailers",
+      "FLAKE COLOR Count",
+      "Autumn Brown 36",
+      "UV Resin Binder 4469 2.5",
+      "Claystone 7",
+    ]);
+    const result = parseInventory(grid);
+    expect(result.className).toBe("Austin");
+    expect(result.sourceLabel).toMatch(/^Submitted/);
+    expect(result.lines.find((l) => l.item === "UV Resin Binder 4469")?.count).toBe(2.5);
   });
 
   it("rejects grids without recognizable count rows", () => {

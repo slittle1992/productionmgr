@@ -1,4 +1,4 @@
-import { PipelineFormatError, type RawGrid } from "./pipeline.js";
+import { PipelineFormatError, cleanClassName, type RawGrid } from "./pipeline.js";
 
 /**
  * Weekly inventory counts (ReVamp Material Tracker export).
@@ -20,6 +20,22 @@ export interface InventoryParseResult {
   itemCount: number;
   /** e.g. "Submitted 8/17/2026, 7:59:59 AM · by John Blake · 4 trailers" */
   sourceLabel: string | null;
+  /** Location parsed from the sheet title ("Deluxe Garages - Austin — Inventory Count"). */
+  className: string | null;
+}
+
+/**
+ * Plain text lines (pasted table or PDF-extracted text) → grid rows: the
+ * trailing number on a line is the count, the rest is the item name.
+ */
+export function textLinesToGrid(lines: string[]): RawGrid {
+  return lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = line.match(/^(.*?)[\s ]+(-?\d[\d,]*(?:\.\d+)?)$/);
+      return m ? [m[1]!, m[2]!] : [line];
+    });
 }
 
 export interface InventoryUsageLine {
@@ -98,6 +114,7 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
   const seen = new Set<string>();
   let category: string | null = null;
   let sourceLabel: string | null = null;
+  let className: string | null = null;
 
   for (const raw of grid) {
     const cells = (raw ?? []).map(text).filter((c): c is string => c !== null);
@@ -123,6 +140,12 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
       sourceLabel = joined;
       continue;
     }
+    // Sheet title carries the location: "Deluxe Garages - Austin — Inventory Count".
+    const title = joined.match(/^(.+?)\s*[—-]{1,2}\s*Inventory Count\b/i);
+    if (title && !className) {
+      className = cleanClassName(title[1]!) || null;
+      continue;
+    }
     // Section headers end in "Count" ("FLAKE COLOR  Count"); skip URLs,
     // timestamps, plain Item/Count headers, and long prose.
     const header = joined.replace(/\s*count$/i, "").trim();
@@ -143,7 +166,7 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
         "count at the end (the ReVamp Material Tracker export)."
     );
   }
-  return { lines, itemCount: lines.length, sourceLabel };
+  return { lines, itemCount: lines.length, sourceLabel, className };
 }
 
 /**

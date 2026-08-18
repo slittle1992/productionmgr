@@ -150,36 +150,6 @@
         <div id="meeting-sections">
           <div class="loading">Loading meeting…</div>
         </div>
-        <!-- Inventory counts & material cost — shown under §4 Labor rates -->
-        <fieldset class="card" id="inventory-card">
-          <legend>Inventory counts &amp; material cost</legend>
-          <p class="card-help">
-            Upload this week's inventory count (ReVamp Material Tracker
-            export). We compare it with last week's count to work out what was
-            used and what it cost.
-          </p>
-          <div class="pipeline-bar inv-bar">
-            <div id="inv-status" class="pipeline-status">Loading…</div>
-            <div class="pipeline-actions">
-              <label class="btn-upload">
-                <span>Upload count</span>
-                <input id="inv-file" type="file" accept=".xlsx,.xls,.csv" hidden />
-              </label>
-              <button id="inv-paste" class="btn-export" type="button">Paste counts</button>
-              <button id="inv-clear" class="btn-clear" type="button" hidden>Clear</button>
-            </div>
-          </div>
-          <div class="derived-row">
-            <span>Items used this week</span>
-            <strong id="inv-used-count">—</strong>
-          </div>
-          <div class="derived-row">
-            <span>Material cost this week</span>
-            <strong id="inv-total">—</strong>
-          </div>
-          <p class="hint" id="inv-note" hidden></p>
-          <div id="inv-usage" class="inv-usage" hidden></div>
-        </fieldset>
         <div class="card history-card">
           <h2 class="history-title">Saved weeks</h2>
           <p class="card-help">

@@ -55,15 +55,8 @@ in `public/index.html` to bring one back. All built for a thumb:
 
 - **Production Management** *(default screen)* — the Friday Production
   Meeting checklist (below). The pipeline uploaded here feeds the Schedule.
-  Directly under §4 Labor rates sits **Inventory counts & material cost**:
-  upload (or paste) the week's ReVamp Material Tracker count and the app
-  compares it with the prior week's count to compute what was used, priced
-  from a PO-derived unit-cost catalog (`src/data/materialPrices.ts` —
-  flake $62/box, Claystone $82.40, EPDM $34.75–36.25/bag, basecoat $125,
-  topcoat $220, UV resin $175, primer $158, paving binder $85, …). Any
-  price can be overridden right in the usage table; used items with no
-  price are flagged so the total is never silently understated. Counts
-  went *up* (restock)? Flagged and counted as 0 used.
+  Checklist item №5 is **Inventory counts & material cost** — see the
+  meeting section below.
 - **Schedule** *(hidden)* — the weekly production schedule that
   replaces the spreadsheet. Jobs are pulled from Builder Prime, grouped by
   **class**, each showing Customer, Job #, project type, scheduled day, SQFT,
@@ -85,9 +78,9 @@ endpoints still exist server-side.)
 
 ## Friday Production Meeting (Meeting tab)
 
-An 8-item weekly checklist that the owner, production manager, or an admin can
+A 9-item weekly checklist that the owner, production manager, or an admin can
 run from a phone or desktop. Each section shows a progress ring; the header
-tracks "N of 8 done". Enter your name once at the top — it's stamped on every
+tracks "N of 9 done". Enter your name once at the top — it's stamped on every
 sign-off, note, and update so next week you know who owns what.
 
 1. **Past due balances** — upload the Builder Prime **Unpaid Invoices** export.
@@ -117,11 +110,20 @@ sign-off, note, and update so next week you know who owns what.
    its own **⬆ Payroll** upload; the app reads every sheet, totals the
    **Production** department, and suggests the sheet whose pay period matches
    the week. Or just type the number.
-5. **Reviews** · 6. **Lytx** · 7. **Ramp** — one-tap links to each dashboard
+5. **Inventory counts & material cost** — every location uploads its weekly
+   ReVamp Material Tracker count (the printed **PDF**, an .xlsx/.csv, or
+   pasted straight off the page; the location is read from the sheet title,
+   with a picker to override). Usage = last week's count − this week's,
+   priced from the PO-derived unit-cost catalog
+   (`src/data/materialPrices.ts`; editable inline, flagged when unpriced,
+   restocks counted as 0 used) — and each location's material cost is
+   compared with §4's completed revenue as **material % of revenue**, plus
+   an all-locations total. Included in the meeting export.
+6. **Reviews** · 7. **Lytx** · 8. **Ramp** — one-tap links to each dashboard
    (configurable via `REVIEWS_DASHBOARD_URL`, `LYTX_DASHBOARD_URL`,
    `RAMP_DASHBOARD_URL`), a notes box for what you found (incidents, counts,
    actions taken), and a *Mark reviewed* sign-off.
-8. **Leads by area** — upload the **Clients List** export. Leads group per
+9. **Leads by area** — upload the **Clients List** export. Leads group per
    location, then by **ZIP cluster** (first three digits ≈ a metro: 752xx
    Dallas, 761xx Fort Worth). Pick a window (last week / 4 weeks / quarter):
    each cluster shows leads vs the prior equal window and its **share shift**

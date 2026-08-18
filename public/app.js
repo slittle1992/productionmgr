@@ -1493,10 +1493,11 @@ const MEETING_SECTIONS = [
   { key: "workorders", n: 2, title: "Work orders & warranties" },
   { key: "pipeline", n: 3, title: "Production pipeline" },
   { key: "labor", n: 4, title: "Labor rates" },
-  { key: "reviews", n: 5, title: "Reviews dashboard" },
-  { key: "lytx", n: 6, title: "Lytx incidents" },
-  { key: "ramp", n: 7, title: "Ramp spend" },
-  { key: "leads", n: 8, title: "Leads by area" },
+  { key: "materials", n: 5, title: "Inventory counts & material cost" },
+  { key: "reviews", n: 6, title: "Reviews dashboard" },
+  { key: "lytx", n: 7, title: "Lytx incidents" },
+  { key: "ramp", n: 8, title: "Ramp spend" },
+  { key: "leads", n: 9, title: "Leads by area" },
 ];
 
 const meeting = {
@@ -1570,6 +1571,7 @@ function renderMeeting() {
     workorders: renderWorkOrdersSection(v),
     pipeline: renderPipelineSection(v),
     labor: renderLaborSection(v),
+    materials: renderMaterialsSection(v),
     reviews: renderCheckSection(v, "reviews"),
     lytx: renderCheckSection(v, "lytx"),
     ramp: renderCheckSection(v, "ramp"),
@@ -1589,6 +1591,7 @@ function renderMeeting() {
           .map((r) => `${r.className.slice(0, 3)} ${r.rate.toFixed(1)}×`)
           .join(" · ") || "enter payroll"
       : "upload completed jobs",
+    materials: invCountsSubtitle(),
     reviews: v.checks.reviews.status === "done" ? "reviewed" : "needs review",
     lytx: v.checks.lytx.status === "done" ? "reviewed" : "needs review",
     ramp: v.checks.ramp.status === "done" ? "reviewed" : "needs review",
@@ -2877,6 +2880,25 @@ function buildMeetingXlsx(v, leadsView) {
       r.rate !== null ? Number(r.rate.toFixed(2)) : "",
       r.rate ? Number((100 / r.rate).toFixed(1)) / 100 : "",
     ]),
+    ...(invCounts && invCounts.week.weekStart === v.week.weekStart &&
+    invCounts.classes.length
+      ? [
+          [],
+          [`MATERIAL COST — from the weekly inventory counts`],
+          ["Location", "Items counted", "Items used", "Material cost", "Material % of revenue"],
+          ...invCounts.classes.map((c) => {
+            const rev = invRevenueFor(v, c.className);
+            return [
+              c.className,
+              c.current.itemCount,
+              c.usage.usedCount,
+              c.usage.totalCost,
+              rev && rev > 0 ? Number(((c.usage.totalCost / rev) * 100).toFixed(1)) / 100 : "",
+            ];
+          }),
+          ["TOTAL", "", invCounts.totals.usedCount, invCounts.totals.totalCost, ""],
+        ]
+      : []),
   ];
   sheetFromRows(wb, "Summary", summary, [10, 26, 10, 16, 14, 16]);
 
@@ -3533,185 +3555,216 @@ async function snapshotClick(e) {
 
 // ─────────────────────────── Navigation ───────────────────────────
 
-// ──────────────── Inventory counts & material cost (Production Management) ────────────────
-// Weekly Material Tracker counts → week-over-week usage priced from the PO
-// catalog. The card lives in the meeting screen and is re-parented directly
-// under the "Labor rates" section every time the meeting re-renders.
-let invCounts = null;
+// ──────── Inventory counts & material cost (meeting §5) ────────
+// Each location uploads its weekly Material Tracker count (PDF, xlsx/csv, or
+// pasted text). Usage = last week's count − this week's, priced from the PO
+// catalog, and compared against §4's completed revenue per location.
+let invCounts = null; // GET /api/inventory-counts for the meeting week
 let invCountsLoadedWeek;
-let invCountsCard = null;
-
-// The card is briefly detached while the meeting re-renders, and
-// getElementById can't see detached nodes — look inside the card first.
-function invEl(id) {
-  return (invCountsCard && invCountsCard.querySelector("#" + id)) || $(id);
-}
-
-function invCountsQuery() {
-  return meeting.week ? `?week=${meeting.week}` : "";
-}
 
 async function loadInvCounts() {
   invCountsLoadedWeek = meeting.week;
+  if (!state.classes.length) await loadReportClasses();
   try {
-    const res = await fetch(`/api/inventory-counts${invCountsQuery()}`);
+    const q = meeting.week ? `?week=${meeting.week}` : "";
+    const res = await fetch(`/api/inventory-counts${q}`);
     if (!res.ok) throw new Error();
     invCounts = await res.json();
   } catch {
     invCounts = null;
   }
-  renderInvCounts();
+  if (meeting.view) renderMeeting();
 }
 
-function placeInvCountsCard() {
-  if (!invCountsCard) return;
-  const labor = document.querySelector('#screen-meeting [data-open="sec:labor"]');
-  if (labor) {
-    if (invCountsCard.previousElementSibling !== labor) {
-      labor.insertAdjacentElement("afterend", invCountsCard);
-    }
-  } else if (!invCountsCard.isConnected) {
-    $("meeting-sections").insertAdjacentElement("afterend", invCountsCard);
-  }
-  // The meeting week changed (◀ ▶) — refresh the counts for that week.
-  if (invCountsLoadedWeek !== meeting.week) loadInvCounts();
-}
+const invCountsFresh = () =>
+  invCounts && (!meeting.week || invCounts.week.weekStart === meeting.week);
 
-function renderInvCounts() {
-  const status = invEl("inv-status");
-  const note = invEl("inv-note");
-  if (!invCounts || !invCounts.current) {
-    status.textContent = "No inventory count uploaded for this week yet.";
-    invEl("inv-used-count").textContent = "—";
-    invEl("inv-total").textContent = "—";
-    invEl("inv-clear").hidden = true;
-    invEl("inv-usage").hidden = true;
-    note.hidden = true;
-    return;
-  }
-  const { current, previous, usage, week } = invCounts;
-  status.innerHTML =
-    `Count for week of <strong>${fmtWeekDay(week.weekStart)}</strong> — ${current.itemCount} items` +
-    (current.sourceLabel
-      ? `<br><span class="inv-source">${escapeHtml(current.sourceLabel)}</span>`
-      : "");
-  invEl("inv-clear").hidden = false;
-
-  if (!previous) {
-    invEl("inv-used-count").textContent = "—";
-    invEl("inv-total").textContent = "—";
-    note.textContent =
-      "First count on record — upload next week's count and usage and cost " +
-      "will be worked out from the difference.";
-    note.hidden = false;
-    invEl("inv-usage").hidden = true;
-    return;
-  }
-
-  invEl("inv-used-count").textContent = String(usage.usedCount);
-  invEl("inv-total").textContent = fmtMoney(usage.totalCost);
-  const unpriced = usage.unpricedItems.length;
-  note.textContent =
-    `Compared with the count from the week of ${fmtWeekDay(previous.weekStart)}.` +
-    (unpriced
-      ? ` ${unpriced} used item${unpriced === 1 ? " has" : "s have"} no unit cost yet — enter unit costs below to include them.`
-      : "");
-  note.hidden = false;
-  renderInvCountsTable(usage);
-  invEl("inv-usage").hidden = false;
-}
-
-function renderInvCountsTable(usage) {
-  const rows = usage.lines.filter((l) => (l.used ?? 0) > 0);
-  const restocked = usage.lines.filter((l) => l.restocked).length;
-  const box = invEl("inv-usage");
-  if (!rows.length) {
-    box.innerHTML = `<p class="hint">Nothing was used this week — no counts went down.</p>`;
-    return;
-  }
-  box.innerHTML = `
-    <div class="table-wrap inv-table-wrap">
-      <table class="inv-table">
-        <thead><tr>
-          <th>Item used</th><th class="num">Last wk</th><th class="num">Now</th>
-          <th class="num">Used</th><th class="num">Unit cost $</th><th class="num">Cost</th>
-        </tr></thead>
-        <tbody>
-          ${rows
-            .map(
-              (l) => `
-            <tr>
-              <td class="inv-item">${escapeHtml(l.item)}${l.category ? `<span class="inv-cat"> · ${escapeHtml(l.category)}</span>` : ""}</td>
-              <td class="num">${fmtN(l.prevCount)}</td>
-              <td class="num">${fmtN(l.count)}</td>
-              <td class="num"><strong>${fmtN(l.used)}</strong></td>
-              <td class="num"><input class="js-price" data-item="${escapeHtml(l.item)}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.unitCost ?? ""}" placeholder="—" /></td>
-              <td class="num">${l.cost === null ? "—" : fmtMoney(l.cost)}</td>
-            </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </div>
-    ${restocked ? `<p class="hint">${restocked} item${restocked === 1 ? "" : "s"} restocked this week (count went up) — counted as 0 used.</p>` : ""}
-  `;
-  box.querySelectorAll(".js-price").forEach((input) =>
-    input.addEventListener("change", () => {
-      const item = input.dataset.item;
-      const value = input.value === "" ? 0 : Number(input.value);
-      debounce(
-        `price:${item}`,
-        async () => {
-          try {
-            const res = await fetch("/api/inventory-counts/prices", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                prices: { [item]: Number.isFinite(value) && value > 0 ? value : 0 },
-              }),
-            });
-            if (!res.ok) throw new Error();
-            await loadInvCounts();
-            toast("Unit cost saved ✓", "success");
-          } catch {
-            toast("Couldn't save that unit cost.", "error");
-          }
-        },
-        400
-      );
-    })
+function invCountsSubtitle() {
+  if (!invCountsFresh() || !invCounts.classes.length)
+    return "upload the weekly counts";
+  const n = invCounts.classes.length;
+  const t = invCounts.totals;
+  return (
+    `${n} location${n === 1 ? "" : "s"} · ${fmtMoney0(t.totalCost)} used` +
+    (t.unpricedItems.length ? ` · ${t.unpricedItems.length} unpriced` : "")
   );
 }
 
-async function postInvCounts(rows, filename) {
-  const res = await fetch(`/api/inventory-counts${invCountsQuery()}`, {
+/** Completed revenue for a location, from the labor-rates section's data. */
+function invRevenueFor(v, className) {
+  const row = (v.labor?.rows || []).find((r) => r.className === className);
+  if (!row) return null;
+  return row.revenueOverride ?? row.completedRevenue ?? null;
+}
+
+function invClassOptions() {
+  const known = new Set(state.classes);
+  if (invCountsFresh())
+    invCounts.classes.forEach((c) => known.add(c.className));
+  return (
+    `<option value="">Location: auto-detect</option>` +
+    [...known]
+      .sort()
+      .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
+      .join("")
+  );
+}
+
+function renderMaterialsSection(v) {
+  if (!invCountsFresh()) {
+    if (invCountsLoadedWeek !== meeting.week) loadInvCounts();
+    return `<div class="loading">Loading inventory counts…</div>`;
+  }
+  const controls = `
+  <div class="mtg-upload">
+    <span>Upload each location's <b>Material Tracker</b> count — the printed
+    PDF, an .xlsx/.csv, or paste the page. The location is read from the
+    sheet title; the picker overrides it.</span>
+    <span class="mtg-upload-actions">
+      <select id="inv-class" class="inv-class-select">${invClassOptions()}</select>
+      <label class="btn-upload"><span>⬆ Upload count</span>
+        <input id="inv-file" type="file" accept=".xlsx,.xls,.csv,.pdf" hidden />
+      </label>
+      <button id="inv-paste" class="btn-export" type="button">Paste counts</button>
+    </span>
+  </div>`;
+
+  if (!invCounts.classes.length) {
+    return (
+      controls +
+      `<p class="hint">No counts uploaded for the week of ${fmtDay(invCounts.week.weekStart)} yet.</p>`
+    );
+  }
+
+  const t = invCounts.totals;
+  let revTotal = 0;
+  let revKnown = false;
+
+  const blocks = invCounts.classes
+    .map((c) => {
+      const rev = invRevenueFor(v, c.className);
+      if (rev && rev > 0) {
+        revTotal += rev;
+        revKnown = true;
+      }
+      const pct = rev && rev > 0 ? (c.usage.totalCost / rev) * 100 : null;
+      const pctHtml =
+        pct !== null
+          ? `<span class="mtg-rate-pct">material ${pct.toFixed(1)}% of revenue</span>`
+          : `<span class="mtg-rate-pct inv-dim">no completed revenue yet (§4)</span>`;
+      const openKey = `inv:${c.className}`;
+      const usage = c.usage;
+      const used = usage.lines.filter((l) => (l.used ?? 0) > 0);
+      const restocked = usage.lines.filter((l) => l.restocked).length;
+      const prevNote = c.previous
+        ? `vs week of ${fmtDay(c.previous.weekStart)}`
+        : "first count on record";
+      const body = !c.previous
+        ? `<p class="hint">First count on record for ${escapeHtml(c.className)} —
+           upload next week's count and usage and cost will come from the difference.</p>`
+        : !used.length
+        ? `<p class="hint">Nothing was used this week — no counts went down.</p>`
+        : `
+        <div class="table-wrap inv-table-wrap">
+          <table class="inv-table">
+            <thead><tr>
+              <th>Item used</th><th class="num">Last wk</th><th class="num">Now</th>
+              <th class="num">Used</th><th class="num">Unit cost $</th><th class="num">Cost</th>
+            </tr></thead>
+            <tbody>
+              ${used
+                .map(
+                  (l) => `
+                <tr>
+                  <td class="inv-item">${escapeHtml(l.item)}${l.category ? `<span class="inv-cat"> · ${escapeHtml(l.category)}</span>` : ""}</td>
+                  <td class="num">${fmtN(l.prevCount)}</td>
+                  <td class="num">${fmtN(l.count)}</td>
+                  <td class="num"><strong>${fmtN(l.used)}</strong></td>
+                  <td class="num"><input class="js-price" data-item="${escapeHtml(l.item)}" type="number" min="0" step="0.01" inputmode="decimal" value="${l.unitCost ?? ""}" placeholder="—" /></td>
+                  <td class="num">${l.cost === null ? "—" : fmtMoney(l.cost)}</td>
+                </tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+        ${restocked ? `<p class="hint">${restocked} item${restocked === 1 ? "" : "s"} restocked (count went up) — counted as 0 used.</p>` : ""}
+        ${usage.unpricedItems.length ? `<p class="hint">⚠ ${usage.unpricedItems.length} used item${usage.unpricedItems.length === 1 ? " has" : "s have"} no unit cost — enter unit costs above to include them.</p>` : ""}`;
+
+      return `
+      <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
+        <summary>
+          <b>${escapeHtml(c.className)}</b>
+          <span class="inv-loc-sub">${c.current.itemCount} items · ${prevNote}</span>
+          ${pctHtml}
+          <span class="inv-loc-cost">${fmtMoney(usage.totalCost)}</span>
+        </summary>
+        <p class="hint inv-loc-meta">
+          ${c.current.sourceLabel ? escapeHtml(c.current.sourceLabel) + " · " : ""}
+          ${c.current.filename ? escapeHtml(c.current.filename) + " · " : ""}
+          <button class="btn-clear inv-del" type="button" data-invdel="${escapeHtml(c.className)}">Remove</button>
+        </p>
+        ${body}
+      </details>`;
+    })
+    .join("");
+
+  const totalPct = revKnown && revTotal > 0 ? (t.totalCost / revTotal) * 100 : null;
+  const totals = `
+  <div class="mtg-labor-row inv-totals">
+    <div class="mtg-labor-head"><b>All locations</b>
+      ${totalPct !== null ? `<span class="mtg-rate-pct">material ${totalPct.toFixed(1)}% of revenue</span>` : ""}
+    </div>
+    <div class="derived-row"><span>Items used this week</span><strong>${t.usedCount}</strong></div>
+    <div class="derived-row"><span>Material cost this week</span><strong>${fmtMoney(t.totalCost)}</strong></div>
+  </div>`;
+
+  return controls + blocks + totals;
+}
+
+async function postInvCounts(payload) {
+  const q = meeting.week ? `?week=${meeting.week}` : "";
+  const res = await fetch(`/api/inventory-counts${q}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(filename ? { filename, rows } : { rows }),
+    body: JSON.stringify(payload),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.message || "Upload failed.");
   invCounts = data;
-  renderInvCounts();
-  toast(`Saved ${data.current.itemCount} inventory counts ✓`, "success");
+  if (meeting.view) renderMeeting();
+  toast(`Saved ${data.itemCount} counts for ${data.className} ✓`, "success");
+}
+
+function invSelectedClass() {
+  const sel = document.getElementById("inv-class");
+  return sel && sel.value ? { className: sel.value } : {};
 }
 
 async function handleInvCountsFile(file) {
   if (!file) return;
-  if (typeof XLSX === "undefined") {
-    toast("Spreadsheet reader didn't load — check your connection.", "error");
-    return;
-  }
   try {
+    if (/\.pdf$/i.test(file.name)) {
+      const b64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(",")[1] || "");
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+      await postInvCounts({ filename: file.name, pdfBase64: b64, ...invSelectedClass() });
+      return;
+    }
+    if (typeof XLSX === "undefined") {
+      toast("Spreadsheet reader didn't load — check your connection.", "error");
+      return;
+    }
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array" });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
-    await postInvCounts(rows, file.name);
+    await postInvCounts({ filename: file.name, rows, ...invSelectedClass() });
   } catch (err) {
     toast(err.message || "Couldn't read that file.", "error");
-  } finally {
-    $("inv-file").value = "";
   }
 }
 
@@ -3727,27 +3780,61 @@ function invCountsTextToRows(textVal) {
     });
 }
 
-async function clearInvCounts() {
-  if (!confirm("Remove this week's inventory count?")) return;
+async function deleteInvCounts(className) {
+  if (!confirm(`Remove the ${className} count for this week?`)) return;
+  const q = `?week=${meeting.week || ""}&class=${encodeURIComponent(className)}`;
   try {
-    await fetch(`/api/inventory-counts${invCountsQuery()}`, { method: "DELETE" });
+    await fetch(`/api/inventory-counts${q}`, { method: "DELETE" });
   } catch {
     /* reload below shows the real state */
   }
   await loadInvCounts();
 }
 
+function saveInvPrice(input) {
+  const item = input.dataset.item;
+  const value = input.value === "" ? 0 : Number(input.value);
+  debounce(`price:${item}`, async () => {
+    try {
+      const res = await fetch("/api/inventory-counts/prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prices: { [item]: Number.isFinite(value) && value > 0 ? value : 0 },
+        }),
+      });
+      if (!res.ok) throw new Error();
+      await loadInvCounts();
+      toast("Unit cost saved ✓", "success");
+    } catch {
+      toast("Couldn't save that unit cost.", "error");
+    }
+  }, 400);
+}
+
 function initInvCounts() {
-  invCountsCard = $("inventory-card");
-  // The meeting re-render wipes #meeting-sections, so re-place the card (and
-  // follow week changes) every time it changes.
-  new MutationObserver(placeInvCountsCard).observe($("meeting-sections"), {
-    childList: true,
+  const root = $("meeting-sections");
+  // The section re-renders often, so everything is event-delegated.
+  root.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.id === "inv-file") {
+      handleInvCountsFile(t.files[0]);
+      t.value = "";
+    } else if (t.classList && t.classList.contains("js-price")) {
+      saveInvPrice(t);
+    }
   });
-  $("inv-file").addEventListener("change", (e) => handleInvCountsFile(e.target.files[0]));
-  $("inv-paste").addEventListener("click", () => {
-    $("inv-text").value = "";
-    $("inv-dialog").showModal();
+  root.addEventListener("click", (e) => {
+    const del = e.target.closest("[data-invdel]");
+    if (del) {
+      e.preventDefault();
+      deleteInvCounts(del.dataset.invdel);
+      return;
+    }
+    if (e.target.closest("#inv-paste")) {
+      $("inv-text").value = "";
+      $("inv-dialog").showModal();
+    }
   });
   $("inv-cancel").addEventListener("click", () => $("inv-dialog").close());
   $("inv-form").addEventListener("submit", async (e) => {
@@ -3758,12 +3845,11 @@ function initInvCounts() {
       return;
     }
     try {
-      await postInvCounts(rows, null);
+      await postInvCounts({ rows, ...invSelectedClass() });
     } catch (err) {
       toast(err.message || "Couldn't read those counts.", "error");
     }
   });
-  invEl("inv-clear").addEventListener("click", clearInvCounts);
 }
 
 const TITLES = {

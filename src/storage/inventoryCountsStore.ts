@@ -1,11 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { InventoryCountLine } from "../domain/inventory.js";
+import { classSlug } from "./repository.js";
 import type { KvClient } from "./kv/kvClient.js";
 
-/** One week's uploaded inventory count. */
+/** One location's uploaded inventory count for one week. */
 export interface StoredInventoryWeek {
   weekStart: string;
+  className: string;
   uploadedAt: string;
   filename: string | null;
   sourceLabel: string | null;
@@ -16,9 +18,12 @@ export interface StoredInventoryWeek {
 export type PriceMap = Record<string, number>;
 
 export interface InventoryCountsStore {
-  getWeek(weekStart: string): Promise<StoredInventoryWeek | null>;
+  /** Every location's count stored for the week. */
+  getWeek(weekStart: string): Promise<StoredInventoryWeek[]>;
+  /** Upsert one location's count for its week. */
   setWeek(week: StoredInventoryWeek): Promise<void>;
-  deleteWeek(weekStart: string): Promise<void>;
+  /** Remove one location's count, or the whole week when no class is given. */
+  deleteWeek(weekStart: string, className?: string): Promise<void>;
   /** All stored week-start dates, ascending. */
   listWeekStarts(): Promise<string[]>;
   getPrices(): Promise<PriceMap>;
@@ -35,8 +40,12 @@ function mergePrices(current: PriceMap, updates: PriceMap): PriceMap {
   return next;
 }
 
+const sortByClass = (a: StoredInventoryWeek, b: StoredInventoryWeek) =>
+  a.className.localeCompare(b.className);
+
 interface InventoryFile {
-  weeks: Record<string, StoredInventoryWeek>;
+  /** weekStart → classSlug → count. */
+  weeks: Record<string, Record<string, StoredInventoryWeek>>;
   prices: PriceMap;
 }
 
@@ -74,21 +83,25 @@ export class JsonInventoryCountsStore implements InventoryCountsStore {
     return result;
   }
 
-  async getWeek(weekStart: string): Promise<StoredInventoryWeek | null> {
-    return (await this.read()).weeks[weekStart] ?? null;
+  async getWeek(weekStart: string): Promise<StoredInventoryWeek[]> {
+    return Object.values((await this.read()).weeks[weekStart] ?? {}).sort(sortByClass);
   }
   async setWeek(week: StoredInventoryWeek): Promise<void> {
     await this.write((f) => {
-      f.weeks[week.weekStart] = week;
+      (f.weeks[week.weekStart] ??= {})[classSlug(week.className)] = week;
     });
   }
-  async deleteWeek(weekStart: string): Promise<void> {
+  async deleteWeek(weekStart: string, className?: string): Promise<void> {
     await this.write((f) => {
-      delete f.weeks[weekStart];
+      if (className === undefined) delete f.weeks[weekStart];
+      else delete f.weeks[weekStart]?.[classSlug(className)];
     });
   }
   async listWeekStarts(): Promise<string[]> {
-    return Object.keys((await this.read()).weeks).sort();
+    const weeks = (await this.read()).weeks;
+    return Object.keys(weeks)
+      .filter((w) => Object.keys(weeks[w] ?? {}).length)
+      .sort();
   }
   async getPrices(): Promise<PriceMap> {
     return (await this.read()).prices ?? {};
@@ -102,27 +115,62 @@ export class JsonInventoryCountsStore implements InventoryCountsStore {
 }
 
 export class KvInventoryCountsStore implements InventoryCountsStore {
+  /** Hash of `${weekStart}|${classSlug}` → StoredInventoryWeek (null = deleted). */
   private static readonly WEEKS = "inventory:weeks";
   private static readonly PRICES = "inventory:prices";
   constructor(private readonly kv: KvClient) {}
 
-  async getWeek(weekStart: string): Promise<StoredInventoryWeek | null> {
-    const all = await this.kv.hgetall<StoredInventoryWeek>(KvInventoryCountsStore.WEEKS);
-    return all?.[weekStart] ?? null;
+  private async all(): Promise<Record<string, StoredInventoryWeek | null>> {
+    return (
+      (await this.kv.hgetall<StoredInventoryWeek | null>(
+        KvInventoryCountsStore.WEEKS
+      )) ?? {}
+    );
+  }
+  private static live(v: StoredInventoryWeek | null): v is StoredInventoryWeek {
+    return Boolean(v && Array.isArray(v.lines));
+  }
+
+  async getWeek(weekStart: string): Promise<StoredInventoryWeek[]> {
+    const all = await this.all();
+    return Object.entries(all)
+      .filter(
+        ([k, v]) =>
+          k.startsWith(`${weekStart}|`) && KvInventoryCountsStore.live(v)
+      )
+      .map(([, v]) => v as StoredInventoryWeek)
+      .sort(sortByClass);
   }
   async setWeek(week: StoredInventoryWeek): Promise<void> {
-    await this.kv.hset(KvInventoryCountsStore.WEEKS, week.weekStart, week);
+    await this.kv.hset(
+      KvInventoryCountsStore.WEEKS,
+      `${week.weekStart}|${classSlug(week.className)}`,
+      week
+    );
   }
-  async deleteWeek(weekStart: string): Promise<void> {
-    // KvClient has no hdel; overwrite with a tombstone the reads filter out.
-    await this.kv.hset(KvInventoryCountsStore.WEEKS, weekStart, null);
+  async deleteWeek(weekStart: string, className?: string): Promise<void> {
+    if (className !== undefined) {
+      await this.kv.hset(
+        KvInventoryCountsStore.WEEKS,
+        `${weekStart}|${classSlug(className)}`,
+        null
+      );
+      return;
+    }
+    const all = await this.all();
+    for (const key of Object.keys(all)) {
+      if (key.startsWith(`${weekStart}|`) && all[key]) {
+        await this.kv.hset(KvInventoryCountsStore.WEEKS, key, null);
+      }
+    }
   }
   async listWeekStarts(): Promise<string[]> {
-    const all = await this.kv.hgetall<StoredInventoryWeek>(KvInventoryCountsStore.WEEKS);
-    return Object.entries(all ?? {})
-      .filter(([, v]) => v && Array.isArray(v.lines))
-      .map(([k]) => k)
-      .sort();
+    const all = await this.all();
+    const weeks = new Set<string>();
+    for (const [key, v] of Object.entries(all)) {
+      if (KvInventoryCountsStore.live(v)) weeks.add(key.split("|")[0]!);
+    }
+    return [...weeks].sort();
   }
   async getPrices(): Promise<PriceMap> {
     return (await this.kv.get<PriceMap>(KvInventoryCountsStore.PRICES)) ?? {};
@@ -138,18 +186,32 @@ export class MemoryInventoryCountsStore implements InventoryCountsStore {
   private weeks = new Map<string, StoredInventoryWeek>();
   private prices: PriceMap = {};
 
+  private static key(weekStart: string, className: string) {
+    return `${weekStart}|${classSlug(className)}`;
+  }
   async getWeek(weekStart: string) {
-    const w = this.weeks.get(weekStart);
-    return w ? structuredClone(w) : null;
+    return [...this.weeks.values()]
+      .filter((w) => w.weekStart === weekStart)
+      .map((w) => structuredClone(w))
+      .sort(sortByClass);
   }
   async setWeek(week: StoredInventoryWeek) {
-    this.weeks.set(week.weekStart, structuredClone(week));
+    this.weeks.set(
+      MemoryInventoryCountsStore.key(week.weekStart, week.className),
+      structuredClone(week)
+    );
   }
-  async deleteWeek(weekStart: string) {
-    this.weeks.delete(weekStart);
+  async deleteWeek(weekStart: string, className?: string) {
+    if (className !== undefined) {
+      this.weeks.delete(MemoryInventoryCountsStore.key(weekStart, className));
+      return;
+    }
+    for (const key of [...this.weeks.keys()]) {
+      if (key.startsWith(`${weekStart}|`)) this.weeks.delete(key);
+    }
   }
   async listWeekStarts() {
-    return [...this.weeks.keys()].sort();
+    return [...new Set([...this.weeks.values()].map((w) => w.weekStart))].sort();
   }
   async getPrices() {
     return { ...this.prices };

@@ -65,6 +65,13 @@ writeFileSync(
 cpSync(path.join(root, "public"), path.join(out, "static"), { recursive: true });
 cpSync(path.join(root, "public"), path.join(funcDir, "public"), { recursive: true });
 
+// pdf.js loads its (fake) worker module from disk at runtime — ship it next to
+// the function entry so PDF inventory uploads work on Vercel.
+cpSync(
+  path.join(root, "node_modules", "pdfjs-dist", "legacy", "build", "pdf.worker.mjs"),
+  path.join(funcDir, "pdf.worker.mjs")
+);
+
 // 4. Routing: serve static files first, everything else goes to the app.
 writeFileSync(
   path.join(out, "config.json"),

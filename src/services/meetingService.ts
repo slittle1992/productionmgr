@@ -454,6 +454,8 @@ export class MeetingService {
         labor
           .filter((l) => l.completedRevenue > 0 || l.revenueOverride !== null)
           .every((l) => l.productionPayroll !== null),
+      // Inventory counts / material cost: no server-side auto signal yet.
+      materials: false,
       reviews: doc.checks.reviews.status === "done",
       lytx: doc.checks.lytx.status === "done",
       ramp: doc.checks.ramp.status === "done",

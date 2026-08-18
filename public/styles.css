@@ -2051,3 +2051,49 @@ dialog#inv-dialog::backdrop {
   font-family: inherit;
   resize: vertical;
 }
+
+/* Inventory counts inside the meeting section */
+.mtg-upload {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13.5px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.mtg-upload-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.inv-class-select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 13px;
+  background: var(--card);
+}
+.inv-loc-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.inv-loc-cost {
+  margin-left: auto;
+  font-weight: 700;
+}
+.inv-loc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inv-dim {
+  opacity: 0.65;
+}
+.inv-totals {
+  margin-top: 10px;
+}
