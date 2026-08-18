@@ -8,6 +8,7 @@ import {
 } from "../domain/inventory.js";
 import { PipelineFormatError } from "../domain/pipeline.js";
 import { getReportingWeek, getReportingWeekFromStart } from "../domain/week.js";
+import { DEFAULT_UNIT_COSTS } from "../data/materialPrices.js";
 import type {
   InventoryStore,
   StoredInventoryWeek,
@@ -64,7 +65,8 @@ export function inventoryRouter(
       return { week: { weekStart, weekEnd }, current: null, previous: null, usage: null };
     }
     const prev = await previousWeek(weekStart);
-    const prices = await store.getPrices();
+    // PO-derived defaults, with any price the PMs set on top.
+    const prices = { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) };
     return {
       week: { weekStart, weekEnd },
       current: {
@@ -133,7 +135,10 @@ export function inventoryRouter(
   router.get(
     "/inventory/prices",
     asyncHandler(async (_req, res) => {
-      res.json({ prices: await store.getPrices() });
+      res.json({
+        prices: { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) },
+        defaults: DEFAULT_UNIT_COSTS,
+      });
     })
   );
 

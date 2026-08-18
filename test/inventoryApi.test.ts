@@ -23,6 +23,8 @@ const week1Rows = [
   ["Claystone", 17],
   ["Autumn Brown", 36],
   ["Glacier", 40],
+  ["EPDM COLOR", "Count"],
+  ["EPDM - BEIGE - CH02", 14.5],
 ];
 const week2Rows = [
   ["Submitted 8/17/2026, 7:59:59 AM · by John Blake · 4 trailers"],
@@ -30,6 +32,8 @@ const week2Rows = [
   ["Claystone", 7],
   ["Autumn Brown", 36],
   ["Glacier", 44],
+  ["EPDM COLOR", "Count"],
+  ["EPDM - BEIGE - CH02", 9.5],
 ];
 
 describe("inventory API", () => {
@@ -51,7 +55,7 @@ describe("inventory API", () => {
       .post("/api/inventory?week=2026-08-09")
       .send({ filename: "counts1.xlsx", rows: week1Rows });
     expect(up1.status).toBe(200);
-    expect(up1.body.current.itemCount).toBe(3);
+    expect(up1.body.current.itemCount).toBe(4);
     expect(up1.body.previous).toBeNull();
 
     const up2 = await request(app).post("/api/inventory").send({ rows: week2Rows });
@@ -60,20 +64,23 @@ describe("inventory API", () => {
     expect(up2.body.previous.weekStart).toBe("2026-08-09");
     expect(up2.body.current.sourceLabel).toMatch(/^Submitted 8\/17\/2026/);
 
-    // No prices yet: usage found, cost 0, Claystone flagged unpriced.
-    expect(up2.body.usage.usedCount).toBe(1);
-    expect(up2.body.usage.totalCost).toBe(0);
-    expect(up2.body.usage.unpricedItems).toEqual(["Claystone"]);
+    // Claystone is priced from the PO defaults (10 used × $82.40); the EPDM
+    // bag has no default and is flagged so the total isn't silently low.
+    expect(up2.body.usage.usedCount).toBe(2);
+    expect(up2.body.usage.totalCost).toBe(824);
+    expect(up2.body.usage.unpricedItems).toEqual(["EPDM - BEIGE - CH02"]);
 
-    // Price the flake box and the cost appears (10 used × $84.20).
+    // Override the default and price the EPDM bag.
     const priced = await request(app)
       .post("/api/inventory/prices")
-      .send({ prices: { Claystone: 84.2 } });
+      .send({ prices: { Claystone: 84.2, "EPDM - BEIGE - CH02": 100 } });
     expect(priced.status).toBe(200);
     expect(priced.body.prices.claystone).toBe(84.2);
 
+    // 10 × $84.20 + 5 × $100.
     const summary = await request(app).get("/api/inventory?week=2026-08-16");
-    expect(summary.body.usage.totalCost).toBe(842);
+    expect(summary.body.usage.totalCost).toBe(1342);
+    expect(summary.body.usage.unpricedItems).toEqual([]);
     const glacier = summary.body.usage.lines.find(
       (l: { item: string }) => l.item === "Glacier"
     );
@@ -83,7 +90,7 @@ describe("inventory API", () => {
   it("snaps mid-week dates to the reporting week", async () => {
     await request(app).post("/api/inventory?week=2026-08-18").send({ rows: week1Rows });
     const res = await request(app).get("/api/inventory?week=2026-08-16");
-    expect(res.body.current?.itemCount).toBe(3);
+    expect(res.body.current?.itemCount).toBe(4);
   });
 
   it("rejects unreadable uploads with a helpful 400", async () => {

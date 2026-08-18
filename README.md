@@ -78,9 +78,13 @@ cost as:
 2. **Used = last week's count − this week's count**, floored at 0. Counts that
    went *up* (shipments, returns) are flagged "restocked" and count as 0 used,
    since the tracker doesn't report shipment sizes separately.
-3. Each used item is priced from the **unit-cost catalog** — editable right in
-   the usage table, saved per item, and remembered week to week. Items used
-   but unpriced are called out so the total is never silently understated.
+3. Each used item is priced from the **unit-cost catalog**. It ships
+   preloaded with real prices from the June–Aug 2026 purchase orders
+   (`src/data/materialPrices.ts` — flake boxes, RevaFlex basecoat/topcoat/
+   mender, solvents, key sundries); a PM can override any price right in the
+   usage table, saved per item and remembered week to week. Items used but
+   unpriced (e.g. EPDM rubber, which had no POs to draw from) are called out
+   so the total is never silently understated.
 4. **Material cost this week = Σ used × unit cost** — one tap copies it into
    the report's *Actual materials* field.
 
