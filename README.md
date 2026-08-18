@@ -81,7 +81,12 @@ endpoints still exist server-side.)
 A 9-item weekly checklist that the owner, production manager, or an admin can
 run from a phone or desktop. A **"What you'll need"** strip at the top lists
 every input the meeting takes (exports, payroll, counts, material spend) with
-a live ✓ as each one lands — tap a chip to jump to its section. Each section shows a progress ring; the header
+a live ✓ as each one lands — tap a chip to jump to its section. Below it, a
+**Scoreboard** shows each location's week side by side: completed revenue,
+labor rate, material $ and %, **spec material $** (completed jobs joined to
+their pipeline SQFT and run through the coverage math at PO prices), and the
+**usage multiple** (actual ÷ spec — 1.0× means crews used exactly what the
+spec calls for), color-coded. Each section shows a progress ring; the header
 tracks "N of 9 done". Enter your name once at the top — it's stamped on every
 sign-off, note, and update so next week you know who owns what.
 
@@ -123,7 +128,10 @@ sign-off, note, and update so next week you know who owns what.
    counts × the PO-derived unit-cost catalog. Because a delivery raises
    stock and purchases equally, big PO weeks don't spike the number — and
    a negative cost means the purchases entry is too low, which the section
-   flags rather than hides. Purchases fill themselves three ways, best
+   flags rather than hides. The section is organised per location — each
+   location is a collapsible block holding its math, its purchase orders
+   (expandable to the PO's full line items), and its item movement.
+   Purchases fill themselves three ways, best
    first: **drop the vendor PO PDF in** (same upload button — the app tells
    POs and count sheets apart, reads the PO number, supplier, total, and
    the ship-to location, and holds it as *in transit* until a PM taps

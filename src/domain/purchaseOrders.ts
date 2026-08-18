@@ -7,6 +7,13 @@ import type { RawGrid } from "./pipeline.js";
  * location's purchases for the week the material actually landed.
  */
 
+export interface PoItem {
+  description: string;
+  qty: number;
+  unitPrice: number;
+  subtotal: number;
+}
+
 export interface ParsedPurchaseOrder {
   poNumber: string | null;
   supplier: string | null;
@@ -16,6 +23,8 @@ export interface ParsedPurchaseOrder {
   className: string | null;
   /** The PO's grand total in dollars. */
   total: number | null;
+  /** Line items (description, qty, unit price, subtotal). */
+  items: PoItem[];
 }
 
 /** Ship-to city → class/location. */
@@ -54,6 +63,8 @@ export function parsePurchaseOrder(grid: RawGrid): ParsedPurchaseOrder {
   let orderMs: number | null = null;
   let className: string | null = null;
   let total: number | null = null;
+  const items: PoItem[] = [];
+  const num = (v: string) => Number(v.replace(/,/g, ""));
 
   let supplierAt = -1;
   let shipToAt = -1;
@@ -67,6 +78,23 @@ export function parsePurchaseOrder(grid: RawGrid): ParsedPurchaseOrder {
     // "Total: 113,600.00" (possibly split across runs).
     const t = line.match(/total:?\s*\$?\s*([\d,]+\.\d{2})/i);
     if (t) total = Number(t[1]!.replace(/,/g, ""));
+
+    // Product lines end "<qty> <unit price> <subtotal>"; wrapped descriptions
+    // simply fail the match and are skipped.
+    if (!t && i > productsAt) {
+      const it = line.match(
+        /^(.*?)\s+(\d[\d,]*(?:\.\d+)?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/
+      );
+      if (it) {
+        const qty = num(it[2]!);
+        const unitPrice = num(it[3]!);
+        const subtotal = num(it[4]!);
+        // Sanity: qty × unit ≈ subtotal keeps page furniture out.
+        if (Math.abs(qty * unitPrice - subtotal) < 1) {
+          items.push({ description: it[1]!.trim(), qty, unitPrice, subtotal });
+        }
+      }
+    }
 
     // PO numbers look like "FM-DALLAS-091025" or a bare "111088"; they can
     // share a line with their label or lead lines like "111088 6/15/2026--".
@@ -103,5 +131,5 @@ export function parsePurchaseOrder(grid: RawGrid): ParsedPurchaseOrder {
     }
   }
 
-  return { poNumber, supplier, orderMs, className, total };
+  return { poNumber, supplier, orderMs, className, total, items };
 }

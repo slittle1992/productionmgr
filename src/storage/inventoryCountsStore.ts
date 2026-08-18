@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { InventoryCountLine } from "../domain/inventory.js";
+import type { PoItem } from "../domain/purchaseOrders.js";
 import { classSlug } from "./repository.js";
 import type { KvClient } from "./kv/kvClient.js";
 
@@ -28,6 +29,8 @@ export interface StoredPo {
   orderMs: number | null;
   className: string | null;
   total: number | null;
+  /** Line items, when the PDF parse recovered them. */
+  items?: PoItem[];
   filename: string | null;
   uploadedAt: string;
   /** Week the material landed; null while still in transit. */

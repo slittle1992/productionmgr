@@ -4,6 +4,10 @@ import type { FollowUp } from "../domain/pastDue.js";
 import { parseUnpaidInvoices, syncFollowUps } from "../domain/pastDue.js";
 import { parseCompletedProjects } from "../domain/completedProjects.js";
 import {
+  expectedMaterialsByClass,
+  type ExpectedMaterialsRow,
+} from "../domain/expectedMaterials.js";
+import {
   buildLaborRates,
   buildPipelineChecks,
   buildWorkOrderReview,
@@ -80,6 +84,8 @@ export interface MeetingView {
     uploadedAt: string | null;
     sourceLabel: string | null;
   };
+  /** Spec material cost for the labor week's completed jobs (per location). */
+  materialsExpected: ExpectedMaterialsRow[];
   checks: Record<CheckKey, ManualCheck>;
   links: { reviews: string | null; lytx: string | null; ramp: string | null };
   /** Leads upload status; the analysis itself is served by GET /api/leads. */
@@ -321,6 +327,13 @@ export class MeetingService {
     );
     const pipeline = buildPipelineChecks(projects, lookAhead, this.config.customFields);
     const laborWeek = this.laborWeek(week);
+    const materialsExpected = expectedMaterialsByClass(
+      completed?.jobs ?? [],
+      laborWeek,
+      projects,
+      this.config.customFields,
+      this.config.coverage
+    );
     const laborRows = buildLaborRates(
       completed?.jobs ?? [],
       laborWeek,
@@ -355,6 +368,7 @@ export class MeetingService {
         uploadedAt: completed?.uploadedAt ?? null,
         sourceLabel: completed?.sourceLabel ?? null,
       },
+      materialsExpected,
       checks: doc.checks,
       links: this.config.meetingLinks,
       leads: leadsMeta,

@@ -2399,3 +2399,104 @@ details.inv-detail > summary {
   padding: 2px 8px;
   border-radius: 999px;
 }
+
+/* PO cards as expandable details, grouped per location */
+details.po-card > summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  cursor: pointer;
+}
+details.po-card > summary::-webkit-details-marker {
+  display: none;
+}
+details.po-card[open] {
+  background: #fdfefe;
+  box-shadow: 0 3px 10px rgba(20, 30, 50, 0.08);
+}
+details.po-card .inv-table-wrap {
+  margin-top: 8px;
+  max-height: 240px;
+}
+.po-badge {
+  background: #fdecc8;
+  color: #8a5d00;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+  margin-left: 8px;
+}
+.warn-head {
+  color: #8a5d00;
+}
+.inv-lede {
+  font-size: 13.5px;
+}
+details.inv-loc {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  margin-bottom: 8px;
+  transition: box-shadow 0.2s ease;
+}
+details.inv-loc[open] {
+  box-shadow: 0 4px 14px rgba(20, 30, 50, 0.08);
+}
+
+/* Scoreboard */
+#meeting-score {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.06);
+}
+.score-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.score-head .prep-title {
+  color: var(--brand);
+  opacity: 1;
+}
+.score-note {
+  font-size: 11.5px;
+}
+.score-wrap {
+  max-height: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+.score-table td b {
+  color: var(--brand);
+}
+.score-x {
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.score-x.good {
+  background: #d6f0df;
+  color: #1f6b3b;
+}
+.score-x.warn {
+  background: #fdecc8;
+  color: #8a5d00;
+}
+.score-x.bad {
+  background: #fbe0dd;
+  color: #c0392b;
+}
+.score-part {
+  font-size: 10.5px;
+}
