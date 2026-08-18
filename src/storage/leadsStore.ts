@@ -44,6 +44,13 @@ export interface StoredApptsWeek {
 export interface LeadsStore {
   getSold(): Promise<StoredSold | null>;
   setSold(sold: StoredSold): Promise<void>;
+  /** Chunked sold-contracts upload (large date ranges exceed one request). */
+  beginSoldUpload(uploadId: string, rows: SoldContract[]): Promise<void>;
+  appendSoldUpload(uploadId: string, rows: SoldContract[]): Promise<boolean>;
+  finalizeSoldUpload(
+    uploadId: string,
+    meta: Omit<StoredSold, "rows">
+  ): Promise<number | null>;
   getPerf(): Promise<StoredPerf | null>;
   setPerf(perf: StoredPerf): Promise<void>;
   /** Appointment rollups keyed by weekStart (re-upload replaces the week). */
@@ -77,11 +84,17 @@ interface LeadsFileShape {
 
 const EMPTY_GOALS: LeadGoals = { flakeMonthly: null, rubberMonthly: null };
 
+interface PendingSold {
+  id: string;
+  rows: SoldContract[];
+}
+
 interface SalesFileShape {
   sold: StoredSold | null;
   perf: StoredPerf | null;
   appts: Record<string, StoredApptsWeek>;
   goals: LeadGoals;
+  pendingSold: PendingSold | null;
 }
 
 export class JsonLeadsStore implements LeadsStore {
@@ -125,10 +138,23 @@ export class JsonLeadsStore implements LeadsStore {
   private async readSales(): Promise<SalesFileShape> {
     try {
       const raw = JSON.parse(await fs.readFile(this.salesFile, "utf8"));
-      return { sold: null, perf: null, appts: {}, goals: EMPTY_GOALS, ...raw };
+      return {
+        sold: null,
+        perf: null,
+        appts: {},
+        goals: EMPTY_GOALS,
+        pendingSold: null,
+        ...raw,
+      };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT")
-        return { sold: null, perf: null, appts: {}, goals: EMPTY_GOALS };
+        return {
+          sold: null,
+          perf: null,
+          appts: {},
+          goals: EMPTY_GOALS,
+          pendingSold: null,
+        };
       throw err;
     }
   }
@@ -150,7 +176,32 @@ export class JsonLeadsStore implements LeadsStore {
   async setSold(sold: StoredSold) {
     await this.writeSales((s) => {
       s.sold = sold;
+      s.pendingSold = null;
     });
+  }
+  async beginSoldUpload(uploadId: string, rows: SoldContract[]) {
+    await this.writeSales((s) => {
+      s.pendingSold = { id: uploadId, rows };
+    });
+  }
+  async appendSoldUpload(uploadId: string, rows: SoldContract[]) {
+    let ok = false;
+    await this.writeSales((s) => {
+      if (s.pendingSold?.id !== uploadId) return;
+      ok = true;
+      s.pendingSold.rows.push(...rows);
+    });
+    return ok;
+  }
+  async finalizeSoldUpload(uploadId: string, meta: Omit<StoredSold, "rows">) {
+    let count: number | null = null;
+    await this.writeSales((s) => {
+      if (s.pendingSold?.id !== uploadId) return;
+      count = s.pendingSold.rows.length;
+      s.sold = { ...meta, rows: s.pendingSold.rows };
+      s.pendingSold = null;
+    });
+    return count;
   }
   async getPerf() {
     return (await this.readSales()).perf;
@@ -234,6 +285,29 @@ export class KvLeadsStore implements LeadsStore {
   }
   async setSold(sold: StoredSold) {
     await this.kv.set(KvLeadsStore.SOLD, sold);
+    await this.kv.set(KvLeadsStore.SOLD_PENDING, null);
+  }
+  private static readonly SOLD_PENDING = "sales:soldpending";
+  async beginSoldUpload(uploadId: string, rows: SoldContract[]) {
+    await this.kv.set(KvLeadsStore.SOLD_PENDING, { id: uploadId, rows });
+  }
+  async appendSoldUpload(uploadId: string, rows: SoldContract[]) {
+    const pending = await this.kv.get<{ id: string; rows: SoldContract[] }>(
+      KvLeadsStore.SOLD_PENDING
+    );
+    if (pending?.id !== uploadId) return false;
+    pending.rows.push(...rows);
+    await this.kv.set(KvLeadsStore.SOLD_PENDING, pending);
+    return true;
+  }
+  async finalizeSoldUpload(uploadId: string, meta: Omit<StoredSold, "rows">) {
+    const pending = await this.kv.get<{ id: string; rows: SoldContract[] }>(
+      KvLeadsStore.SOLD_PENDING
+    );
+    if (pending?.id !== uploadId) return null;
+    await this.kv.set(KvLeadsStore.SOLD, { ...meta, rows: pending.rows });
+    await this.kv.set(KvLeadsStore.SOLD_PENDING, null);
+    return pending.rows.length;
   }
   async getPerf() {
     return await this.kv.get<StoredPerf>(KvLeadsStore.PERF);
@@ -306,6 +380,23 @@ export class MemoryLeadsStore implements LeadsStore {
   }
   async setSold(sold: StoredSold) {
     this.sold = structuredClone(sold);
+    this.pendingSold = null;
+  }
+  private pendingSold: { id: string; rows: SoldContract[] } | null = null;
+  async beginSoldUpload(uploadId: string, rows: SoldContract[]) {
+    this.pendingSold = { id: uploadId, rows: structuredClone(rows) };
+  }
+  async appendSoldUpload(uploadId: string, rows: SoldContract[]) {
+    if (this.pendingSold?.id !== uploadId) return false;
+    this.pendingSold.rows.push(...structuredClone(rows));
+    return true;
+  }
+  async finalizeSoldUpload(uploadId: string, meta: Omit<StoredSold, "rows">) {
+    if (this.pendingSold?.id !== uploadId) return null;
+    this.sold = { ...structuredClone(meta), rows: this.pendingSold.rows };
+    const n = this.pendingSold.rows.length;
+    this.pendingSold = null;
+    return n;
   }
   async getPerf() {
     return structuredClone(this.perf);

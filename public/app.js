@@ -1544,7 +1544,14 @@ async function meetingApi(path, method, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || "Request failed.");
+  if (!res.ok) {
+    throw new Error(
+      data.message ||
+        (res.status === 413
+          ? "That file is too big for one upload — refresh the app (it now chunks big files) or export a shorter date range."
+          : "Request failed.")
+    );
+  }
   return data;
 }
 
@@ -2821,7 +2828,7 @@ async function handleSalesUpload(kind, file) {
     sales.analysis = null;
     meeting.open.add("ssec:leads");
   } else if (kind === "sold") {
-    const data = await meetingApi("/api/leads/sold", "POST", { filename: file.name, rows });
+    const data = await uploadSoldChunked(file.name, rows);
     toast(`${data.count.toLocaleString()} sold contracts loaded ✓`, "success");
   } else if (kind === "perf") {
     const data = await meetingApi("/api/leads/perf", "POST", { filename: file.name, rows });
@@ -3639,6 +3646,49 @@ async function uploadLeadsChunked(filename, rows) {
     });
   }
   if (label) label.textContent = "Upload leads";
+  return last;
+}
+
+/**
+ * A year-plus Sold Contracts export exceeds one request body (Vercel caps
+ * ~4.5MB). Trim to the columns the parser uses and send in chunks, each
+ * repeating the title + header rows so the server parses pieces independently.
+ */
+async function uploadSoldChunked(filename, rows) {
+  const NEEDED = [
+    "sales person", "contract #", "client", "project type",
+    "job #", "project status", "sale date", "sale amount",
+  ];
+  const hdrIdx = rows.findIndex((r) =>
+    (r || []).some((c) => String(c ?? "").trim().toLowerCase() === "sale amount")
+  );
+  // No recognisable header — send as-is and let the server explain the format.
+  if (hdrIdx < 0) return meetingApi("/api/leads/sold", "POST", { filename, rows });
+
+  const lower = rows[hdrIdx].map((c) => String(c ?? "").trim().toLowerCase());
+  const cols = NEEDED.map((name) => lower.indexOf(name));
+  const pick = (row) => cols.map((i) => (i >= 0 ? row?.[i] ?? null : null));
+
+  const preamble = rows.slice(0, hdrIdx).map((r) => [r?.[0] ?? null]);
+  const header = pick(rows[hdrIdx]);
+  const data = rows.slice(hdrIdx + 1).map(pick);
+
+  const CHUNK = 4000;
+  const chunks = Math.max(1, Math.ceil(data.length / CHUNK));
+  const uploadId = `s${Date.now()}`;
+  const label = document.querySelector('[data-open="ssec:leads"] .btn-upload:nth-child(2) span');
+  let last;
+  for (let i = 0; i < chunks; i++) {
+    if (label && chunks > 1) label.textContent = `Uploading ${i + 1}/${chunks}…`;
+    last = await meetingApi("/api/leads/sold", "POST", {
+      filename,
+      uploadId,
+      seq: i,
+      chunks,
+      rows: [...preamble, header, ...data.slice(i * CHUNK, (i + 1) * CHUNK)],
+    });
+  }
+  if (label) label.textContent = "Sold contracts";
   return last;
 }
 

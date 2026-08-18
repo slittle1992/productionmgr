@@ -283,3 +283,50 @@ describe("lead goals API", () => {
     ]);
   });
 });
+
+describe("chunked sold-contracts upload", () => {
+  const SOLD_HEADER = [
+    ["Total Sales (Contracts) Between 08/01/2025 and 08/18/2026"],
+    ["Sales Person", "Contract #", "Client", "Project Type", "Job #", "Project Status", "Sale Date", "Sale Amount"],
+  ];
+  const soldRow = (n: number) => [
+    "Adam Asrar", 1000 + n, `Client ${n}`, "Concrete Coating", 2000 + n, "Sold", 46243, 1000,
+  ];
+
+  it("assembles chunks and finalises the stored sold rows", async () => {
+    const store = new MemoryLeadsStore();
+    const config = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    const app = buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore: new MemoryPipelineStore(),
+      scheduleStore: new MemoryScheduleStore(),
+      leadsStore: store,
+      now: () => NOW,
+    }).app;
+
+    const send = (seq: number, rows: unknown[][]) =>
+      request(app)
+        .post("/api/leads/sold")
+        .send({ filename: "sold.xlsx", uploadId: "s1", seq, chunks: 3, rows: [...SOLD_HEADER, ...rows] });
+
+    expect((await send(0, [soldRow(1), soldRow(2)])).body.done).toBe(false);
+    // Mid-upload the previous sold data is untouched (pending is separate).
+    expect(await store.getSold()).toBeNull();
+    expect((await send(1, [soldRow(3)])).body.done).toBe(false);
+    const final = await send(2, [soldRow(4)]);
+    expect(final.status).toBe(200);
+    expect(final.body).toMatchObject({ done: true, count: 4 });
+    const stored = (await store.getSold())!;
+    expect(stored.rows).toHaveLength(4);
+    expect(stored.sourceLabel).toContain("Between 08/01/2025");
+
+    // A stale chunk from a superseded upload is rejected.
+    const stale = await request(app)
+      .post("/api/leads/sold")
+      .send({ uploadId: "s1", seq: 1, chunks: 3, rows: [...SOLD_HEADER, soldRow(9)] });
+    expect(stale.status).toBe(409);
+  });
+});

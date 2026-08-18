@@ -113,26 +113,63 @@ export function leadsRouter(
     rows: z.array(z.array(z.unknown())).min(2),
   });
 
-  // POST /api/leads/sold — the Total Sales (Contracts) detail export.
+  // POST /api/leads/sold — the Total Sales (Contracts) detail export. Long
+  // date ranges exceed one request body, so the browser can send it in
+  // chunks (each repeating the header rows), same as the leads upload.
+  const soldBody = gridBody.extend({
+    uploadId: z.string().max(60).optional(),
+    seq: z.number().int().min(0).optional(),
+    chunks: z.number().int().min(1).max(500).optional(),
+  });
   router.post(
     "/leads/sold",
     asyncHandler(async (req, res) => {
-      const body = gridBody.parse(req.body);
+      const body = soldBody.parse(req.body);
+      let parsed;
       try {
-        const parsed = parseSoldContracts(body.rows);
-        await store.setSold({
-          rows: parsed.rows,
-          uploadedAt: new Date(now()).toISOString(),
-          filename: body.filename ?? null,
-          sourceLabel: parsed.sourceLabel,
-        });
-        res.json({ ok: true, count: parsed.rows.length });
+        parsed = parseSoldContracts(body.rows);
       } catch (err) {
         if (err instanceof PipelineFormatError) {
           res.status(400).json({ error: "invalid_sold", message: err.message });
           return;
         }
         throw err;
+      }
+      const meta = {
+        uploadedAt: new Date(now()).toISOString(),
+        filename: body.filename ?? null,
+        sourceLabel: parsed.sourceLabel,
+      };
+      const chunked = body.uploadId && body.chunks && body.chunks > 1;
+      if (!chunked) {
+        await store.setSold({ ...meta, rows: parsed.rows });
+        res.json({ ok: true, count: parsed.rows.length, done: true });
+        return;
+      }
+
+      const id = body.uploadId!;
+      const seq = body.seq ?? 0;
+      if (seq === 0) {
+        await store.beginSoldUpload(id, parsed.rows);
+      } else if (!(await store.appendSoldUpload(id, parsed.rows))) {
+        res.status(409).json({
+          error: "upload_conflict",
+          message: "Another sold-contracts upload replaced this one — try again.",
+        });
+        return;
+      }
+      if (seq === body.chunks! - 1) {
+        const count = await store.finalizeSoldUpload(id, meta);
+        if (count === null) {
+          res.status(409).json({
+            error: "upload_conflict",
+            message: "Another sold-contracts upload replaced this one — try again.",
+          });
+          return;
+        }
+        res.json({ ok: true, count, done: true });
+      } else {
+        res.json({ ok: true, seq, done: false });
       }
     })
   );
