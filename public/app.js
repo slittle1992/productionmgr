@@ -2943,7 +2943,20 @@ function renderLeadBarChart(d) {
     const label = `${sel ? sel + " — " : ""}${fmtDay(day.date)}: ${day.total} lead${day.total === 1 ? "" : "s"}${
       stacked ? ` — ${day.flake} flake · ${day.rubber} rubber${day.other ? ` · ${day.other} untyped` : ""}` : ""
     }`;
-    hits += `<rect class="lb-hit js-bar-hit" data-capfor="lead-chart-cap" data-cap="${escapeHtml(label)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}"><title>${escapeHtml(label)}</title></rect>`;
+    const tip = JSON.stringify({
+      title: `${sel ? sel + " · " : ""}${fmtDay(day.date)}`,
+      rows: [
+        ...(stacked
+          ? [
+              ["Flake", day.flake, "lb-flake"],
+              ["Rubber", day.rubber, "lb-rubber"],
+              ...(day.other ? [["Untyped", day.other, "lb-other"]] : []),
+            ]
+          : []),
+        ["Total leads", day.total],
+      ],
+    });
+    hits += `<rect class="lb-hit js-bar-hit" data-capfor="lead-chart-cap" data-cap="${escapeHtml(label)}" data-tip="${escapeHtml(tip)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}" aria-label="${escapeHtml(label)}"></rect>`;
   }
 
   const gridVals = [yMax / 2, yMax];
@@ -3106,7 +3119,17 @@ function renderApptDayChart() {
     const label = `${selLabel ? selLabel + " — " : ""}${fmtDay(d.date)}: ${d.t} appt${d.t === 1 ? "" : "s"}${
       d.t ? ` — ${d.f} flake · ${d.r} rubber${untyped ? ` · ${untyped} untyped` : ""}${d.c ? ` · ${d.c} cancelled` : ""}` : ""
     }`;
-    hits += `<rect class="lb-hit js-bar-hit" data-capfor="appt-chart-cap" data-cap="${escapeHtml(label)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}"><title>${escapeHtml(label)}</title></rect>`;
+    const tip = JSON.stringify({
+      title: `${selLabel ? selLabel + " · " : ""}${fmtDay(d.date)}`,
+      rows: [
+        ["Flake", d.f, "lb-flake"],
+        ["Rubber", d.r, "lb-rubber"],
+        ...(untyped ? [["Untyped", untyped, "lb-other"]] : []),
+        ["Total appts", d.t],
+        ["Cancelled", d.c, d.c ? "tip-warn" : ""],
+      ],
+    });
+    hits += `<rect class="lb-hit js-bar-hit" data-capfor="appt-chart-cap" data-cap="${escapeHtml(label)}" data-tip="${escapeHtml(tip)}" x="${(PAD_L + i * SLOT - (SLOT - BW) / 2).toFixed(1)}" width="${SLOT}" y="0" height="${H}" aria-label="${escapeHtml(label)}"></rect>`;
   }
 
   const latest = series[n - 1];
@@ -3436,13 +3459,53 @@ async function salesChange(e) {
   }
 }
 
+/** Floating tooltip for the daily charts — follows hover, anchors on tap. */
+function showVizTip(hit, x, y) {
+  const tip = $("viz-tip");
+  if (!tip) return;
+  let data = null;
+  try {
+    data = JSON.parse(hit.dataset.tip || "null");
+  } catch {
+    /* fall through to hide */
+  }
+  if (!data) {
+    tip.hidden = true;
+    return;
+  }
+  tip.innerHTML =
+    `<div class="viz-tip-title">${escapeHtml(data.title)}</div>` +
+    data.rows
+      .map(
+        ([k, v, cls]) =>
+          `<div class="viz-tip-row${cls === "tip-warn" ? " warn" : ""}">${
+            cls && cls !== "tip-warn" ? `<i class="lb-sw ${cls}"></i>` : ""
+          }<span>${escapeHtml(String(k))}</span><b>${escapeHtml(String(v))}</b></div>`
+      )
+      .join("");
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  const px = Math.min(Math.max(8, x - r.width / 2), window.innerWidth - r.width - 8);
+  let py = y - r.height - 14;
+  if (py < 8) py = y + 18;
+  tip.style.left = px + "px";
+  tip.style.top = py + "px";
+}
+
+function hideVizTip() {
+  const tip = $("viz-tip");
+  if (tip) tip.hidden = true;
+}
+
 async function salesClick(e) {
   const hit = e.target.closest?.(".js-bar-hit");
   if (hit) {
     const cap = $(hit.dataset.capfor || "lead-chart-cap");
     if (cap) cap.textContent = hit.dataset.cap;
+    showVizTip(hit, e.clientX, e.clientY);
     return;
   }
+  hideVizTip();
   const btn = e.target.closest("[data-act]");
   if (!btn) return;
   try {
@@ -5420,13 +5483,28 @@ async function init() {
   salesRoot.addEventListener("change", salesChange);
   salesRoot.addEventListener("click", salesClick);
   salesRoot.addEventListener("toggle", meetingToggle, true);
-  // Hover readout for the daily lead chart (tap is handled in salesClick).
+  // Hover readout + floating tooltip for the daily charts (tap is handled
+  // in salesClick).
   salesRoot.addEventListener("mouseover", (e) => {
     const hit = e.target.closest?.(".js-bar-hit");
     if (!hit) return;
     const cap = $(hit.dataset.capfor || "lead-chart-cap");
     if (cap) cap.textContent = hit.dataset.cap;
+    showVizTip(hit, e.clientX, e.clientY);
   });
+  salesRoot.addEventListener("mousemove", (e) => {
+    const hit = e.target.closest?.(".js-bar-hit");
+    if (hit) showVizTip(hit, e.clientX, e.clientY);
+  });
+  salesRoot.addEventListener("mouseout", (e) => {
+    if (
+      e.target.closest?.(".js-bar-hit") &&
+      !e.relatedTarget?.closest?.(".js-bar-hit")
+    ) {
+      hideVizTip();
+    }
+  });
+  window.addEventListener("scroll", hideVizTip, true);
 
   // Staging + inventory.
   $("staging-prev").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, -1)));
