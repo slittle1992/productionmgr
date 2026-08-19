@@ -221,7 +221,8 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
     config.customFields,
     config.weekStartDay,
     now,
-    workOrderStore
+    workOrderStore,
+    pipelineStore
   );
 
   const app = express();

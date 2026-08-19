@@ -10,7 +10,9 @@ import {
   isWithinWeek,
   type ReportingWeek,
 } from "../domain/week.js";
+import { jobKey } from "../domain/expectedMaterials.js";
 import type { JobAssignment, ScheduleStore } from "../storage/scheduleStore.js";
+import type { JobFacts } from "../storage/pipelineStore.js";
 import type { WorkOrderStore } from "../storage/workOrderStore.js";
 
 /** One line on the weekly schedule — a pipeline job or a work order. */
@@ -109,7 +111,8 @@ export class ScheduleService {
     private readonly fields: CustomFieldNames,
     private readonly weekStartDay: number,
     private readonly now: () => number = () => Date.now(),
-    private readonly workOrders?: WorkOrderStore
+    private readonly workOrders?: WorkOrderStore,
+    private readonly pipelineStore?: { getJobFacts(): Promise<Record<string, JobFacts>> }
   ) {}
 
   get usingSampleData(): boolean {
@@ -125,7 +128,8 @@ export class ScheduleService {
   private buildJob(
     p: BuilderPrimeProject,
     index: number,
-    assignments: Record<string, JobAssignment>
+    assignments: Record<string, JobAssignment>,
+    jobFacts: Record<string, JobFacts> = {}
   ): ScheduleJob {
     const jobNumber =
       str(readCustomField(p, this.fields.jobNumber)) ??
@@ -135,12 +139,16 @@ export class ScheduleService {
       `job-${index}`;
     const id = jobNumber;
     const assignment = assignments[id] ?? {};
+    // Fall back to the accumulated job history (earlier pipeline uploads,
+    // the sqft backfill) when the current export's row is blank.
+    const facts = jobFacts[jobKey(jobNumber)];
 
     const bpSqft = toNumber(readCustomField(p, this.fields.sqft));
-    const sqft = assignment.sqftOverride ?? bpSqft;
+    const sqft = assignment.sqftOverride ?? bpSqft ?? facts?.sqft ?? null;
 
     const bpColorRaw = str(readCustomField(p, this.fields.color));
-    const effectiveColorRaw = assignment.colorOverride ?? bpColorRaw;
+    const effectiveColorRaw =
+      assignment.colorOverride ?? bpColorRaw ?? facts?.color ?? null;
     const normalized = normalizeColor(effectiveColorRaw);
 
     const projectType =
@@ -252,16 +260,17 @@ export class ScheduleService {
   /** Build the weekly schedule (jobs + work orders) grouped by class. */
   async getSchedule(weekStart?: string): Promise<WeeklySchedule> {
     const week = this.resolveWeek(weekStart);
-    const [projects, assignments, storedWos] = await Promise.all([
+    const [projects, assignments, storedWos, jobFacts] = await Promise.all([
       this.provider.listAllProjects({}),
       this.store.getWeek(week.weekStart),
       this.workOrders?.get(),
+      this.pipelineStore?.getJobFacts() ?? Promise.resolve({}),
     ]);
 
     const jobs = projects
       .filter((p) => !p.projectStatusIsCancelled)
       .filter((p) => isWithinWeek(p.estimatedStartDate, week))
-      .map((p, i) => this.buildJob(p, i, assignments));
+      .map((p, i) => this.buildJob(p, i, assignments, jobFacts));
 
     const weekWos = (storedWos ? [...storedWos.uploaded, ...storedWos.manual] : []).filter(
       (wo) => isWithinWeek(wo.startDate ?? undefined, week)

@@ -135,3 +135,37 @@ describe("ScheduleService", () => {
     expect(dallas.material.rubberBags).toBe(10); // 300/30
   });
 });
+
+describe("sqft/color fallback from job history", () => {
+  it("fills blanks from job facts when the export row has none", async () => {
+    const projects: BuilderPrimeProject[] = [
+      {
+        projectId: 9,
+        jobNumber: 300,
+        className: "Austin",
+        estimatedStartDate: inWeek,
+        clientFirstName: "Blank",
+        clientLastName: "Row",
+        customFields: { "Project Type": "Flake" }, // no SQFT, no color
+      },
+    ];
+    const pipelineStore = {
+      getJobFacts: async () => ({ "300": { sqft: 720, color: "Tidal Wave" } }),
+    };
+    const service = new ScheduleService(
+      provider(projects),
+      new MemoryScheduleStore(),
+      rates,
+      fields,
+      0,
+      now,
+      undefined,
+      pipelineStore
+    );
+    const schedule = await service.getSchedule();
+    const job = schedule.classes[0]!.jobs[0]!;
+    expect(job.sqft).toBe(720);
+    expect(job.color).toBe("Tidal Wave");
+    expect(job.material).not.toBeNull();
+  });
+});
