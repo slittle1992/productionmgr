@@ -18,13 +18,16 @@ import {
   parseSoldContracts,
   salesByCluster,
 } from "../domain/sales.js";
+import { jobKey } from "../domain/expectedMaterials.js";
+import type { PipelineStore } from "../storage/pipelineStore.js";
 import { asyncHandler } from "./asyncHandler.js";
 
 /** Upload + analyse the Clients List (leads) export by location and zip cluster. */
 export function leadsRouter(
   store: LeadsStore,
   now: () => number = () => Date.now(),
-  weekStartDay = 0
+  weekStartDay = 0,
+  pipelineStore?: Pick<PipelineStore, "getJobFacts">
 ): Router {
   const router = Router();
 
@@ -364,6 +367,71 @@ export function leadsRouter(
       ]);
       const nowMs = now();
       const soldRows = sold?.rows ?? [];
+
+      // Close rate / NSLI per uploaded performance week (NSLI dollars
+      // recomputed from the sold contracts within each range).
+      const perfTrend = Object.values(perfHistory)
+        .sort((a, b) => a.fromMs - b.fromMs)
+        .slice(-13)
+        .map((h) => {
+          let net = 0;
+          for (const s of soldRows) {
+            if (s.saleMs === null || !s.rep) continue;
+            if (s.status && /cancel/i.test(s.status)) continue;
+            if (s.saleMs < h.fromMs) continue;
+            if (h.toMs !== null && s.saleMs >= h.toMs + 86400000) continue;
+            net += s.saleAmount;
+          }
+          return {
+            from: new Date(h.fromMs).toISOString().slice(0, 10),
+            issued: h.issued,
+            sold: h.sold,
+            closeRate: h.issued > 0 ? h.sold / h.issued : null,
+            nsli: h.issued > 0 ? Math.round((net / h.issued) * 100) / 100 : null,
+          };
+        });
+
+      // Price vs close: weekly average $/ft² of sold contracts (sqft joined
+      // from the pipeline job history by Job #), flake vs rubber, alongside
+      // that week's close rate — the "did the price raise hurt close?" view.
+      const jobFacts = pipelineStore ? await pipelineStore.getJobFacts() : {};
+      const psf = new Map<
+        string,
+        { f$: number; fSq: number; fN: number; r$: number; rSq: number; rN: number }
+      >();
+      for (const s of soldRows) {
+        if (s.saleMs === null || !s.jobNumber || s.saleAmount <= 0) continue;
+        if (s.status && /cancel/i.test(s.status)) continue;
+        const sqft = jobFacts[jobKey(s.jobNumber)]?.sqft;
+        if (!sqft || sqft <= 0) continue;
+        const ws = getReportingWeek(s.saleMs, weekStartDay).weekStart;
+        const slot =
+          psf.get(ws) ?? { f$: 0, fSq: 0, fN: 0, r$: 0, rSq: 0, rN: 0 };
+        if (/rubber/i.test(s.projectType ?? "")) {
+          slot.r$ += s.saleAmount;
+          slot.rSq += sqft;
+          slot.rN++;
+        } else {
+          slot.f$ += s.saleAmount;
+          slot.fSq += sqft;
+          slot.fN++;
+        }
+        psf.set(ws, slot);
+      }
+      const closeByWeek = new Map(perfTrend.map((p) => [p.from, p.closeRate]));
+      const r2p = (n: number) => Math.round(n * 100) / 100;
+      const priceTrend = [...psf.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .slice(-13)
+        .map(([weekStart, v]) => ({
+          weekStart,
+          flakePsf: v.fSq > 0 ? r2p(v.f$ / v.fSq) : null,
+          flakeN: v.fN,
+          rubberPsf: v.rSq > 0 ? r2p(v.r$ / v.rSq) : null,
+          rubberN: v.rN,
+          closeRate: closeByWeek.get(weekStart) ?? null,
+        }));
+
       // Seeded per-location goals show until an edit stores an override.
       const goals = {
         ...storedGoals,
@@ -540,28 +608,8 @@ export function leadsRouter(
               }
             : null,
           weeklyFlow: computeWeeklyFlow(leads, soldRows, weekStartDay, nowMs, 13),
-          // Close rate / NSLI per uploaded performance week (NSLI dollars
-          // recomputed from the sold contracts within each range).
-          perfTrend: Object.values(perfHistory)
-            .sort((a, b) => a.fromMs - b.fromMs)
-            .slice(-13)
-            .map((h) => {
-              let net = 0;
-              for (const s of soldRows) {
-                if (s.saleMs === null || !s.rep) continue;
-                if (s.status && /cancel/i.test(s.status)) continue;
-                if (s.saleMs < h.fromMs) continue;
-                if (h.toMs !== null && s.saleMs >= h.toMs + 86400000) continue;
-                net += s.saleAmount;
-              }
-              return {
-                from: new Date(h.fromMs).toISOString().slice(0, 10),
-                issued: h.issued,
-                sold: h.sold,
-                closeRate: h.issued > 0 ? h.sold / h.issued : null,
-                nsli: h.issued > 0 ? Math.round((net / h.issued) * 100) / 100 : null,
-              };
-            }),
+          perfTrend,
+          priceTrend,
           repScorecard: perf ? computeRepScorecard(perf, soldRows) : null,
           byCluster: area?.clusters ?? null,
           joinInfo: area ? { joined: area.joined, total: area.total } : null,

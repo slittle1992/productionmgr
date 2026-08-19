@@ -2551,6 +2551,59 @@ function renderSalesStep() {
       the weekly sold $ and the market/rep views.</p>`;
   }
 
+  // Price vs close: did raising $/ft² cost us close rate?
+  const ptw = sd.priceTrend || [];
+  if (ptw.length) {
+    const withClose = ptw.filter((w) => w.closeRate !== null);
+    const first = withClose[0];
+    const lastW = withClose[withClose.length - 1];
+    const money2 = (v) => (v === null ? "—" : "$" + v.toFixed(2));
+    let summary = "";
+    if (withClose.length >= 2 && first.flakePsf !== null && lastW.flakePsf !== null) {
+      summary = `<p class="hint"><b>Flake:</b> $/ft² ${money2(first.flakePsf)} → ${money2(lastW.flakePsf)}
+        while close went ${Math.round(first.closeRate * 100)}% → ${Math.round(lastW.closeRate * 100)}%
+        (${fmtDay(first.weekStart)} → ${fmtDay(lastW.weekStart)}).</p>`;
+    }
+    html += `
+    <details class="mtg-class" data-open="sales:price" ${meeting.open.has("sales:price") ? "open" : ""}>
+      <summary><span class="mtg-class-name">Price vs close rate</span>
+        <span class="mtg-class-info">weekly $/ft² sold vs that week's close</span>
+      </summary>
+      <p class="card-help">Average sold <b>$/ft²</b> per week (sqft joined from
+      the pipeline job history by Job #), next to that week's <b>close rate</b>
+      from the Lead Performance uploads. If close slid as $/ft² climbed, it
+      shows here — split flake vs rubber since their pricing differs.</p>
+      ${summary}
+      <div class="table-wrap">
+      <table class="mtg-table leads-table">
+        <thead><tr><th>Week</th><th>Close</th><th>Flake $/ft²</th><th>jobs</th><th>Rubber $/ft²</th><th>jobs</th></tr></thead>
+        <tbody>
+          ${ptw
+            .map(
+              (w) => `<tr>
+            <td>${fmtDay(w.weekStart)}</td>
+            <td><b>${w.closeRate !== null ? Math.round(w.closeRate * 100) + "%" : "—"}</b></td>
+            <td><b>${money2(w.flakePsf)}</b></td>
+            <td class="inv-dim">${w.flakeN || ""}</td>
+            <td><b>${money2(w.rubberPsf)}</b></td>
+            <td class="inv-dim">${w.rubberN || ""}</td>
+          </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+      </div>
+      <p class="hint">Caveat: $/ft² is known only for <b>sold</b> jobs (lost
+      demos never get a contract), so this reads as price charged vs close
+      over time — upload the weekly Lead Performance exports to fill the
+      Close column, and keep the pipeline upload fresh for sqft.</p>
+    </details>`;
+  } else if (sd.soldMeta) {
+    html += `<p class="hint">Price vs close needs job sqft — upload the
+      <b>Production Pipeline</b> export (Production tab §3) so contracts can
+      join to their sqft by Job #.</p>`;
+  }
+
   // Per-market sold $ MTD comes from the Daily card's By-location table —
   // point there instead of duplicating it.
   if (sd.repScorecard) {
