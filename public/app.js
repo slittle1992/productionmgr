@@ -2689,33 +2689,56 @@ function renderApptsStep() {
     </tbody>
   </table>`;
 
-  // Per-market appointments for the latest week (zips joined via the leads).
+  // Per-market appointments for the latest week (zips joined via the leads),
+  // with that week's leads alongside — the leads → appointments set rate.
   if (latest?.byClass?.length) {
     const prior = weeks[1] || null;
     const priorByCls = new Map((prior?.byClass || []).map((c) => [c.className, c]));
+    const wfWeek = (sales.sales?.weeklyFlow || []).find(
+      (w) => w.weekStart === latest.weekStart
+    );
+    const leadsOf = (cls) => wfWeek?.byClass?.[cls] ?? null;
+    const setPct = (appts, leadsN) =>
+      leadsN ? `${Math.round((appts / leadsN) * 100)}%` : "—";
+    const totLeads = wfWeek?.leads ?? null;
     html += `
     <details class="mtg-class" data-open="appts:markets" ${meeting.open.has("appts:markets") ? "open" : ""}>
-      <summary><span class="mtg-class-name">By market — week of ${fmtDay(latest.weekStart)}</span>
+      <summary><span class="mtg-class-name">Leads → appts by market — week of ${fmtDay(latest.weekStart)}</span>
         <span class="mtg-class-info">${latest.byClass.length} markets${prior ? ` · vs ${fmtDay(prior.weekStart)}` : ""}</span>
       </summary>
+      <div class="table-wrap">
       <table class="mtg-table leads-table">
-        <thead><tr><th>Market</th><th>Appts</th>${prior ? "<th>Prior wk</th>" : ""}<th>Cancelled</th><th>Cancel %</th></tr></thead>
+        <thead><tr><th>Market</th><th>Leads</th><th>Appts</th><th>Set %</th>${prior ? "<th>Prior wk</th>" : ""}<th>Cxl</th><th>Cxl %</th></tr></thead>
         <tbody>
           ${latest.byClass
             .map((c) => {
               const p = priorByCls.get(c.className);
               const rate = c.total > 0 ? c.cancelled / c.total : null;
+              const ln = leadsOf(c.className);
               return `<tr>
                 <td>${escapeHtml(c.className)}</td>
+                <td>${ln ?? "—"}</td>
                 <td><b>${c.total}</b></td>
+                <td><b>${setPct(c.total, ln)}</b></td>
                 ${prior ? `<td>${p ? p.total : "—"}</td>` : ""}
                 <td>${c.cancelled || ""}</td>
                 <td class="${rate !== null && rate >= 0.3 ? "lead-down" : ""}">${rate !== null && c.cancelled ? pct1(rate) : "—"}</td>
               </tr>`;
             })
             .join("")}
+          <tr class="score-footer">
+            <td><b>Company</b></td>
+            <td><b>${totLeads ?? "—"}</b></td>
+            <td><b>${latest.total}</b></td>
+            <td><b>${setPct(latest.total, totLeads)}</b></td>
+            ${prior ? `<td><b>${prior.total}</b></td>` : ""}
+            <td><b>${latest.cancelled}</b></td>
+            <td><b>${pct1(latest.cancelRate)}</b></td>
+          </tr>
         </tbody>
       </table>
+      </div>
+      ${totLeads === null ? `<p class="hint">Leads and Set % need the Clients List upload to cover this week.</p>` : `<p class="hint">Set % = this week's appointments ÷ this week's leads, per market.</p>`}
     </details>`;
   } else if (latest) {
     html += `<p class="hint">Re-upload this week's Meetings export to see the
@@ -3220,10 +3243,18 @@ function renderTrendsCard() {
   const wkNote = (arr, label) =>
     arr.length ? `${arr.length} wk${arr.length === 1 ? "" : "s"} of ${label}` : "";
 
+  // Leads → appointments: same-week appts ÷ leads (the set rate).
+  const wfByStart = new Map((sales.sales?.weeklyFlow || []).map((w) => [w.weekStart, w]));
+  const setVals = apptWeeks.map((w) => {
+    const f = wfByStart.get(w.weekStart);
+    return f && f.leads > 0 ? (w.total / f.leads) * 100 : null;
+  });
+
   const tiles = [
     statTile("Leads / wk", trimLead(wf.map((w) => w.leads)), numFmt, true, wkNote(wf, "clients list")),
     statTile("Sold $ / wk", trimLead(wf.map((w) => w.soldNet)), fmtMoney0, true, wkNote(wf, "sold contracts")),
     statTile("Appts / wk", apptWeeks.map((w) => w.total), numFmt, true, wkNote(apptWeeks, "meetings uploads")),
+    statTile("Set rate", setVals, pctFmt, true, "appts ÷ same-week leads"),
     statTile(
       "Cancel %",
       apptWeeks.map((w) => (w.cancelRate === null ? null : w.cancelRate * 100)),

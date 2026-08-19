@@ -190,7 +190,8 @@ Clients List, Meetings (multi-file for backfilling weeks), Sold
 Contracts, and Lead Performance — each with its freshness status; every
 card below feeds from these. A **Trends card** follows: stat tiles
 (latest value, Δ vs the prior week, sparkline of the last completed
-weeks) for leads/wk, sold $/wk, appointments/wk, cancel %, close rate,
+weeks) for leads/wk, sold $/wk, appointments/wk, the **set rate**
+(leads → appointments: same-week appts ÷ leads), cancel %, close rate,
 and NSLI — the last two build week over week because every Lead
 Performance upload snapshots its report range (all-zero tiles hide
 until their source has data). The weekly review reads market-first —
@@ -262,7 +263,9 @@ each with a per-day check that resets tomorrow.
    section's **appointments-per-day chart** (zips from the meeting
    titles map to markets via the leads upload). This step keeps the
    weekly rollups: the **cancellation rate week over week** (with the
-   points-change vs the prior week), the split **by market**, and
+   points-change vs the prior week), **leads → appts by market** (the
+   week's leads, appointments, and **set %** per market, with a company
+   row), and
    **appointments per rep** alongside the prior week's count, high
    per-rep cancel rates flagged.
 3. **Sales — markets & reps** — upload the **Total Sales (Contracts)**
