@@ -65,6 +65,80 @@ const BLOCKER_TYPE_RE = /^(off|unavailable|training|home show)/i;
 /** Demo happened, no sale — worth a rehash call. */
 const NO_SALE_RE = /DEMO NO SALE|STILL INTERESTED/i;
 
+// ── Cold streaks: reps running appointments day after day with no sale ──
+
+export interface ColdStreak {
+  rep: string;
+  /** Consecutive appointment-days (held ≥ 1 appt) since their last sale. */
+  days: number;
+  /** Held appointments run during the streak. */
+  appts: number;
+  /** ISO date of the rep's last sale, or null if none on record. */
+  lastSale: string | null;
+  lastApptDay: string;
+}
+
+const repKey = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * Cross the stored Meetings days (appointments per rep per day) with the
+ * sold contracts: a rep who has HELD appointments on more than `minDays - 1`
+ * distinct days since their last sale goes on the alert list. Appointment
+ * days after the sold upload's coverage are ignored (unknown ≠ no sale).
+ */
+export function computeColdStreaks(
+  weekDays: Record<string, ApptDay>[],
+  sales: { rep: string | null; saleMs: number | null; status: string | null }[],
+  minDays = 4
+): ColdStreak[] {
+  let soldThrough: string | null = null;
+  const lastSaleByRep = new Map<string, string>();
+  for (const s of sales) {
+    if (s.saleMs === null || (s.status && /cancel/i.test(s.status))) continue;
+    const iso = new Date(s.saleMs).toISOString().slice(0, 10);
+    if (soldThrough === null || iso > soldThrough) soldThrough = iso;
+    if (!s.rep) continue;
+    const k = repKey(s.rep);
+    const prev = lastSaleByRep.get(k);
+    if (!prev || iso > prev) lastSaleByRep.set(k, iso);
+  }
+  if (soldThrough === null) return []; // no sold data → can't tell
+
+  const held = new Map<string, Map<string, number>>(); // repKey → date → held
+  const names = new Map<string, string>();
+  for (const days of weekDays) {
+    for (const [date, day] of Object.entries(days)) {
+      if (date > soldThrough) continue;
+      for (const [rep, v] of Object.entries(day.byRep)) {
+        const h = v.t - v.c;
+        if (h <= 0) continue;
+        const k = repKey(rep);
+        names.set(k, rep);
+        const m = held.get(k) ?? new Map<string, number>();
+        m.set(date, (m.get(date) ?? 0) + h);
+        held.set(k, m);
+      }
+    }
+  }
+
+  const out: ColdStreak[] = [];
+  for (const [k, byDate] of held) {
+    const lastSale = lastSaleByRep.get(k) ?? null;
+    const streakDates = [...byDate.keys()]
+      .filter((d) => !lastSale || d > lastSale)
+      .sort();
+    if (streakDates.length < minDays) continue;
+    out.push({
+      rep: names.get(k)!,
+      days: streakDates.length,
+      appts: streakDates.reduce((s, d) => s + byDate.get(d)!, 0),
+      lastSale,
+      lastApptDay: streakDates[streakDates.length - 1]!,
+    });
+  }
+  return out.sort((a, b) => b.days - a.days || b.appts - a.appts);
+}
+
 export function parseMeetingsExport(grid: RawGrid): MeetingsParseResult {
   let header: { row: number; cols: Record<string, number> } | null = null;
   for (let r = 0; r < Math.min(grid.length, 10); r++) {

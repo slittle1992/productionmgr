@@ -5,7 +5,7 @@ import {
   buildZipTable,
   parseClientsExport,
 } from "../domain/leads.js";
-import { parseMeetingsExport } from "../domain/appointments.js";
+import { computeColdStreaks, parseMeetingsExport } from "../domain/appointments.js";
 import { DEFAULT_CLASS_GOALS } from "../data/defaultGoals.js";
 import { PipelineFormatError } from "../domain/pipeline.js";
 import { getReportingWeek } from "../domain/week.js";
@@ -491,6 +491,11 @@ export function leadsRouter(
         soldUploadedAt: sold?.uploadedAt ?? null,
         rehash: latestAppts?.noSales ?? null,
         rehashWeek: latestAppts?.weekStart ?? null,
+        // Reps with more than 3 appointment-days since their last sale.
+        coldStreaks: computeColdStreaks(
+          Object.values(appts).map((w) => w.days ?? {}),
+          soldRows
+        ),
       };
 
       if (!meta) {

@@ -3397,8 +3397,28 @@ function renderSales() {
     )}
   </div>`;
 
+  // Cold-streak alert: reps running appointments with no sale to show for it.
+  const streaks = sales.dailyTasks?.coldStreaks || [];
+  const streakAlert = streaks.length
+    ? `<div class="card alert-card">
+        <div class="alert-title">🥶 Cold streaks — appointments, no sale</div>
+        ${streaks
+          .map(
+            (s) => `<div class="alert-row"><b>${escapeHtml(s.rep)}</b>
+              <span>${s.days} appt days · ${s.appts} appts held${
+                s.lastSale ? ` since last sale ${fmtDay(s.lastSale)}` : " · no sale on record"
+              }</span></div>`
+          )
+          .join("")}
+        <p class="hint">Held appointments on more than 3 days since their last
+        sale (from the Meetings + Sold Contracts uploads — ride along on a
+        demo or pull the Rilla tapes).</p>
+      </div>`
+    : "";
+
   $("sales-sections").innerHTML = `
     ${uploadsCard}
+    ${streakAlert}
     <div class="sales-group">Trends</div>
     ${renderTrendsCard()}
     <div class="sales-group">Daily</div>

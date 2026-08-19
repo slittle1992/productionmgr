@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import request from "supertest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
-import { parseMeetingsExport } from "../src/domain/appointments.js";
+import { computeColdStreaks, parseMeetingsExport } from "../src/domain/appointments.js";
 import { PipelineFormatError } from "../src/domain/pipeline.js";
 import { MemoryLeadsStore } from "../src/storage/leadsStore.js";
 import { MemoryMeetingStore } from "../src/storage/meetingStore.js";
@@ -154,5 +154,55 @@ describe("meetings API", () => {
       .send({ rows: [["Some export"], HEADER, row("Ann Ames", "Sales Meeting", "Kyle Cook")] });
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/week/i);
+  });
+});
+
+describe("cold streaks (appointments with no sale)", () => {
+  const day = (reps: Record<string, [number, number]>) => {
+    const byRep: Record<string, { t: number; c: number; f: number; r: number }> = {};
+    for (const [rep, [t, c]] of Object.entries(reps)) byRep[rep] = { t, c, f: 0, r: 0 };
+    return { t: 0, c: 0, f: 0, r: 0, byZip3: {}, byRep };
+  };
+  const ms = (iso: string) => Date.parse(iso + "T12:00:00Z");
+  const sale = (rep: string, iso: string, status = "Sold") => ({
+    rep,
+    saleMs: ms(iso),
+    status,
+  });
+
+  it("flags a rep with 4+ held-appointment days since their last sale", () => {
+    const days = {
+      "2026-08-10": day({ Cold: [3, 0], Hot: [3, 0] }),
+      "2026-08-11": day({ Cold: [2, 0], Hot: [2, 0] }),
+      "2026-08-12": day({ Cold: [3, 1], Hot: [3, 0] }),
+      "2026-08-13": day({ Cold: [2, 0], Hot: [2, 0] }),
+      "2026-08-14": day({ Cold: [0, 2] }), // all cancelled — not a held day
+    };
+    const sales = [
+      sale("Hot", "2026-08-12"), // resets Hot's streak mid-window
+      sale("Cold", "2026-08-01"), // long before the window
+      sale("Anyone", "2026-08-14"), // pins sold coverage through 8/14
+    ];
+    const streaks = computeColdStreaks([days], sales);
+    expect(streaks).toHaveLength(1);
+    expect(streaks[0]).toMatchObject({
+      rep: "Cold",
+      days: 4,
+      appts: 9, // 3+2+2+2 held (cancelled don't count)
+      lastSale: "2026-08-01",
+      lastApptDay: "2026-08-13",
+    });
+  });
+
+  it("stays quiet without sold data and ignores days past its coverage", () => {
+    const days = {
+      "2026-08-10": day({ Cold: [2, 0] }),
+      "2026-08-11": day({ Cold: [2, 0] }),
+      "2026-08-12": day({ Cold: [2, 0] }),
+      "2026-08-13": day({ Cold: [2, 0] }),
+    };
+    expect(computeColdStreaks([days], [])).toEqual([]);
+    // Sold data only through 8/11 → just 2 knowable days, under the bar.
+    expect(computeColdStreaks([days], [sale("Other", "2026-08-11")])).toEqual([]);
   });
 });

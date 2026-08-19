@@ -2698,6 +2698,33 @@ details.inv-loc[open] {
   color: #fff;
 }
 
+/* Cold-streak alert */
+.alert-card {
+  background: #fdf2f2;
+  border: 1px solid #eecccc;
+}
+.alert-title {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: #8a1f1f;
+  margin-bottom: 6px;
+}
+.alert-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13.5px;
+  border-bottom: 1px dashed #eecccc;
+}
+.alert-row:last-of-type {
+  border-bottom: none;
+}
+.alert-row span {
+  color: #8a4444;
+  font-size: 12.5px;
+}
+
 /* Trends stat tiles */
 .trend-grid {
   display: grid;

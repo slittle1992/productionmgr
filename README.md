@@ -188,7 +188,12 @@ The sales manager's own workflow, separate from the production meeting.
 An **Uploads card at the top** collects all four inputs in one place —
 Clients List, Meetings (multi-file for backfilling weeks), Sold
 Contracts, and Lead Performance — each with its freshness status; every
-card below feeds from these. A **Trends card** follows: stat tiles
+card below feeds from these. A **🥶 Cold streaks alert** fires under the uploads whenever a rep has
+**held appointments on more than 3 days since their last sale** (Meetings
+days × Sold Contracts, per rep; appointment days past the sold upload's
+coverage don't count, so a stale sold export can't cry wolf). Each row
+shows the streak length, appointments held, and the last-sale date.
+A **Trends card** follows: stat tiles
 (latest value, Δ vs the prior week, sparkline of the last completed
 weeks) for leads/wk, sold $/wk, appointments/wk, the **set rate**
 (leads → appointments: same-week appts ÷ leads), cancel %, close rate,
