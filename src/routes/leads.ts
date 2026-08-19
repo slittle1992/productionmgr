@@ -397,24 +397,46 @@ export function leadsRouter(
       const jobFacts = pipelineStore ? await pipelineStore.getJobFacts() : {};
       const psf = new Map<
         string,
-        { f$: number; fSq: number; fN: number; r$: number; rSq: number; rN: number }
+        {
+          f$: number;
+          fSq: number;
+          fN: number;
+          r$: number;
+          rSq: number;
+          rN: number;
+          // Average ticket runs over EVERY contract, sqft known or not.
+          fT$: number;
+          fTN: number;
+          rT$: number;
+          rTN: number;
+        }
       >();
       for (const s of soldRows) {
-        if (s.saleMs === null || !s.jobNumber || s.saleAmount <= 0) continue;
+        if (s.saleMs === null || s.saleAmount <= 0) continue;
         if (s.status && /cancel/i.test(s.status)) continue;
-        const sqft = jobFacts[jobKey(s.jobNumber)]?.sqft;
-        if (!sqft || sqft <= 0) continue;
         const ws = getReportingWeek(s.saleMs, weekStartDay).weekStart;
         const slot =
-          psf.get(ws) ?? { f$: 0, fSq: 0, fN: 0, r$: 0, rSq: 0, rN: 0 };
-        if (/rubber/i.test(s.projectType ?? "")) {
-          slot.r$ += s.saleAmount;
-          slot.rSq += sqft;
-          slot.rN++;
+          psf.get(ws) ??
+          { f$: 0, fSq: 0, fN: 0, r$: 0, rSq: 0, rN: 0, fT$: 0, fTN: 0, rT$: 0, rTN: 0 };
+        const rubber = /rubber/i.test(s.projectType ?? "");
+        if (rubber) {
+          slot.rT$ += s.saleAmount;
+          slot.rTN++;
         } else {
-          slot.f$ += s.saleAmount;
-          slot.fSq += sqft;
-          slot.fN++;
+          slot.fT$ += s.saleAmount;
+          slot.fTN++;
+        }
+        const sqft = s.jobNumber ? jobFacts[jobKey(s.jobNumber)]?.sqft : null;
+        if (sqft && sqft > 0) {
+          if (rubber) {
+            slot.r$ += s.saleAmount;
+            slot.rSq += sqft;
+            slot.rN++;
+          } else {
+            slot.f$ += s.saleAmount;
+            slot.fSq += sqft;
+            slot.fN++;
+          }
         }
         psf.set(ws, slot);
       }
@@ -429,6 +451,10 @@ export function leadsRouter(
           flakeN: v.fN,
           rubberPsf: v.rSq > 0 ? r2p(v.r$ / v.rSq) : null,
           rubberN: v.rN,
+          flakeTicket: v.fTN > 0 ? Math.round(v.fT$ / v.fTN) : null,
+          flakeTicketN: v.fTN,
+          rubberTicket: v.rTN > 0 ? Math.round(v.rT$ / v.rTN) : null,
+          rubberTicketN: v.rTN,
           closeRate: closeByWeek.get(weekStart) ?? null,
         }));
 

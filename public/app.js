@@ -2529,8 +2529,9 @@ function renderSalesStep() {
       <summary><span class="mtg-class-name">Weekly sold $</span>
         <span class="mtg-class-info">with the rubber vs flake mix</span>
       </summary>
+      <div class="table-wrap">
       <table class="mtg-table leads-table">
-        <thead><tr><th>Week</th><th>Sold</th><th>Sold $</th><th>Flake $</th><th>Rubber $</th></tr></thead>
+        <thead><tr><th>Week</th><th>Sold</th><th>Sold $</th><th>Avg ticket</th><th>Flake $</th><th>Rubber $</th></tr></thead>
         <tbody>
           ${wf
             .map(
@@ -2538,6 +2539,7 @@ function renderSalesStep() {
               <td>${fmtDay(w.weekStart)}</td>
               <td>${w.soldCount || "—"}</td>
               <td><b>${w.soldNet ? fmtMoney0(w.soldNet) : "—"}</b></td>
+              <td><b>${w.soldCount ? fmtMoney0(w.soldNet / w.soldCount) : "—"}</b></td>
               <td>${w.flakeNet ? fmtMoney0(w.flakeNet) : "—"}</td>
               <td>${w.rubberNet ? fmtMoney0(w.rubberNet) : "—"}</td>
             </tr>`
@@ -2545,6 +2547,7 @@ function renderSalesStep() {
             .join("")}
         </tbody>
       </table>
+      </div>
     </details>`;
   } else {
     html += `<p class="hint">Upload the <b>Sold Contracts</b> detail export for
@@ -2559,44 +2562,48 @@ function renderSalesStep() {
     const lastW = withClose[withClose.length - 1];
     const money2 = (v) => (v === null ? "—" : "$" + v.toFixed(2));
     let summary = "";
-    if (withClose.length >= 2 && first.flakePsf !== null && lastW.flakePsf !== null) {
-      summary = `<p class="hint"><b>Flake:</b> $/ft² ${money2(first.flakePsf)} → ${money2(lastW.flakePsf)}
+    if (withClose.length >= 2 && first.flakeTicket !== null && lastW.flakeTicket !== null) {
+      summary = `<p class="hint"><b>Flake:</b> avg ticket ${fmtMoney0(first.flakeTicket)} → ${fmtMoney0(lastW.flakeTicket)}
         while close went ${Math.round(first.closeRate * 100)}% → ${Math.round(lastW.closeRate * 100)}%
         (${fmtDay(first.weekStart)} → ${fmtDay(lastW.weekStart)}).</p>`;
     }
     html += `
     <details class="mtg-class" data-open="sales:price" ${meeting.open.has("sales:price") ? "open" : ""}>
       <summary><span class="mtg-class-name">Price vs close rate</span>
-        <span class="mtg-class-info">weekly $/ft² sold vs that week's close</span>
+        <span class="mtg-class-info">weekly avg ticket + $/ft² vs close</span>
       </summary>
-      <p class="card-help">Average sold <b>$/ft²</b> per week (sqft joined from
-      the pipeline job history by Job #), next to that week's <b>close rate</b>
-      from the Lead Performance uploads. If close slid as $/ft² climbed, it
-      shows here — split flake vs rubber since their pricing differs.</p>
+      <p class="card-help"><b>Avg ticket</b> covers every contract that week.
+      <b>$/ft²</b> only covers contracts whose Job # matched a sqft in the
+      pipeline history — the <i>n/N</i> shows that coverage (older weeks are
+      thin because their jobs predate the stored history). Close rate comes
+      from the weekly Lead Performance uploads. Flake and rubber split
+      because their pricing differs.</p>
       ${summary}
       <div class="table-wrap">
       <table class="mtg-table leads-table">
-        <thead><tr><th>Week</th><th>Close</th><th>Flake $/ft²</th><th>jobs</th><th>Rubber $/ft²</th><th>jobs</th></tr></thead>
+        <thead><tr><th>Week</th><th>Close</th><th>Flake ticket</th><th>Flake $/ft²</th><th>n/N</th><th>Rubber ticket</th><th>Rubber $/ft²</th><th>n/N</th></tr></thead>
         <tbody>
           ${ptw
             .map(
               (w) => `<tr>
             <td>${fmtDay(w.weekStart)}</td>
             <td><b>${w.closeRate !== null ? Math.round(w.closeRate * 100) + "%" : "—"}</b></td>
-            <td><b>${money2(w.flakePsf)}</b></td>
-            <td class="inv-dim">${w.flakeN || ""}</td>
-            <td><b>${money2(w.rubberPsf)}</b></td>
-            <td class="inv-dim">${w.rubberN || ""}</td>
+            <td><b>${w.flakeTicket !== null ? fmtMoney0(w.flakeTicket) : "—"}</b></td>
+            <td>${money2(w.flakePsf)}</td>
+            <td class="inv-dim">${w.flakeTicketN ? `${w.flakeN}/${w.flakeTicketN}` : ""}</td>
+            <td><b>${w.rubberTicket !== null ? fmtMoney0(w.rubberTicket) : "—"}</b></td>
+            <td>${money2(w.rubberPsf)}</td>
+            <td class="inv-dim">${w.rubberTicketN ? `${w.rubberN}/${w.rubberTicketN}` : ""}</td>
           </tr>`
             )
             .join("")}
         </tbody>
       </table>
       </div>
-      <p class="hint">Caveat: $/ft² is known only for <b>sold</b> jobs (lost
-      demos never get a contract), so this reads as price charged vs close
-      over time — upload the weekly Lead Performance exports to fill the
-      Close column, and keep the pipeline upload fresh for sqft.</p>
+      <p class="hint">Caveat: both prices are known only for <b>sold</b> jobs
+      (lost demos never get a contract), so this reads as price charged vs
+      close over time. When <i>n/N</i> coverage is low, trust the avg ticket
+      over the $/ft².</p>
     </details>`;
   } else if (sd.soldMeta) {
     html += `<p class="hint">Price vs close needs job sqft — upload the

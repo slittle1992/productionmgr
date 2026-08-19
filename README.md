@@ -278,11 +278,14 @@ each with a per-day check that resets tomorrow.
    Together they power:
    - **Weekly sold $** with the **rubber vs flake mix** from each
      contract's Project Type.
-   - **Price vs close rate** — average sold **$/ft² per week** (sqft
-     joined from the pipeline job history by Job #), flake vs rubber,
-     next to that week's close rate — the "did the price raise hurt
-     close?" view. $/ft² is known only for sold jobs, so it reads as
-     price charged vs close over time.
+   - **Price vs close rate** — per week, flake vs rubber: the **average
+     ticket** (every contract) and the **average sold $/ft²** (contracts
+     whose Job # matched a sqft in the pipeline job history — an *n/N*
+     column shows that coverage, thin for weeks that predate the stored
+     history), next to that week's close rate — the "did the price raise
+     hurt close?" view. Both prices are known only for sold jobs, so it
+     reads as price charged vs close over time; the weekly sold $ table
+     also carries an overall **avg ticket** column.
    - **Rep scorecard** — close rate (**jobs sold ÷ leads issued**,
      Builder Prime's true funnel, not per-appointment) and **NSLI**
      (net sold $ ÷ leads issued) per rep over the performance report's
