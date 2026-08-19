@@ -48,6 +48,13 @@ export interface StoredApptsWeek {
 /** The daily task sign-offs (sold-contracts review, Rilla, rehash calls). */
 export type DailyChecks = Record<string, Record<string, { done: boolean; at: string }>>;
 
+/** Per-contract review ticks: pictures attached, deposit ≥ 40%. */
+export interface ContractCheck {
+  pics: boolean;
+  dep: boolean;
+  at: string;
+}
+
 export interface LeadsStore {
   getSold(): Promise<StoredSold | null>;
   setSold(sold: StoredSold): Promise<void>;
@@ -68,6 +75,12 @@ export interface LeadsStore {
   setGoals(goals: LeadGoals): Promise<void>;
   getDailyChecks(): Promise<DailyChecks>;
   setDailyCheck(date: string, key: string, done: boolean, at: string): Promise<void>;
+  getContractChecks(): Promise<Record<string, ContractCheck>>;
+  setContractCheck(
+    key: string,
+    patch: { pics?: boolean; dep?: boolean },
+    at: string
+  ): Promise<void>;
   getMeta(): Promise<LeadsMeta | null>;
   getLeads(): Promise<CompactLead[]>;
   set(leads: CompactLead[], meta: LeadsMeta): Promise<void>;
@@ -105,6 +118,19 @@ interface SalesFileShape {
   goals: LeadGoals;
   pendingSold: PendingSold | null;
   dailyChecks: DailyChecks;
+  contractChecks: Record<string, ContractCheck>;
+}
+
+function mergeContractCheck(
+  current: ContractCheck | undefined,
+  patch: { pics?: boolean; dep?: boolean },
+  at: string
+): ContractCheck {
+  return {
+    pics: patch.pics ?? current?.pics ?? false,
+    dep: patch.dep ?? current?.dep ?? false,
+    at,
+  };
 }
 
 export class JsonLeadsStore implements LeadsStore {
@@ -155,6 +181,7 @@ export class JsonLeadsStore implements LeadsStore {
         goals: EMPTY_GOALS,
         pendingSold: null,
         dailyChecks: {},
+        contractChecks: {},
         ...raw,
       };
     } catch (err) {
@@ -166,6 +193,7 @@ export class JsonLeadsStore implements LeadsStore {
           goals: EMPTY_GOALS,
           pendingSold: null,
           dailyChecks: {},
+          contractChecks: {},
         };
       throw err;
     }
@@ -245,6 +273,18 @@ export class JsonLeadsStore implements LeadsStore {
   async setDailyCheck(date: string, key: string, done: boolean, at: string) {
     await this.writeSales((s) => {
       (s.dailyChecks[date] ??= {})[key] = { done, at };
+    });
+  }
+  async getContractChecks() {
+    return (await this.readSales()).contractChecks;
+  }
+  async setContractCheck(
+    key: string,
+    patch: { pics?: boolean; dep?: boolean },
+    at: string
+  ) {
+    await this.writeSales((s) => {
+      s.contractChecks[key] = mergeContractCheck(s.contractChecks[key], patch, at);
     });
   }
   async getMeta() {
@@ -364,6 +404,21 @@ export class KvLeadsStore implements LeadsStore {
     (all[date] ??= {})[key] = { done, at };
     await this.kv.set(KvLeadsStore.DAILY, all);
   }
+  private static readonly CCHECKS = "sales:contractchecks";
+  async getContractChecks() {
+    return (
+      (await this.kv.get<Record<string, ContractCheck>>(KvLeadsStore.CCHECKS)) ?? {}
+    );
+  }
+  async setContractCheck(
+    key: string,
+    patch: { pics?: boolean; dep?: boolean },
+    at: string
+  ) {
+    const all = await this.getContractChecks();
+    all[key] = mergeContractCheck(all[key], patch, at);
+    await this.kv.set(KvLeadsStore.CCHECKS, all);
+  }
 
   async getMeta() {
     return await this.kv.get<LeadsMeta>(KvLeadsStore.META);
@@ -453,6 +508,17 @@ export class MemoryLeadsStore implements LeadsStore {
   }
   async setDailyCheck(date: string, key: string, done: boolean, at: string) {
     (this.dailyChecks[date] ??= {})[key] = { done, at };
+  }
+  private contractChecks: Record<string, ContractCheck> = {};
+  async getContractChecks() {
+    return structuredClone(this.contractChecks);
+  }
+  async setContractCheck(
+    key: string,
+    patch: { pics?: boolean; dep?: boolean },
+    at: string
+  ) {
+    this.contractChecks[key] = mergeContractCheck(this.contractChecks[key], patch, at);
   }
   private leads: CompactLead[] = [];
   private pendingId: string | null = null;

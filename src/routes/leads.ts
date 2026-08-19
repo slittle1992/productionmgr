@@ -300,6 +300,26 @@ export function leadsRouter(
     })
   );
 
+  // POST /api/leads/contract-check — per-contract review ticks (pictures
+  // attached, deposit ≥ 40%) for the daily sold-contracts review.
+  const contractCheckBody = z.object({
+    key: z.string().min(1).max(120),
+    pics: z.boolean().optional(),
+    dep: z.boolean().optional(),
+  });
+  router.post(
+    "/leads/contract-check",
+    asyncHandler(async (req, res) => {
+      const body = contractCheckBody.parse(req.body);
+      await store.setContractCheck(
+        body.key,
+        { pics: body.pics, dep: body.dep },
+        new Date(now()).toISOString()
+      );
+      res.json({ ok: true });
+    })
+  );
+
   // GET /api/leads?days=7|28|91 — analysis by location → zip cluster.
   router.get(
     "/leads",
@@ -311,7 +331,7 @@ export function leadsRouter(
         .max(365)
         .optional()
         .parse(req.query.days || undefined) ?? 28;
-      const [meta, leads, sold, perf, appts, storedGoals, dailyChecks] =
+      const [meta, leads, sold, perf, appts, storedGoals, dailyChecks, cChecks] =
         await Promise.all([
           store.getMeta(),
           store.getLeads(),
@@ -320,6 +340,7 @@ export function leadsRouter(
           store.getAppts(),
           store.getGoals(),
           store.getDailyChecks(),
+          store.getContractChecks(),
         ]);
       const nowMs = now();
       const soldRows = sold?.rows ?? [];
@@ -414,19 +435,38 @@ export function leadsRouter(
       const todayIso = new Date(nowMs).toISOString().slice(0, 10);
       const latestAppts = appointments.weeks[0] ?? null;
       const threeDaysAgo = nowMs - 3 * 86400000;
+      // Each contract's market via the client-name join — the sales-manager
+      // grouping (Dustin vs Isaac) keys off it in the UI.
+      const nameClass = new Map<string, string>();
+      for (const l of leads) {
+        if (l.name) nameClass.set(l.name, l.className);
+      }
+      const contractKey = (s: (typeof soldRows)[number]) =>
+        String(s.contractNumber ?? s.jobNumber ?? `${s.clientKey}|${s.saleMs}`);
+      const recentSold = soldRows
+        .filter(
+          (s) =>
+            s.saleMs !== null &&
+            s.saleMs >= threeDaysAgo &&
+            !(s.status && /cancel/i.test(s.status))
+        )
+        .sort((a, b) => (b.saleMs ?? 0) - (a.saleMs ?? 0))
+        .slice(0, 30)
+        .map((s) => ({
+          ...s,
+          key: contractKey(s),
+          className: s.clientKey ? nameClass.get(s.clientKey) ?? null : null,
+        }));
+      const contractChecks: Record<string, unknown> = {};
+      for (const s of recentSold) {
+        if (cChecks[s.key]) contractChecks[s.key] = cChecks[s.key];
+      }
       const dailyTasks = {
         today: todayIso,
         checks: dailyChecks[todayIso] ?? {},
         rillaUrl: process.env.RILLA_URL ?? null,
-        recentSold: soldRows
-          .filter(
-            (s) =>
-              s.saleMs !== null &&
-              s.saleMs >= threeDaysAgo &&
-              !(s.status && /cancel/i.test(s.status))
-          )
-          .sort((a, b) => (b.saleMs ?? 0) - (a.saleMs ?? 0))
-          .slice(0, 30),
+        recentSold,
+        contractChecks,
         soldUploadedAt: sold?.uploadedAt ?? null,
         rehash: latestAppts?.noSales ?? null,
         rehashWeek: latestAppts?.weekStart ?? null,

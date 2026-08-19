@@ -332,3 +332,53 @@ describe("chunked sold-contracts upload", () => {
     expect(stale.status).toBe(409);
   });
 });
+
+describe("contract review checks", () => {
+  it("joins recent contracts to markets and stores per-contract ticks", async () => {
+    const config = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    const app = buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore: new MemoryPipelineStore(),
+      scheduleStore: new MemoryScheduleStore(),
+      leadsStore: new MemoryLeadsStore(),
+      now: () => NOW,
+    }).app;
+
+    await request(app)
+      .post("/api/leads")
+      .send({ filename: "clients.xlsx", rows: GRID })
+      .expect(200);
+    await request(app)
+      .post("/api/leads/sold")
+      .send({
+        rows: [
+          ["Total Sales (Contracts)"],
+          ["Sales Person", "Contract #", "Client", "Project Type", "Project Status", "Sale Date", "Sale Amount"],
+          ["Rep A", 555, "A One", "Concrete Coating", "Sold", "2026-08-03", 9000],
+        ],
+      })
+      .expect(200);
+
+    const res = await request(app).get("/api/leads");
+    const rs = res.body.dailyTasks.recentSold;
+    expect(rs).toHaveLength(1);
+    expect(rs[0]).toMatchObject({ key: "555", className: "Dallas" });
+
+    await request(app)
+      .post("/api/leads/contract-check")
+      .send({ key: "555", pics: true })
+      .expect(200);
+    await request(app)
+      .post("/api/leads/contract-check")
+      .send({ key: "555", dep: true })
+      .expect(200);
+    const after = await request(app).get("/api/leads");
+    expect(after.body.dailyTasks.contractChecks["555"]).toMatchObject({
+      pics: true,
+      dep: true,
+    });
+  });
+});

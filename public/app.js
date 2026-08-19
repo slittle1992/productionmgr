@@ -2363,11 +2363,6 @@ function renderLeadsStep() {
         ? `<strong>${escapeHtml(meta.sourceLabel || meta.filename || "Clients list")}</strong> · ${meta.count.toLocaleString()} leads · uploaded ${fmtDate(meta.uploadedAt)}`
         : "Upload the Builder Prime <strong>Clients List</strong> export."
     }</div>
-    <div class="pipeline-actions">
-      <label class="btn-upload"><span>Upload leads</span>
-        <input type="file" accept=".xlsx,.xls" data-upload="leads" hidden />
-      </label>
-    </div>
   </div>`;
   if (!meta) return html;
 
@@ -2519,14 +2514,6 @@ function renderSalesStep() {
         ? `<strong>${escapeHtml(sd.soldMeta.sourceLabel || sd.soldMeta.filename || "Sold contracts")}</strong> · ${sd.soldMeta.count.toLocaleString()} contracts${sd.perfMeta ? ` · perf: ${sd.perfMeta.reps} reps` : ""}`
         : "Upload the <strong>Total Sales (Contracts)</strong> and <strong>Lead Performance</strong> (by Sales Person) exports."
     }</div>
-    <div class="pipeline-actions">
-      <label class="btn-upload"><span>Sold contracts</span>
-        <input type="file" accept=".xlsx,.xls" data-upload="sold" hidden />
-      </label>
-      <label class="btn-upload"><span>Lead perf.</span>
-        <input type="file" accept=".xlsx,.xls" data-upload="perf" hidden />
-      </label>
-    </div>
   </div>`;
   if (!sd) return html;
 
@@ -2669,11 +2656,6 @@ function renderApptsStep() {
         ? `<strong>Week of ${fmtDay(latest.weekStart)}</strong> · ${latest.total} appointments · ${latest.cancelled} cancelled · uploaded ${fmtDate(latest.uploadedAt)}`
         : "Upload the weekly <strong>Meetings</strong> export to start."
     }</div>
-    <div class="pipeline-actions">
-      <label class="btn-upload"><span>Upload meetings</span>
-        <input type="file" accept=".xlsx,.xls" data-upload="meetings" hidden />
-      </label>
-    </div>
   </div>`;
   if (!weeks.length) return html;
 
@@ -3238,7 +3220,57 @@ function renderSales() {
     ? `${fmtDay(lastApptDay.date)}: ${lastApptDay.t} appts${lastApptDay.c ? ` · ${lastApptDay.c} cancelled` : ""}`
     : "needs the meetings export (Weekly step 2)";
 
+  const sd = sales.sales;
+  const upRow = (kind, label, sub, loaded, multi = false) => `
+    <div class="up-row">
+      <span class="up-dot${loaded ? " ok" : ""}">${loaded ? "✓" : "⬆"}</span>
+      <div class="up-info"><b>${label}</b><span>${escapeHtml(sub)}</span></div>
+      <label class="btn-upload"><span>Upload</span>
+        <input type="file" accept=".xlsx,.xls" data-upload="${kind}" hidden ${multi ? "multiple" : ""} />
+      </label>
+    </div>`;
+
+  const uploadsCard = `
+  <div class="card upload-card">
+    <div class="prep-head"><span class="prep-title">Uploads</span>
+      <span class="inv-dim">everything below feeds from these</span></div>
+    ${upRow(
+      "leads",
+      "Clients List",
+      sales.meta
+        ? `${sales.meta.count.toLocaleString()} leads · ${fmtDate(sales.meta.uploadedAt)}`
+        : "daily — leads, goals, markets",
+      Boolean(sales.meta)
+    )}
+    ${upRow(
+      "meetings",
+      "Meetings (weekly)",
+      latest
+        ? `week of ${fmtDay(latest.weekStart)} · ${fmtDate(latest.uploadedAt)}`
+        : "weekly — appointments, cancels, rehash",
+      Boolean(latest),
+      true
+    )}
+    ${upRow(
+      "sold",
+      "Sold Contracts",
+      sd?.soldMeta
+        ? `${sd.soldMeta.count.toLocaleString()} contracts · ${fmtDate(sd.soldMeta.uploadedAt)}`
+        : "daily — contract review, sold $, quota",
+      Boolean(sd?.soldMeta)
+    )}
+    ${upRow(
+      "perf",
+      "Lead Performance",
+      sd?.perfMeta
+        ? `${sd.perfMeta.reps} reps · ${fmtDate(sd.perfMeta.uploadedAt)}`
+        : "weekly — close rate + NSLI per rep",
+      Boolean(sd?.perfMeta)
+    )}
+  </div>`;
+
   $("sales-sections").innerHTML = `
+    ${uploadsCard}
     <div class="sales-group">Daily</div>
     ${step(1, "ssec:daily", "Lead flow vs goal — rubber & flake", dailySub, onPace, renderDailyStep())}
     ${step(
@@ -3249,16 +3281,21 @@ function renderSales() {
       Boolean(apptDays.length),
       renderApptDayChart()
     )}
-    ${step(
-      3,
-      "ssec:contracts",
-      "Review sold contracts",
-      sales.dailyTasks?.recentSold?.length
-        ? `${sales.dailyTasks.recentSold.length} in the last 3 days`
-        : "needs a fresh sold-contracts upload",
-      dailyDone("contracts"),
-      renderContractsReviewStep() + checkRow("contracts", "Contracts reviewed")
-    )}
+    ${(() => {
+      const rs = sales.dailyTasks?.recentSold || [];
+      const cch = sales.dailyTasks?.contractChecks || {};
+      const ccDone = rs.filter((s) => cch[s.key]?.pics && cch[s.key]?.dep).length;
+      return step(
+        3,
+        "ssec:contracts",
+        "Review sold contracts",
+        rs.length
+          ? `${ccDone}/${rs.length} checked — pics + deposit ≥40%`
+          : "needs a fresh sold-contracts upload",
+        dailyDone("contracts") || (rs.length > 0 && ccDone === rs.length),
+        renderContractsReviewStep() + checkRow("contracts", "Contracts reviewed")
+      );
+    })()}
     ${step(
       4,
       "ssec:rilla",
@@ -3297,38 +3334,80 @@ function renderSales() {
     )}`;
 }
 
-/** Daily 2 — eyeball yesterday's contracts: right price, right product. */
+/** Which sales manager owns each market. */
+const SALES_MANAGERS = [
+  { name: "Dustin", match: /^(austin|dallas)\b/i },
+  { name: "Isaac", match: /houston|san antonio|corpus|rio grande|rgv/i },
+];
+function managerOf(className) {
+  if (!className) return null;
+  return SALES_MANAGERS.find((m) => m.match.test(className))?.name ?? null;
+}
+
+/** Daily — each sales manager reviews their markets' new contracts:
+ * pictures attached and deposit ≥ 40%, ticked per contract. */
 function renderContractsReviewStep() {
   const t = sales.dailyTasks || {};
   let html = `
-  <p class="card-help">Check every new contract: sale amount vs the average
-  ticket, right project type, discounts in line. Needs a fresh <b>Sold
-  Contracts</b> upload (Weekly step 3) — the list shows the last 3 days.</p>`;
+  <p class="card-help">Each contract gets two ticks: <b>pictures attached</b>
+  and <b>deposit ≥ 40%</b> (verify both in Builder Prime). Dustin covers
+  Austin + Dallas; Isaac covers Houston, San Antonio, Corpus & RGV. Needs a
+  fresh <b>Sold Contracts</b> upload — the list shows the last 3 days.</p>`;
   if (!t.recentSold?.length) {
     html += `<p class="hint">${
       t.soldUploadedAt
         ? `No contracts in the last 3 days of the stored upload (from ${fmtDate(t.soldUploadedAt)}) — upload today's export to review today's sales.`
-        : "Upload the Sold Contracts export to see the contracts to review."
+        : "Upload the Sold Contracts export (top of the page) to see the contracts to review."
     }</p>`;
     return html;
   }
-  html += `
-  <table class="mtg-table leads-table">
-    <thead><tr><th>Date</th><th>Rep</th><th>Client</th><th>Type</th><th>Sale $</th></tr></thead>
-    <tbody>
-      ${t.recentSold
-        .map(
-          (s) => `<tr>
-        <td>${fmtMsDate(s.saleMs)}</td>
-        <td>${escapeHtml(s.rep || "—")}</td>
-        <td>${escapeHtml(s.client || "—")}</td>
-        <td>${/rubber/i.test(s.projectType || "") ? "Rubber" : "Flake"}</td>
-        <td><b>${fmtMoney0(s.saleAmount)}</b></td>
-      </tr>`
-        )
-        .join("")}
-    </tbody>
-  </table>`;
+
+  const checks = t.contractChecks || {};
+  const groups = new Map();
+  for (const s of t.recentSold) {
+    const mgr = managerOf(s.className) || "Unmatched market";
+    if (!groups.has(mgr)) groups.set(mgr, []);
+    groups.get(mgr).push(s);
+  }
+  const order = [...SALES_MANAGERS.map((m) => m.name), "Unmatched market"];
+
+  for (const mgr of order) {
+    const rows = groups.get(mgr);
+    if (!rows?.length) continue;
+    const done = rows.filter((s) => checks[s.key]?.pics && checks[s.key]?.dep).length;
+    const openKey = `cc:${mgr}`;
+    html += `
+    <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) || done < rows.length ? "open" : ""}>
+      <summary><span class="mtg-class-name">${escapeHtml(mgr)}</span>
+        <span class="mtg-class-info">${done}/${rows.length} contracts checked</span>
+      </summary>
+      <div class="table-wrap">
+      <table class="mtg-table leads-table cc-table">
+        <thead><tr><th>Date</th><th>Client</th><th>Rep</th><th>Sale $</th><th>Pics</th><th>Dep ≥40%</th></tr></thead>
+        <tbody>
+          ${rows
+            .map((s) => {
+              const c = checks[s.key] || {};
+              const ok = c.pics && c.dep;
+              return `<tr class="${ok ? "cc-done" : ""}">
+              <td>${fmtMsDate(s.saleMs)}</td>
+              <td>${escapeHtml(s.client || "—")}${s.className ? `<span class="inv-dim"> · ${escapeHtml(s.className)}</span>` : ""}</td>
+              <td>${escapeHtml(s.rep || "—")}</td>
+              <td><b>${fmtMoney0(s.saleAmount)}</b></td>
+              <td><input type="checkbox" class="cc-box" data-cck="${escapeHtml(s.key)}" data-cck-field="pics" ${c.pics ? "checked" : ""} aria-label="Pictures attached" /></td>
+              <td><input type="checkbox" class="cc-box" data-cck="${escapeHtml(s.key)}" data-cck-field="dep" ${c.dep ? "checked" : ""} aria-label="Deposit at least 40%" /></td>
+            </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>
+      </div>
+    </details>`;
+  }
+  if (groups.has("Unmatched market")) {
+    html += `<p class="hint">Unmatched contracts couldn't be tied to a market by
+      client name — re-upload a fresh Clients List so the join covers them.</p>`;
+  }
   return html;
 }
 
@@ -3419,6 +3498,14 @@ async function handleSalesUpload(kind, file) {
 async function salesChange(e) {
   const t = e.target;
   try {
+    if (t.dataset.cck && t.dataset.cckField) {
+      await meetingApi("/api/leads/contract-check", "POST", {
+        key: t.dataset.cck,
+        [t.dataset.cckField]: t.checked,
+      });
+      await loadSales();
+      return;
+    }
     if (t.dataset.apptRep !== undefined) {
       sales.apptRep = t.value || null;
       if (sales.apptRep) sales.apptClass = null;
@@ -3451,7 +3538,10 @@ async function salesChange(e) {
       return;
     }
     if (!t.dataset.upload) return;
-    await handleSalesUpload(t.dataset.upload, t.files[0]);
+    // Meetings accepts several weeks at once (backfill).
+    for (const file of [...t.files]) {
+      await handleSalesUpload(t.dataset.upload, file);
+    }
     t.value = "";
   } catch (err) {
     toast(err.message || "Couldn't save.", "error");
@@ -4285,7 +4375,10 @@ async function uploadLeadsChunked(filename, rows) {
   const CHUNK = 6000;
   const chunks = Math.max(1, Math.ceil(data.length / CHUNK));
   const uploadId = `u${Date.now()}`;
-  const label = document.querySelector('.mtg-section[data-open="ssec:leads"] .btn-upload span');
+  const label = document
+    .querySelector('input[data-upload="leads"]')
+    ?.closest("label")
+    ?.querySelector("span");
   let last;
   for (let i = 0; i < chunks; i++) {
     if (label && chunks > 1) label.textContent = `Uploading ${i + 1}/${chunks}…`;
@@ -4297,7 +4390,7 @@ async function uploadLeadsChunked(filename, rows) {
       rows: [...preamble, header, ...data.slice(i * CHUNK, (i + 1) * CHUNK)],
     });
   }
-  if (label) label.textContent = "Upload leads";
+  if (label) label.textContent = "Upload";
   return last;
 }
 
@@ -4328,7 +4421,10 @@ async function uploadSoldChunked(filename, rows) {
   const CHUNK = 4000;
   const chunks = Math.max(1, Math.ceil(data.length / CHUNK));
   const uploadId = `s${Date.now()}`;
-  const label = document.querySelector('[data-open="ssec:leads"] .btn-upload:nth-child(2) span');
+  const label = document
+    .querySelector('input[data-upload="sold"]')
+    ?.closest("label")
+    ?.querySelector("span");
   let last;
   for (let i = 0; i < chunks; i++) {
     if (label && chunks > 1) label.textContent = `Uploading ${i + 1}/${chunks}…`;
@@ -4340,7 +4436,7 @@ async function uploadSoldChunked(filename, rows) {
       rows: [...preamble, header, ...data.slice(i * CHUNK, (i + 1) * CHUNK)],
     });
   }
-  if (label) label.textContent = "Sold contracts";
+  if (label) label.textContent = "Upload";
   return last;
 }
 

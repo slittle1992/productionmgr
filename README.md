@@ -185,9 +185,12 @@ staging workbook.
 ## Sales Management (Sales tab)
 
 The sales manager's own workflow, separate from the production meeting.
-The weekly review reads market-first — **Leads → Meetings → Sales** — and
-the daily cadence is four tasks, each with a per-day check that resets
-tomorrow.
+An **Uploads card at the top** collects all four inputs in one place —
+Clients List, Meetings (multi-file for backfilling weeks), Sold
+Contracts, and Lead Performance — each with its freshness status; every
+card below feeds from these. The weekly review reads market-first —
+**Leads → Meetings → Sales** — and the daily cadence is a set of tasks,
+each with a per-day check that resets tomorrow.
 
 **Daily**
 
@@ -216,9 +219,12 @@ tomorrow.
    spanning every stored Meetings week, filterable by **market chips or
    a rep selector** (rep overrides market); cancellations show in the
    tap readout. Fed by the Weekly Meetings upload.
-3. **Review sold contracts** — the last 3 days of contracts (date, rep,
-   client, type, sale $) from the Sold Contracts upload, to catch
-   mispriced or mistyped deals while they're fresh.
+3. **Review sold contracts** — the last 3 days of contracts, grouped by
+   **sales manager** (Dustin: Austin + Dallas; Isaac: Houston, San
+   Antonio, Corpus, RGV — each contract's market via the client-name
+   join). Every contract gets two persistent ticks verified in Builder
+   Prime: **pictures attached** and **deposit ≥ 40%**; the card counts
+   down until every contract is checked.
 4. **Listen to Rilla recordings** — one-tap link (set `RILLA_URL`), with
    a note to rotate through the reps.
 5. **Call the no-sales (rehash)** — every DEMO NO SALE / STILL INTERESTED
