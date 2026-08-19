@@ -416,3 +416,43 @@ describe("sqft backfill", () => {
     expect(await pipelineStore.get()).toBeNull();
   });
 });
+
+describe("sqft backfill from completed projects", () => {
+  it("reads any grid with Job # and SQFT columns", async () => {
+    const config = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    const pipelineStore = new MemoryPipelineStore();
+    const app = buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore,
+      scheduleStore: new MemoryScheduleStore(),
+      leadsStore: new MemoryLeadsStore(),
+      now: () => NOW,
+    }).app;
+
+    const res = await request(app)
+      .post("/api/pipeline/backfill")
+      .send({
+        filename: "completed.xlsx",
+        rows: [
+          ["Completed Projects Report"],
+          ["Completed", "Client", "Job #", "Class", "Sold Amount", "SQFT"],
+          ["2026-05-04", "Old Client", 60002, "Deluxe Garages - Dallas, TX", 4200, "1,250"],
+          ["2026-05-05", "No Sqft", 60003, "Deluxe Garages - Dallas, TX", 3100, ""],
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ jobs: 2, withSqft: 1 });
+    const facts = await pipelineStore.getJobFacts();
+    expect(facts["60002"]).toMatchObject({ sqft: 1250 });
+    expect(await pipelineStore.get()).toBeNull();
+
+    const bad = await request(app)
+      .post("/api/pipeline/backfill")
+      .send({ rows: [["nope"], ["a", "b"]] });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toMatch(/SQFT/);
+  });
+});

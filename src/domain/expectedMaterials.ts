@@ -26,6 +26,56 @@ const numVal = (v: unknown) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+/**
+ * Lenient sqft-backfill parser: any export with a Job # column and a SQFT
+ * column (Completed Projects with SQFT added via the column picker, an old
+ * pipeline export, etc.) yields jobKey → sqft for the permanent history.
+ */
+export function parseSqftBackfill(grid: unknown[][]): {
+  facts: Record<string, JobFacts>;
+  rows: number;
+} {
+  const JOB_NAMES = ["job #", "job number", "job no", "job"];
+  const SQFT_NAMES = ["sqft", "sq ft", "sq. ft.", "sq ft.", "square feet", "total sqft", "square footage"];
+  const txt = (v: unknown) => {
+    const s = String(v ?? "").trim();
+    return s === "" ? null : s;
+  };
+  let jobCol = -1;
+  let sqftCol = -1;
+  let headerRow = -1;
+  for (let r = 0; r < Math.min(grid.length, 10); r++) {
+    const lower = Array.from(grid[r] ?? [], (c) => txt(c)?.toLowerCase() ?? "");
+    const j = lower.findIndex((c) => JOB_NAMES.includes(c));
+    const s = lower.findIndex((c) => SQFT_NAMES.includes(c));
+    if (j >= 0 && s >= 0) {
+      jobCol = j;
+      sqftCol = s;
+      headerRow = r;
+      break;
+    }
+  }
+  if (headerRow < 0) {
+    throw new Error(
+      "Couldn't find Job # and SQFT columns. Export the Completed Projects " +
+        "report with the SQFT column added (Builder Prime's column picker), " +
+        "or any report carrying Job # and SQFT."
+    );
+  }
+  const facts: Record<string, JobFacts> = {};
+  let rows = 0;
+  for (let r = headerRow + 1; r < grid.length; r++) {
+    const row = grid[r] ?? [];
+    const job = txt(row[jobCol]);
+    if (!job || !/\d/.test(job)) continue;
+    rows++;
+    const sqft = Number(String(row[sqftCol] ?? "").replace(/[,\s]/g, ""));
+    if (!Number.isFinite(sqft) || sqft <= 0) continue;
+    facts[jobKey(job)] = { sqft, color: null };
+  }
+  return { facts, rows };
+}
+
 /** jobKey → sqft/color for every job in a pipeline upload. */
 export function extractJobFacts(
   projects: BuilderPrimeProject[],

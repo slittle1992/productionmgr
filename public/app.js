@@ -3458,7 +3458,7 @@ function renderSales() {
     ${upRow(
       "backfill",
       "Sqft backfill",
-      "one-time — old pipeline exports fill $/ft² history",
+      "one-time — Completed Projects (with SQFT column) fills $/ft² history",
       false,
       true
     )}

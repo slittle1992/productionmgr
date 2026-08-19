@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { extractJobFacts } from "../domain/expectedMaterials.js";
+import { extractJobFacts, parseSqftBackfill } from "../domain/expectedMaterials.js";
 import { parsePipeline, PipelineFormatError } from "../domain/pipeline.js";
 import { toMeta, type PipelineStore, type StoredPipeline } from "../storage/pipelineStore.js";
 import type { CustomFieldNames } from "../config.js";
@@ -55,39 +55,50 @@ export function pipelineRouter(
     })
   );
 
-  // POST /api/pipeline/backfill — merge a historical pipeline export's Job #
-  // → sqft/color into the permanent job history WITHOUT touching the live
-  // pipeline. Fixes thin $/ft² coverage for weeks whose jobs predate the
-  // stored history: export the pipeline report over the old date range and
-  // upload it here.
+  // POST /api/pipeline/backfill — merge historical jobs' Job # → sqft into
+  // the permanent job history WITHOUT touching the live pipeline. Accepts
+  // ANY export with Job # and SQFT columns — the Completed Projects report
+  // (with SQFT added via the column picker) covers old jobs the
+  // forward-looking pipeline report can't. Fixes thin $/ft² coverage for
+  // weeks whose jobs predate the stored history.
   router.post(
     "/pipeline/backfill",
     asyncHandler(async (req, res) => {
       const body = uploadBody.parse(req.body);
-      let parsed;
+      // A pipeline export gets the full parse (keeps colors); anything else
+      // falls back to the lenient Job # + SQFT reader.
       try {
-        parsed = parsePipeline(body.rows);
-      } catch (err) {
-        if (err instanceof PipelineFormatError) {
-          res.status(400).json({ error: "invalid_pipeline", message: err.message });
+        const parsed = parsePipeline(body.rows);
+        if (parsed.rowCount > 0 && customFields) {
+          const facts = extractJobFacts(parsed.projects, customFields);
+          const withSqft = Object.values(facts).filter((f) => f.sqft).length;
+          if (withSqft > 0) {
+            await store.mergeJobFacts(facts);
+            res.json({ ok: true, jobs: Object.keys(facts).length, withSqft });
+            return;
+          }
+        }
+      } catch {
+        /* not a pipeline export — try the lenient reader */
+      }
+      try {
+        const { facts, rows } = parseSqftBackfill(body.rows);
+        const withSqft = Object.keys(facts).length;
+        if (withSqft === 0) {
+          res.status(400).json({
+            error: "no_sqft",
+            message: `Found ${rows} jobs but none had a usable SQFT value.`,
+          });
           return;
         }
-        throw err;
-      }
-      if (parsed.rowCount === 0) {
+        await store.mergeJobFacts(facts);
+        res.json({ ok: true, jobs: rows, withSqft });
+      } catch (err) {
         res.status(400).json({
-          error: "empty_pipeline",
-          message:
-            "No jobs were found in that file. Is it the Production Pipeline export?",
+          error: "invalid_backfill",
+          message: (err as Error).message,
         });
-        return;
       }
-      const facts = customFields
-        ? extractJobFacts(parsed.projects, customFields)
-        : {};
-      const withSqft = Object.values(facts).filter((f) => f.sqft).length;
-      await store.mergeJobFacts(facts);
-      res.json({ ok: true, jobs: Object.keys(facts).length, withSqft });
     })
   );
 
