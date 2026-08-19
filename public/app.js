@@ -443,6 +443,29 @@ function renderSchedule() {
   else renderCards(list, groups);
 }
 
+const NO_CREW_LABEL = "(no crew assigned)";
+
+/** Market → crew → the crew's week, days in order; unassigned last. */
+function crewSubgroups(jobs) {
+  const map = new Map();
+  for (const j of jobs) {
+    const key = j.crew || NO_CREW_LABEL;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(j);
+  }
+  return [...map.entries()]
+    .map(([crew, js]) => ({
+      crew,
+      jobs: [...js].sort(
+        (a, b) => (a.dayIndex ?? 9) - (b.dayIndex ?? 9) || String(a.jobNumber).localeCompare(String(b.jobNumber))
+      ),
+      sqft: js.reduce((s, j) => s + (j.sqft || 0), 0),
+    }))
+    .sort((a, b) =>
+      a.crew === NO_CREW_LABEL ? 1 : b.crew === NO_CREW_LABEL ? -1 : a.crew.localeCompare(b.crew)
+    );
+}
+
 function renderTable(list, groups) {
   const showBands = schedule.activeClass === "all" && groups.length > 1;
   let body = "";
@@ -450,7 +473,10 @@ function renderTable(list, groups) {
     if (showBands) {
       body += `<tr class="group-band"><td colspan="18">${escapeHtml(g.className)} · ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}</td></tr>`;
     }
-    body += g.jobs.map(rowHtml).join("");
+    for (const cg of crewSubgroups(g.jobs)) {
+      body += `<tr class="crew-band${cg.crew === NO_CREW_LABEL ? " warn" : ""}"><td colspan="18">🚚 ${escapeHtml(cg.crew)} · ${cg.jobs.length} job${cg.jobs.length === 1 ? "" : "s"} · ${fmtN(cg.sqft, 0)} sqft</td></tr>`;
+      body += cg.jobs.map(rowHtml).join("");
+    }
     body += totalsRowHtml(`${g.className} totals`, g.jobs, g.className);
   }
   if (showBands) {
@@ -710,7 +736,14 @@ function renderCards(list, groups) {
       (g) => `
       <section class="class-group">
         ${showHeaders ? `<h2>${escapeHtml(g.className)} <span class="count">${g.jobs.length}</span></h2>` : ""}
-        ${g.jobs.map(jobCardHtml).join("")}
+        ${crewSubgroups(g.jobs)
+          .map(
+            (cg) => `
+          <h3 class="crew-head${cg.crew === NO_CREW_LABEL ? " warn" : ""}">🚚 ${escapeHtml(cg.crew)}
+            <span class="count">${cg.jobs.length} · ${fmtN(cg.sqft, 0)} sqft</span></h3>
+          ${cg.jobs.map(jobCardHtml).join("")}`
+          )
+          .join("")}
       </section>`
     )
     .join("");
@@ -4108,15 +4141,6 @@ function renderStaging() {
   $("staging-list").innerHTML = v.classes
     .map((cls) => {
       const t = cls.totals;
-      const coatRows = [
-        ["Polyurea basecoat A", t.basecoatAGallons, "gal"],
-        ["Polyurea basecoat B", t.basecoatBGallons, "gal"],
-        ["Polyaspartic topcoat A", t.topcoatAGallons, "gal"],
-        ["Polyaspartic topcoat B", t.topcoatBGallons, "gal"],
-        ["Rubber binder", t.binderBuckets, "buckets"],
-        ["Rubber primer", t.primerBuckets, "buckets"],
-      ].filter(([, qty]) => qty > 0);
-
       return `
       <div class="card stg-card">
         <div class="stg-head">
@@ -4134,20 +4158,17 @@ function renderStaging() {
             : ""
         }
         ${
-          cls.colors.length
-            ? `<table class="mtg-table stg-table">
-                <thead><tr><th>Pull</th><th>Jobs</th><th>Sqft</th><th>Qty</th></tr></thead>
-                <tbody>${cls.colors
+          cls.pull?.length
+            ? `<div class="prep-head"><span class="prep-title">Warehouse pull</span>
+                <span class="inv-dim">whole units — matches the crew sheets below</span></div>
+              <table class="mtg-table stg-table">
+                <thead><tr><th>Item</th><th>Pull</th><th class="num">Exact</th></tr></thead>
+                <tbody>${cls.pull
                   .map(
-                    (c) => `<tr>
-                      <td>${c.kind === "flake" ? "🎨" : "⬛"} ${escapeHtml(c.product)}</td>
-                      <td>${c.jobs}</td>
-                      <td>${fmtN(c.sqft, 0)}</td>
-                      <td><b>${
-                        c.kind === "flake"
-                          ? `${fmtN(c.flakeBoxes)} boxes (${fmtN(c.flakePounds)} lb)`
-                          : `${fmtN(c.rubberBags)} bags`
-                      }</b></td>
+                    (p) => `<tr>
+                      <td>${escapeHtml(p.label)}</td>
+                      <td><b>${p.qty} ${escapeHtml(p.unit)}</b></td>
+                      <td class="num inv-dim">${p.exact ? escapeHtml(p.exact) : ""}</td>
                     </tr>`
                   )
                   .join("")}</tbody>
@@ -4155,18 +4176,13 @@ function renderStaging() {
             : `<div class="empty small">No material to stage (no coating jobs).</div>`
         }
         ${
-          coatRows.length
-            ? `<div class="stg-coats">${coatRows
-                .map(([label, qty, unit]) => `<span>${label}: <b>${fmtN(qty)} ${unit}</b></span>`)
-                .join("")}</div>`
-            : ""
-        }
-        ${
           cls.crews?.length
-            ? `<div class="prep-head" style="margin-top:10px"><span class="prep-title">Hand-out by crew</span>
-                <span class="inv-dim">full kits & boxes · mender + sundries as needed</span></div>
+            ? `<div class="prep-head" style="margin-top:10px"><span class="prep-title">Crew hand-out sheets</span>
+                <span class="inv-dim">mender + sundries as needed</span></div>
               ${cls.crews
                 .map((cr) => {
+                  const key = `${cls.className}|${cr.crew}`;
+                  const check = staging.view.stagedChecks?.[key];
                   const lines = [
                     ...cr.flake.map(
                       (f) => `🎨 ${escapeHtml(f.product)}: <b>${f.boxes} box${f.boxes === 1 ? "" : "es"}</b> <span class="inv-dim">(${fmtN(f.pounds)} lb)</span>`
@@ -4187,8 +4203,11 @@ function renderStaging() {
                     ...(cr.binderBuckets > 0 ? [`Binder: <b>${cr.binderBuckets} bucket${cr.binderBuckets === 1 ? "" : "s"}</b>`] : []),
                     ...(cr.primerBuckets > 0 ? [`Primer: <b>${cr.primerBuckets} bucket${cr.primerBuckets === 1 ? "" : "s"}</b>`] : []),
                   ];
-                  return `<div class="stg-crew">
-                    <div class="stg-crew-name">${escapeHtml(cr.crew)} <span class="inv-dim">· ${cr.jobs} job${cr.jobs === 1 ? "" : "s"}</span></div>
+                  return `<div class="stg-crew${check?.done ? " staged" : ""}">
+                    <div class="stg-crew-name">🚚 ${escapeHtml(cr.crew)} <span class="inv-dim">· ${cr.jobs} job${cr.jobs === 1 ? "" : "s"}</span>
+                      <label class="stg-staged"><input type="checkbox" data-staged-class="${escapeHtml(cls.className)}" data-staged-crew="${escapeHtml(cr.crew)}" ${check?.done ? "checked" : ""} />
+                        ${check?.done ? `Staged ✓${check.by ? ` by ${escapeHtml(check.by)}` : ""}` : "Staged?"}</label>
+                    </div>
                     <div class="stg-crew-lines">${lines.map((l) => `<span>${l}</span>`).join("")}</div>
                   </div>`;
                 })
@@ -4372,6 +4391,25 @@ function buildStagingXlsx(v) {
       ["Polyaspartic topcoat B (gal)", t.topcoatBGallons],
       ["Rubber binder (buckets)", t.binderBuckets],
       ["Rubber primer (buckets)", t.primerBuckets],
+      [],
+      ["WAREHOUSE PULL (whole units)"],
+      ["Item", "Pull", "Exact"],
+      ...(cls.pull || []).map((p) => [p.label, `${p.qty} ${p.unit}`, p.exact || ""]),
+      [],
+      ["CREW HAND-OUT SHEETS (mender + sundries as needed)"],
+      ...(cls.crews || []).flatMap((cr) => [
+        [`${cr.crew} — ${cr.jobs} job${cr.jobs === 1 ? "" : "s"}`],
+        ...cr.flake.map((f) => ["", `Flake — ${f.product}`, `${f.boxes} boxes`, `${f.pounds} lb`]),
+        ...cr.polyurea
+          .filter((p) => p.gallons > 0)
+          .map((p) => ["", `Polyurea ${p.base}`, `${p.kits} × 15-gal kits`, `${p.gallons} gal`]),
+        ...(cr.topcoatGallons > 0
+          ? [["", "Polyaspartic", `${cr.topcoatKits} × 10-gal kits`, `${cr.topcoatGallons} gal`]]
+          : []),
+        ...cr.rubber.map((r) => ["", `Rubber — ${r.color}`, `${r.bags} bags`, ""]),
+        ...(cr.binderBuckets > 0 ? [["", "Rubber binder", `${cr.binderBuckets} buckets`, ""]] : []),
+        ...(cr.primerBuckets > 0 ? [["", "Rubber primer", `${cr.primerBuckets} buckets`, ""]] : []),
+      ]),
       [],
       ["JOBS"],
       ["Day", "Job #", "Customer", "Crew", "Type", "Sqft", "Color", "Material", "Notes"],
@@ -5888,6 +5926,22 @@ async function init() {
   $("staging-next").addEventListener("click", () => loadStaging(shiftWeekIso(staging.week, 1)));
   $("staging-nextweek").addEventListener("click", () => loadStaging(nextWeekStartIso()));
   $("staging-export").addEventListener("click", exportStaging);
+  $("staging-list").addEventListener("change", async (e) => {
+    const t = e.target;
+    if (t.dataset.stagedClass === undefined) return;
+    try {
+      await meetingApi("/api/staging/check", "PATCH", {
+        week: staging.week,
+        className: t.dataset.stagedClass,
+        crew: t.dataset.stagedCrew,
+        done: t.checked,
+        by: localStorage.getItem("meetingUser") || null,
+      });
+      await loadStaging(staging.week);
+    } catch (err) {
+      toast(err.message || "Couldn't save.", "error");
+    }
+  });
   $("inv-prev").addEventListener("click", () => loadInventory(shiftWeekIso(inventory.week, -1)));
   $("inv-next").addEventListener("click", () => loadInventory(shiftWeekIso(inventory.week, 1)));
   $("inv-nextweek").addEventListener("click", () => loadInventory(nextWeekStartIso()));

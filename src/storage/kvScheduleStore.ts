@@ -2,6 +2,7 @@ import {
   cleanAssignment,
   type JobAssignment,
   type ScheduleStore,
+  type StagedChecks,
   type WeekAssignments,
 } from "./scheduleStore.js";
 import type { KvClient } from "./kv/kvClient.js";
@@ -37,5 +38,18 @@ export class KvScheduleStore implements ScheduleStore {
 
     await this.kv.hset(key, jobId, next);
     return next;
+  }
+
+  async getStagedChecks(weekStart: string): Promise<StagedChecks> {
+    return this.kv.hgetall<StagedChecks[string]>(`${this.key(weekStart)}:staged`);
+  }
+  async setStagedCheck(
+    weekStart: string,
+    key: string,
+    done: boolean,
+    by: string | null,
+    at: string
+  ): Promise<void> {
+    await this.kv.hset(`${this.key(weekStart)}:staged`, key, { done, by, at });
   }
 }

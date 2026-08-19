@@ -45,9 +45,20 @@ export function cleanAssignment(a: JobAssignment): JobAssignment {
   return a;
 }
 
+/** "Staged ✓" per crew per week — key is `${className}|${crew}`. */
+export type StagedChecks = Record<string, { done: boolean; by: string | null; at: string }>;
+
 export interface ScheduleStore {
   getWeek(weekStart: string): Promise<WeekAssignments>;
   setJob(weekStart: string, jobId: string, assignment: JobAssignment): Promise<JobAssignment>;
+  getStagedChecks(weekStart: string): Promise<StagedChecks>;
+  setStagedCheck(
+    weekStart: string,
+    key: string,
+    done: boolean,
+    by: string | null,
+    at: string
+  ): Promise<void>;
 }
 
 export class JsonScheduleStore implements ScheduleStore {
@@ -95,6 +106,37 @@ export class JsonScheduleStore implements ScheduleStore {
     this.writeChain = this.writeChain.then(run, run);
     return this.writeChain as Promise<JobAssignment>;
   }
+
+  private stagedFile(weekStart: string): string {
+    return this.fileFor(weekStart).replace(/\.json$/, ".staged.json");
+  }
+  async getStagedChecks(weekStart: string): Promise<StagedChecks> {
+    try {
+      return JSON.parse(await fs.readFile(this.stagedFile(weekStart), "utf8"));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+      throw err;
+    }
+  }
+  async setStagedCheck(
+    weekStart: string,
+    key: string,
+    done: boolean,
+    by: string | null,
+    at: string
+  ): Promise<void> {
+    const run = async () => {
+      await fs.mkdir(this.dir, { recursive: true });
+      const checks = await this.getStagedChecks(weekStart);
+      checks[key] = { done, by, at };
+      const file = this.stagedFile(weekStart);
+      const tmp = `${file}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(checks), "utf8");
+      await fs.rename(tmp, file);
+    };
+    this.writeChain = this.writeChain.then(run, run);
+    await this.writeChain;
+  }
 }
 
 /** In-memory store for tests. */
@@ -108,5 +150,20 @@ export class MemoryScheduleStore implements ScheduleStore {
     week[jobId] = cleanAssignment({ ...week[jobId], ...assignment });
     this.weeks.set(weekStart, week);
     return structuredClone(week[jobId]!);
+  }
+  private staged = new Map<string, StagedChecks>();
+  async getStagedChecks(weekStart: string): Promise<StagedChecks> {
+    return structuredClone(this.staged.get(weekStart) ?? {});
+  }
+  async setStagedCheck(
+    weekStart: string,
+    key: string,
+    done: boolean,
+    by: string | null,
+    at: string
+  ): Promise<void> {
+    const checks = this.staged.get(weekStart) ?? {};
+    checks[key] = { done, by, at };
+    this.staged.set(weekStart, checks);
   }
 }

@@ -247,3 +247,28 @@ describe("per-crew hand-out lists (issue units)", () => {
     expect(b.binderBuckets).toBe(2); // 300/160 -> ceil
   });
 });
+
+describe("staged checks API", () => {
+  it("persists a crew's Staged tick per week", async () => {
+    const config2 = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    const app = buildApp({
+      config: config2,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore: new MemoryPipelineStore(),
+      scheduleStore: new MemoryScheduleStore(),
+      now: () => Date.parse("2026-07-31T12:00:00Z"),
+    }).app;
+    await request(app)
+      .patch("/api/staging/check")
+      .send({ week: "2026-07-26", className: "Austin", crew: "Austin Trailer 3", done: true, by: "Spencer" })
+      .expect(200);
+    const res = await request(app).get("/api/staging?week=2026-07-26");
+    expect(res.status).toBe(200);
+    expect(res.body.stagedChecks["Austin|Austin Trailer 3"]).toMatchObject({
+      done: true,
+      by: "Spencer",
+    });
+  });
+});

@@ -77,11 +77,22 @@ export interface StagingCrewList {
   primerBuckets: number;
 }
 
+/** Warehouse pull line: whole issue units (the sum of the crews' units, so
+ * the pull list and the hand-out sheets always agree). */
+export interface StagingPullLine {
+  label: string;
+  qty: number;
+  unit: string;
+  /** Exact need behind the rounding ("34.3 gal"). */
+  exact: string | null;
+}
+
 export interface StagingClassList {
   className: string;
   jobs: StagingJobLine[];
   colors: StagingColorLine[];
   crews: StagingCrewList[];
+  pull: StagingPullLine[];
   totals: StagingTotals;
   missingInfoCount: number;
 }
@@ -284,6 +295,30 @@ export function buildStaging(schedule: WeeklySchedule): StagingWeek {
         x.crew === NO_CREW ? 1 : y.crew === NO_CREW ? -1 : x.crew.localeCompare(y.crew)
       );
 
+    // Warehouse pull = the crews' whole units summed.
+    const pullMap = new Map<string, StagingPullLine & { exactN: number }>();
+    const addPull = (label: string, qty: number, unit: string, exactN: number, exactUnit: string) => {
+      const cur = pullMap.get(label) ?? { label, qty: 0, unit, exact: null, exactN: 0 };
+      cur.qty += qty;
+      cur.exactN = round2(cur.exactN + exactN);
+      cur.exact = `${cur.exactN} ${exactUnit}`;
+      pullMap.set(label, cur);
+    };
+    for (const cr of crews) {
+      for (const f of cr.flake) addPull(`Flake — ${f.product}`, f.boxes, "boxes (40 lb)", f.pounds, "lb");
+      for (const p of cr.polyurea) {
+        if (p.gallons > 0) addPull(`Polyurea ${p.base}`, p.kits, "15-gal kits", p.gallons, "gal");
+      }
+      if (cr.topcoatGallons > 0)
+        addPull("Polyaspartic", cr.topcoatKits, "10-gal kits", cr.topcoatGallons, "gal");
+      for (const r of cr.rubber) addPull(`Rubber — ${r.color}`, r.bags, "bags (50 lb)", r.bags, "bags");
+      if (cr.binderBuckets > 0) addPull("Rubber binder", cr.binderBuckets, "buckets (5 gal)", cr.binderBuckets, "buckets");
+      if (cr.primerBuckets > 0) addPull("Rubber primer", cr.primerBuckets, "buckets (5 gal)", cr.primerBuckets, "buckets");
+    }
+    const pull = [...pullMap.values()]
+      .map(({ exactN: _n, ...line }) => line)
+      .sort((a, b) => a.label.localeCompare(b.label));
+
     classes.push({
       className: group.className,
       jobs,
@@ -291,6 +326,7 @@ export function buildStaging(schedule: WeeklySchedule): StagingWeek {
         (a, b) => a.kind.localeCompare(b.kind) || a.product.localeCompare(b.product)
       ),
       crews,
+      pull,
       totals,
       missingInfoCount: jobs.filter((j) => j.missingInfo).length,
     });
