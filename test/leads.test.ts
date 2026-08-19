@@ -382,3 +382,37 @@ describe("contract review checks", () => {
     });
   });
 });
+
+describe("sqft backfill", () => {
+  it("merges job facts without replacing the live pipeline", async () => {
+    const config = loadConfig({ ALLOW_SAMPLE_DATA: "false" } as NodeJS.ProcessEnv);
+    const pipelineStore = new MemoryPipelineStore();
+    const app = buildApp({
+      config,
+      meetingStore: new MemoryMeetingStore(),
+      workOrderStore: new MemoryWorkOrderStore(),
+      inventoryStore: new MemoryInventoryStore(),
+      pipelineStore,
+      scheduleStore: new MemoryScheduleStore(),
+      leadsStore: new MemoryLeadsStore(),
+      now: () => NOW,
+    }).app;
+
+    const res = await request(app)
+      .post("/api/pipeline/backfill")
+      .send({
+        filename: "history.xlsx",
+        rows: [
+          ["Production Pipeline Report"],
+          ["Class", "Job #", "Client", "Description", "Project Manager", "SQFT", "Sold Amount", "Start Date", "Finish Date", "Status"],
+          ["Deluxe Garages - Dallas, TX", 60001, "Old Client", "flake", "Crew", 640, 4200, "2026-05-04", "2026-05-04", "Complete"],
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ jobs: 1, withSqft: 1 });
+    const facts = await pipelineStore.getJobFacts();
+    expect(facts["60001"]).toMatchObject({ sqft: 640 });
+    // Live pipeline untouched.
+    expect(await pipelineStore.get()).toBeNull();
+  });
+});

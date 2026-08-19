@@ -185,10 +185,14 @@ staging workbook.
 ## Sales Management (Sales tab)
 
 The sales manager's own workflow, separate from the production meeting.
-An **Uploads card at the top** collects all four inputs in one place —
+An **Uploads card at the top** collects the inputs in one place —
 Clients List, Meetings (multi-file for backfilling weeks), Sold
-Contracts, and Lead Performance — each with its freshness status; every
-card below feeds from these. A **🥶 Cold streaks alert** fires under the uploads whenever a rep has
+Contracts, Lead Performance, and a one-time **Sqft backfill** (any
+Production Pipeline export over an old date range merges its Job # →
+sqft into the permanent job history via `POST /api/pipeline/backfill`
+without touching the live pipeline — fixes thin $/ft² coverage for
+weeks whose jobs predate the stored history) — each with its freshness
+status; every card below feeds from these. A **🥶 Cold streaks alert** fires under the uploads whenever a rep has
 **held appointments on more than 3 days since their last sale** (Meetings
 days × Sold Contracts, per rep; appointment days past the sold upload's
 coverage don't count, so a stale sold export can't cry wolf). Each row

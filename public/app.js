@@ -3455,6 +3455,13 @@ function renderSales() {
         : "weekly — close rate + NSLI per rep",
       Boolean(sd?.perfMeta)
     )}
+    ${upRow(
+      "backfill",
+      "Sqft backfill",
+      "one-time — old pipeline exports fill $/ft² history",
+      false,
+      true
+    )}
   </div>`;
 
   // Cold-streak alert: reps running appointments with no sale to show for it.
@@ -3722,6 +3729,15 @@ async function handleSalesUpload(kind, file) {
       "success"
     );
     meeting.open.add("ssec:appts");
+  } else if (kind === "backfill") {
+    const data = await meetingApi("/api/pipeline/backfill", "POST", {
+      filename: file.name,
+      rows,
+    });
+    toast(
+      `${data.withSqft.toLocaleString()} jobs' sqft added to history (${data.jobs.toLocaleString()} jobs read) ✓`,
+      "success"
+    );
   }
   await loadSales();
 }

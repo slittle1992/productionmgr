@@ -262,7 +262,7 @@ export function buildApp(options: BuildAppOptions): BuiltApp {
     pipelineStore
   );
 
-  app.use("/api", pipelineRouter(pipelineStore, now));
+  app.use("/api", pipelineRouter(pipelineStore, now, config.customFields));
   app.use("/api", meetingRouter(meetingService));
   app.use("/api", stagingRouter(scheduleService, inventoryStore, now));
   app.use("/api", leadsRouter(leadsStore, now, config.weekStartDay, pipelineStore));
