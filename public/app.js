@@ -3158,6 +3158,103 @@ function renderApptDayChart() {
   show in the readout when you tap a day.</p>`;
 }
 
+// ── Trends: stat tiles (latest value + Δ + sparkline) per weekly metric ──
+
+function sparkSvg(values) {
+  const vals = values.filter((v) => v !== null);
+  if (vals.length < 2) return "";
+  const n = values.length;
+  const W = 120;
+  const H = 34;
+  const slot = W / n;
+  const bw = Math.max(1.5, Math.min(10, slot * 0.65));
+  const max = Math.max(1, ...vals);
+  let rects = "";
+  values.forEach((v, i) => {
+    if (v === null) return;
+    const h = Math.max(1.2, ((H - 2) * v) / max);
+    rects += `<rect class="${i === n - 1 ? "sp-last" : "sp-bar"}" x="${(i * slot + (slot - bw) / 2).toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1"/>`;
+  });
+  return `<svg class="sp" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${rects}</svg>`;
+}
+
+/** Trim leading zero/null weeks (before the data source starts). */
+function trimLead(values) {
+  const out = [...values];
+  while (out.length > 2 && (out[0] === null || out[0] === 0)) out.shift();
+  return out;
+}
+
+function statTile(title, values, fmt, goodWhenUp, note) {
+  const vals = values.filter((v) => v !== null);
+  // No signal yet (source upload missing or out of range) — skip the tile.
+  if (!vals.length || vals.every((v) => v === 0)) return "";
+  const last = vals[vals.length - 1];
+  const prev = vals.length > 1 ? vals[vals.length - 2] : null;
+  let deltaHtml = "";
+  if (prev !== null && prev !== 0) {
+    const pct = ((last - prev) / Math.abs(prev)) * 100;
+    const up = pct >= 0;
+    const good = up === goodWhenUp || Math.abs(pct) < 0.05;
+    deltaHtml = `<span class="tile-delta ${good ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(0)}%</span>`;
+  }
+  return `
+  <div class="trend-tile">
+    <span class="tile-title">${escapeHtml(title)}</span>
+    <span class="tile-value">${fmt(last)}${deltaHtml}</span>
+    ${sparkSvg(values)}
+    <span class="tile-note">${escapeHtml(note)}</span>
+  </div>`;
+}
+
+function renderTrendsCard() {
+  // Weekly flow includes the current partial week — trend on completed weeks.
+  const wf = (sales.sales?.weeklyFlow || []).slice(0, -1);
+  const apptWeeks = [...(sales.appts?.weeks || [])].sort((a, b) =>
+    a.weekStart.localeCompare(b.weekStart)
+  );
+  const pt = sales.sales?.perfTrend || [];
+
+  const pctFmt = (v) => v.toFixed(1) + "%";
+  const numFmt = (v) => String(Math.round(v));
+  const wkNote = (arr, label) =>
+    arr.length ? `${arr.length} wk${arr.length === 1 ? "" : "s"} of ${label}` : "";
+
+  const tiles = [
+    statTile("Leads / wk", trimLead(wf.map((w) => w.leads)), numFmt, true, wkNote(wf, "clients list")),
+    statTile("Sold $ / wk", trimLead(wf.map((w) => w.soldNet)), fmtMoney0, true, wkNote(wf, "sold contracts")),
+    statTile("Appts / wk", apptWeeks.map((w) => w.total), numFmt, true, wkNote(apptWeeks, "meetings uploads")),
+    statTile(
+      "Cancel %",
+      apptWeeks.map((w) => (w.cancelRate === null ? null : w.cancelRate * 100)),
+      pctFmt,
+      false,
+      wkNote(apptWeeks, "meetings uploads")
+    ),
+    statTile(
+      "Close rate",
+      pt.map((p) => (p.closeRate === null ? null : p.closeRate * 100)),
+      pctFmt,
+      true,
+      wkNote(pt, "lead perf uploads")
+    ),
+    statTile("NSLI", pt.map((p) => p.nsli), fmtMoney0, true, wkNote(pt, "lead perf uploads")),
+  ].filter(Boolean);
+
+  if (!tiles.length) {
+    return `<div class="card"><p class="hint">Trends build themselves as the
+      weekly uploads stack up — leads, meetings, sold contracts, and lead
+      performance each add a line.</p></div>`;
+  }
+  return `
+  <div class="card">
+    <div class="prep-head"><span class="prep-title">Trends — week over week</span>
+      <span class="inv-dim">last completed weeks · Δ vs prior week</span></div>
+    <div class="trend-grid">${tiles.join("")}</div>
+    ${pt.length < 2 ? `<p class="hint">Close rate + NSLI trend as each week's <b>Lead Performance</b> export is uploaded (one per week).</p>` : ""}
+  </div>`;
+}
+
 function renderSales() {
   const weeks = sales.appts?.weeks || [];
   const latest = weeks[0] || null;
@@ -3271,6 +3368,8 @@ function renderSales() {
 
   $("sales-sections").innerHTML = `
     ${uploadsCard}
+    <div class="sales-group">Trends</div>
+    ${renderTrendsCard()}
     <div class="sales-group">Daily</div>
     ${step(1, "ssec:daily", "Lead flow vs goal — rubber & flake", dailySub, onPace, renderDailyStep())}
     ${step(
@@ -3313,6 +3412,14 @@ function renderSales() {
         : "needs this week's meetings export",
       dailyDone("rehash"),
       renderRehashStep() + checkRow("rehash", "Rehash calls made")
+    )}
+    ${step(
+      6,
+      "ssec:vip",
+      "Check VIP to-do list",
+      dailyDone("vip") ? "done today" : "clear the sales to-dos",
+      dailyDone("vip"),
+      renderVipStep() + checkRow("vip", "VIP to-dos checked")
     )}
     <div class="sales-group">Weekly</div>
     ${step(1, "ssec:leads", "Leads — by market", leadsSub, Boolean(sales.meta), renderLeadsStep())}
@@ -3422,6 +3529,19 @@ function renderRillaStep() {
     url
       ? `<a class="btn-upload" href="${escapeHtml(url)}" target="_blank" rel="noopener"><span>Open Rilla ↗</span></a>`
       : `<p class="hint">Set the <code>RILLA_URL</code> environment variable to get a one-tap link here.</p>`
+  }`;
+}
+
+/** Daily — VIP Lead to-do list check. */
+function renderVipStep() {
+  const url = sales.dailyTasks?.vipUrl;
+  return `
+  <p class="card-help">Open VIP Lead and clear the sales to-do bucket —
+  nothing unclaimed, nothing stale.</p>
+  ${
+    url
+      ? `<a class="btn-upload" href="${escapeHtml(url)}" target="_blank" rel="noopener"><span>Open VIP Lead ↗</span></a>`
+      : `<p class="hint">Set the <code>VIP_LEAD_URL</code> environment variable to get a one-tap link here (same one the production meeting uses).</p>`
   }`;
 }
 

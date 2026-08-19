@@ -188,7 +188,12 @@ The sales manager's own workflow, separate from the production meeting.
 An **Uploads card at the top** collects all four inputs in one place —
 Clients List, Meetings (multi-file for backfilling weeks), Sold
 Contracts, and Lead Performance — each with its freshness status; every
-card below feeds from these. The weekly review reads market-first —
+card below feeds from these. A **Trends card** follows: stat tiles
+(latest value, Δ vs the prior week, sparkline of the last completed
+weeks) for leads/wk, sold $/wk, appointments/wk, cancel %, close rate,
+and NSLI — the last two build week over week because every Lead
+Performance upload snapshots its report range (all-zero tiles hide
+until their source has data). The weekly review reads market-first —
 **Leads → Meetings → Sales** — and the daily cadence is a set of tasks,
 each with a per-day check that resets tomorrow.
 
@@ -230,6 +235,9 @@ each with a per-day check that resets tomorrow.
 5. **Call the no-sales (rehash)** — every DEMO NO SALE / STILL INTERESTED
    appointment from the latest Meetings upload, with tap-to-call phone
    numbers and the rep who ran the demo.
+6. **Check VIP to-do list** — clear the sales to-do bucket in VIP Lead
+   (one-tap link via `VIP_LEAD_URL`, the same variable the production
+   meeting uses).
 
 **Weekly** steps:
 

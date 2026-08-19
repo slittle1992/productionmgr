@@ -30,6 +30,16 @@ export interface StoredPerf extends PerfParseResult {
   filename: string | null;
 }
 
+/** Company totals from one Lead Performance upload — kept per report range
+ * so close rate / NSLI can trend week over week. */
+export interface PerfSnapshot {
+  fromMs: number;
+  toMs: number | null;
+  issued: number;
+  demos: number;
+  sold: number;
+}
+
 /** One week's Meetings-export rollup, kept week over week for the sales tab. */
 export interface StoredApptsWeek {
   weekStart: string;
@@ -67,6 +77,9 @@ export interface LeadsStore {
   ): Promise<number | null>;
   getPerf(): Promise<StoredPerf | null>;
   setPerf(perf: StoredPerf): Promise<void>;
+  /** Keyed by the report's from-date ISO; re-upload replaces the range. */
+  getPerfHistory(): Promise<Record<string, PerfSnapshot>>;
+  setPerfSnapshot(snap: PerfSnapshot): Promise<void>;
   /** Appointment rollups keyed by weekStart (re-upload replaces the week). */
   getAppts(): Promise<Record<string, StoredApptsWeek>>;
   setApptsWeek(week: StoredApptsWeek): Promise<void>;
@@ -114,6 +127,7 @@ interface PendingSold {
 interface SalesFileShape {
   sold: StoredSold | null;
   perf: StoredPerf | null;
+  perfHistory: Record<string, PerfSnapshot>;
   appts: Record<string, StoredApptsWeek>;
   goals: LeadGoals;
   pendingSold: PendingSold | null;
@@ -179,6 +193,7 @@ export class JsonLeadsStore implements LeadsStore {
         perf: null,
         appts: {},
         goals: EMPTY_GOALS,
+        perfHistory: {},
         pendingSold: null,
         dailyChecks: {},
         contractChecks: {},
@@ -191,6 +206,7 @@ export class JsonLeadsStore implements LeadsStore {
           perf: null,
           appts: {},
           goals: EMPTY_GOALS,
+          perfHistory: {},
           pendingSold: null,
           dailyChecks: {},
           contractChecks: {},
@@ -249,6 +265,14 @@ export class JsonLeadsStore implements LeadsStore {
   async setPerf(perf: StoredPerf) {
     await this.writeSales((s) => {
       s.perf = perf;
+    });
+  }
+  async getPerfHistory() {
+    return (await this.readSales()).perfHistory;
+  }
+  async setPerfSnapshot(snap: PerfSnapshot) {
+    await this.writeSales((s) => {
+      s.perfHistory[new Date(snap.fromMs).toISOString().slice(0, 10)] = snap;
     });
   }
   async getAppts() {
@@ -375,6 +399,18 @@ export class KvLeadsStore implements LeadsStore {
   async setPerf(perf: StoredPerf) {
     await this.kv.set(KvLeadsStore.PERF, perf);
   }
+  private static readonly PERF_HIST = "sales:perfhistory";
+  async getPerfHistory() {
+    return (
+      (await this.kv.get<Record<string, PerfSnapshot>>(KvLeadsStore.PERF_HIST)) ??
+      {}
+    );
+  }
+  async setPerfSnapshot(snap: PerfSnapshot) {
+    const all = await this.getPerfHistory();
+    all[new Date(snap.fromMs).toISOString().slice(0, 10)] = snap;
+    await this.kv.set(KvLeadsStore.PERF_HIST, all);
+  }
   async getAppts() {
     return (
       (await this.kv.get<Record<string, StoredApptsWeek>>(KvLeadsStore.APPTS)) ??
@@ -487,6 +523,14 @@ export class MemoryLeadsStore implements LeadsStore {
   }
   async setPerf(perf: StoredPerf) {
     this.perf = structuredClone(perf);
+  }
+  private perfHistory: Record<string, PerfSnapshot> = {};
+  async getPerfHistory() {
+    return structuredClone(this.perfHistory);
+  }
+  async setPerfSnapshot(snap: PerfSnapshot) {
+    this.perfHistory[new Date(snap.fromMs).toISOString().slice(0, 10)] =
+      structuredClone(snap);
   }
   private appts: Record<string, StoredApptsWeek> = {};
   async getAppts() {

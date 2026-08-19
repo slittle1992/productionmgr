@@ -187,6 +187,16 @@ export function leadsRouter(
           uploadedAt: new Date(now()).toISOString(),
           filename: body.filename ?? null,
         });
+        // Snapshot company totals per report range → close-rate/NSLI trends.
+        if (parsed.fromMs !== null) {
+          await store.setPerfSnapshot({
+            fromMs: parsed.fromMs,
+            toMs: parsed.toMs,
+            issued: parsed.byRep.reduce((s, r) => s + r.issued, 0),
+            demos: parsed.byRep.reduce((s, r) => s + r.demos, 0),
+            sold: parsed.byRep.reduce((s, r) => s + r.sold, 0),
+          });
+        }
         res.json({ ok: true, reps: parsed.byRep.length });
       } catch (err) {
         if (err instanceof PipelineFormatError) {
@@ -286,7 +296,7 @@ export function leadsRouter(
   // POST /api/leads/daily-check — tick/untick one of the daily tasks.
   const dailyBody = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    key: z.enum(["contracts", "rilla", "rehash"]),
+    key: z.enum(["contracts", "rilla", "rehash", "vip"]),
     done: z.boolean(),
   });
   router.post(
@@ -331,17 +341,27 @@ export function leadsRouter(
         .max(365)
         .optional()
         .parse(req.query.days || undefined) ?? 28;
-      const [meta, leads, sold, perf, appts, storedGoals, dailyChecks, cChecks] =
-        await Promise.all([
-          store.getMeta(),
-          store.getLeads(),
-          store.getSold(),
-          store.getPerf(),
-          store.getAppts(),
-          store.getGoals(),
-          store.getDailyChecks(),
-          store.getContractChecks(),
-        ]);
+      const [
+        meta,
+        leads,
+        sold,
+        perf,
+        appts,
+        storedGoals,
+        dailyChecks,
+        cChecks,
+        perfHistory,
+      ] = await Promise.all([
+        store.getMeta(),
+        store.getLeads(),
+        store.getSold(),
+        store.getPerf(),
+        store.getAppts(),
+        store.getGoals(),
+        store.getDailyChecks(),
+        store.getContractChecks(),
+        store.getPerfHistory(),
+      ]);
       const nowMs = now();
       const soldRows = sold?.rows ?? [];
       // Seeded per-location goals show until an edit stores an override.
@@ -465,6 +485,7 @@ export function leadsRouter(
         today: todayIso,
         checks: dailyChecks[todayIso] ?? {},
         rillaUrl: process.env.RILLA_URL ?? null,
+        vipUrl: process.env.VIP_LEAD_URL ?? null,
         recentSold,
         contractChecks,
         soldUploadedAt: sold?.uploadedAt ?? null,
@@ -513,7 +534,29 @@ export function leadsRouter(
                 reps: perf.byRep.length,
               }
             : null,
-          weeklyFlow: computeWeeklyFlow(leads, soldRows, weekStartDay, nowMs),
+          weeklyFlow: computeWeeklyFlow(leads, soldRows, weekStartDay, nowMs, 13),
+          // Close rate / NSLI per uploaded performance week (NSLI dollars
+          // recomputed from the sold contracts within each range).
+          perfTrend: Object.values(perfHistory)
+            .sort((a, b) => a.fromMs - b.fromMs)
+            .slice(-13)
+            .map((h) => {
+              let net = 0;
+              for (const s of soldRows) {
+                if (s.saleMs === null || !s.rep) continue;
+                if (s.status && /cancel/i.test(s.status)) continue;
+                if (s.saleMs < h.fromMs) continue;
+                if (h.toMs !== null && s.saleMs >= h.toMs + 86400000) continue;
+                net += s.saleAmount;
+              }
+              return {
+                from: new Date(h.fromMs).toISOString().slice(0, 10),
+                issued: h.issued,
+                sold: h.sold,
+                closeRate: h.issued > 0 ? h.sold / h.issued : null,
+                nsli: h.issued > 0 ? Math.round((net / h.issued) * 100) / 100 : null,
+              };
+            }),
           repScorecard: perf ? computeRepScorecard(perf, soldRows) : null,
           byCluster: area?.clusters ?? null,
           joinInfo: area ? { joined: area.joined, total: area.total } : null,
