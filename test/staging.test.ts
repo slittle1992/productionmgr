@@ -221,3 +221,29 @@ describe("weekly snapshots", () => {
     expect(missing.status).toBe(404);
   });
 });
+
+describe("per-crew hand-out lists (issue units)", () => {
+  it("rounds each crew's needs to full boxes and kits", () => {
+    // Two flake jobs for Crew A (same blend, grey base) + one rubber job for
+    // Crew B. 630 + 400 sqft flake -> 154.5 lb -> 4 boxes; polyurea
+    // (630+400)/200 = 5.15 gal -> 1 x 15-gal kit.
+    const staged = buildStaging(
+      week([
+        job({ id: "a1", crew: "Crew A", sq: 630, baseColor: "Grey" }),
+        job({ id: "a2", crew: "Crew A", sq: 400, baseColor: "Grey" }),
+        job({ id: "b1", crew: "Crew B", sq: 300, type: "Rubber Coating", col: "Slate" }),
+      ])
+    );
+    const austin = staged.classes[0]!;
+    expect(austin.crews).toHaveLength(2);
+    const a = austin.crews.find((c) => c.crew === "Crew A")!;
+    expect(a.flake[0]).toMatchObject({ boxes: 4 });
+    expect(a.polyurea[0]!.base).toBe("Grey");
+    expect(a.polyurea[0]!.kits).toBe(1);
+    expect(a.polyurea[0]!.gallons).toBeCloseTo(5.15, 1);
+    expect(a.topcoatKits).toBe(1); // 1030/130 = 7.9 gal -> one 10-gal kit
+    const b = austin.crews.find((c) => c.crew === "Crew B")!;
+    expect(b.rubber[0]!.bags).toBe(10); // 300/30
+    expect(b.binderBuckets).toBe(2); // 300/160 -> ceil
+  });
+});

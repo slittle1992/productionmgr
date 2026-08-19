@@ -25,6 +25,7 @@ export interface StagingJobLine {
   kind: MaterialEstimate["kind"];
   sqft: number | null;
   color: string | null;
+  baseColor: string | null;
   crew: string;
   isWorkOrder: boolean;
   material: MaterialEstimate;
@@ -58,10 +59,29 @@ export interface StagingTotals {
   sqftRubber: number;
 }
 
+/**
+ * Per-crew hand-out list in ISSUE UNITS: flake by the 40 lb box, polyurea by
+ * the 15-gal kit (per base color), polyaspartic by the 10-gal kit, rubber by
+ * the bag. Exact needs ride along so a light week reads "3 gal → 1 kit".
+ * Mender and sundries are issued as needed and aren't computed here.
+ */
+export interface StagingCrewList {
+  crew: string;
+  jobs: number;
+  flake: { product: string; pounds: number; boxes: number }[];
+  polyurea: { base: string; gallons: number; kits: number }[];
+  topcoatGallons: number;
+  topcoatKits: number;
+  rubber: { color: string; bags: number }[];
+  binderBuckets: number;
+  primerBuckets: number;
+}
+
 export interface StagingClassList {
   className: string;
   jobs: StagingJobLine[];
   colors: StagingColorLine[];
+  crews: StagingCrewList[];
   totals: StagingTotals;
   missingInfoCount: number;
 }
@@ -116,6 +136,7 @@ function jobLine(job: ScheduleJob): StagingJobLine {
     kind: m.kind,
     sqft: job.sqft,
     color: m.flake ?? job.color,
+    baseColor: job.baseColor ?? null,
     crew: job.crew,
     isWorkOrder: job.isWorkOrder,
     material: m,
@@ -184,12 +205,92 @@ export function buildStaging(schedule: WeeklySchedule): StagingWeek {
       else totals.sqftRubber += j.sqft ?? 0;
     }
 
+    // Per-crew hand-out lists in issue units.
+    const POLYUREA_KIT_GAL = 15;
+    const POLYASPARTIC_KIT_GAL = 10;
+    const NO_CREW = "(no crew assigned)";
+    interface CrewAcc {
+      crew: string;
+      jobs: number;
+      flake: Map<string, number>; // product → boxes (fractional)
+      polyurea: Map<string, number>; // base color → gallons
+      topcoatGallons: number;
+      rubber: Map<string, number>; // color → bags
+      binderBuckets: number;
+      primerBuckets: number;
+    }
+    const crewMap = new Map<string, CrewAcc>();
+    for (const j of staged) {
+      const m = j.material;
+      const crew = j.crew || NO_CREW;
+      const acc =
+        crewMap.get(crew) ??
+        ({
+          crew,
+          jobs: 0,
+          flake: new Map(),
+          polyurea: new Map(),
+          topcoatGallons: 0,
+          rubber: new Map(),
+          binderBuckets: 0,
+          primerBuckets: 0,
+        } as CrewAcc);
+      acc.jobs++;
+      const product = m.flake ?? NO_COLOR;
+      if (m.kind === "flake") {
+        acc.flake.set(product, (acc.flake.get(product) ?? 0) + m.flakeBoxes);
+        const base = j.baseColor ?? "(base TBD)";
+        acc.polyurea.set(
+          base,
+          (acc.polyurea.get(base) ?? 0) + m.basecoatAGallons + m.basecoatBGallons
+        );
+        acc.topcoatGallons = round2(
+          acc.topcoatGallons + m.topcoatAGallons + m.topcoatBGallons
+        );
+      } else {
+        acc.rubber.set(product, (acc.rubber.get(product) ?? 0) + m.rubberBags);
+        acc.binderBuckets = round2(acc.binderBuckets + m.binderBuckets);
+        acc.primerBuckets = round2(acc.primerBuckets + m.primerBuckets);
+      }
+      crewMap.set(crew, acc);
+    }
+    const crews: StagingCrewList[] = [...crewMap.values()]
+      .map((a) => ({
+        crew: a.crew,
+        jobs: a.jobs,
+        flake: [...a.flake.entries()]
+          .map(([product, boxes]) => ({
+            product,
+            pounds: round2(boxes * 40),
+            boxes: Math.ceil(boxes - 1e-9),
+          }))
+          .sort((x, y) => x.product.localeCompare(y.product)),
+        polyurea: [...a.polyurea.entries()]
+          .map(([base, gallons]) => ({
+            base,
+            gallons: round2(gallons),
+            kits: Math.ceil(gallons / POLYUREA_KIT_GAL - 1e-9),
+          }))
+          .sort((x, y) => x.base.localeCompare(y.base)),
+        topcoatGallons: a.topcoatGallons,
+        topcoatKits: Math.ceil(a.topcoatGallons / POLYASPARTIC_KIT_GAL - 1e-9),
+        rubber: [...a.rubber.entries()]
+          .map(([color, bags]) => ({ color, bags: Math.ceil(bags - 1e-9) }))
+          .sort((x, y) => x.color.localeCompare(y.color)),
+        binderBuckets: Math.ceil(a.binderBuckets - 1e-9),
+        primerBuckets: Math.ceil(a.primerBuckets - 1e-9),
+      }))
+      .sort((x, y) =>
+        x.crew === NO_CREW ? 1 : y.crew === NO_CREW ? -1 : x.crew.localeCompare(y.crew)
+      );
+
     classes.push({
       className: group.className,
       jobs,
       colors: [...colorMap.values()].sort(
         (a, b) => a.kind.localeCompare(b.kind) || a.product.localeCompare(b.product)
       ),
+      crews,
       totals,
       missingInfoCount: jobs.filter((j) => j.missingInfo).length,
     });

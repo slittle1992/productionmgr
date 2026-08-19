@@ -37,6 +37,8 @@ const HEADER_ALIASES: Record<keyof ColumnMap, string[]> = {
   className: ["class"],
   sqft: ["project sq ft", "project sqft", "sq ft", "sqft"],
   contractPrice: ["total contract price", "contract price"],
+  flakeColor: ["flake color"],
+  revaColor: ["revaflex color", "reva flex color", "rubber color"],
 };
 
 interface ColumnMap {
@@ -53,6 +55,8 @@ interface ColumnMap {
   className: number;
   sqft: number;
   contractPrice: number;
+  flakeColor: number;
+  revaColor: number;
 }
 
 export interface PipelineParseResult {
@@ -162,8 +166,19 @@ export function parsePipeline(grid: RawGrid): PipelineParseResult {
     const description = toText(cell(row, map.description));
     const type = toText(cell(row, map.type));
     const crew = toText(cell(row, map.projectManager));
-    const sqft = toNumber(cell(row, map.sqft));
-    const color = extractColorFromText(description);
+    // SQFT: the column, else the description's middle number
+    // ("Back Patio - 396 - Wombat").
+    const sqft =
+      toNumber(cell(row, map.sqft)) ??
+      (description?.match(/-\s*(\d{2,5})\s*-/)
+        ? Number(description.match(/-\s*(\d{2,5})\s*-/)![1])
+        : null);
+    // Color: the export's own color columns beat description mining. Skip
+    // placeholder values that aren't colors.
+    const PLACEHOLDER_RE = /^(tbd|custom|revadrive|n\/?a)$/i;
+    const colColor = [toText(cell(row, map.flakeColor)), toText(cell(row, map.revaColor))]
+      .find((c) => c && !PLACEHOLDER_RE.test(c));
+    const color = colColor ?? extractColorFromText(description);
 
     classes[className] = (classes[className] ?? 0) + 1;
 

@@ -4161,6 +4161,40 @@ function renderStaging() {
                 .join("")}</div>`
             : ""
         }
+        ${
+          cls.crews?.length
+            ? `<div class="prep-head" style="margin-top:10px"><span class="prep-title">Hand-out by crew</span>
+                <span class="inv-dim">full kits & boxes · mender + sundries as needed</span></div>
+              ${cls.crews
+                .map((cr) => {
+                  const lines = [
+                    ...cr.flake.map(
+                      (f) => `🎨 ${escapeHtml(f.product)}: <b>${f.boxes} box${f.boxes === 1 ? "" : "es"}</b> <span class="inv-dim">(${fmtN(f.pounds)} lb)</span>`
+                    ),
+                    ...cr.polyurea
+                      .filter((p) => p.gallons > 0)
+                      .map(
+                        (p) => `🪣 Polyurea ${escapeHtml(p.base)}: <b>${p.kits} × 15-gal kit${p.kits === 1 ? "" : "s"}</b> <span class="inv-dim">(${fmtN(p.gallons)} gal)</span>`
+                      ),
+                    ...(cr.topcoatGallons > 0
+                      ? [
+                          `✨ Polyaspartic: <b>${cr.topcoatKits} × 10-gal kit${cr.topcoatKits === 1 ? "" : "s"}</b> <span class="inv-dim">(${fmtN(cr.topcoatGallons)} gal)</span>`,
+                        ]
+                      : []),
+                    ...cr.rubber.map(
+                      (r) => `⬛ ${escapeHtml(r.color)}: <b>${r.bags} bag${r.bags === 1 ? "" : "s"}</b>`
+                    ),
+                    ...(cr.binderBuckets > 0 ? [`Binder: <b>${cr.binderBuckets} bucket${cr.binderBuckets === 1 ? "" : "s"}</b>`] : []),
+                    ...(cr.primerBuckets > 0 ? [`Primer: <b>${cr.primerBuckets} bucket${cr.primerBuckets === 1 ? "" : "s"}</b>`] : []),
+                  ];
+                  return `<div class="stg-crew">
+                    <div class="stg-crew-name">${escapeHtml(cr.crew)} <span class="inv-dim">· ${cr.jobs} job${cr.jobs === 1 ? "" : "s"}</span></div>
+                    <div class="stg-crew-lines">${lines.map((l) => `<span>${l}</span>`).join("")}</div>
+                  </div>`;
+                })
+                .join("")}`
+            : ""
+        }
         <details class="mtg-class stg-jobs">
           <summary><span class="mtg-class-name">Jobs</span>
             <span class="mtg-class-info">${cls.jobs.length}</span></summary>

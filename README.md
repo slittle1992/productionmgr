@@ -31,7 +31,9 @@ Instead of wiring up the API, export the **Production Pipeline Report** from
 Builder Prime (the .xlsx) and tap **Upload pipeline** on the Schedule screen.
 The app reads the file in the browser, parses it server-side, and drives the
 whole schedule from it — grouped by class, with crew (the trailer/PM column),
-SqFt, color (pulled from the job description), and material all populated. Tap
+SqFt (the Project Sq Ft column, else the description's middle number), color
+(the export's Flake Color / RevaFlex Color columns, else mined from the
+description), and material all populated. Tap
 **Replace** to upload a newer export or **Clear** to go back. The uploaded
 pipeline is stored, so it persists (durably when KV is configured — see below).
 
@@ -72,7 +74,12 @@ bring one back. All built for a thumb:
 - **Staging** — per-location pull lists: what material to set out **this week**
   for the selected week's installs (defaults to next week). Aggregated from the
   schedule per flake blend / rubber color, plus basecoat, topcoat, binder, and
-  primer totals; jobs missing SQFT or color are flagged. Exports to .xlsx.
+  primer totals; jobs missing SQFT or color are flagged. A **Hand-out by
+  crew** block converts each crew's week into **issue units** — flake by the
+  40 lb box, polyurea by the 15-gal kit per base color, polyaspartic by the
+  10-gal kit, rubber by the bag, binder/primer by the bucket (exact needs
+  shown beside the rounding; mender + sundries are issued as needed).
+  Exports to .xlsx.
 - **Inventory** — on-hand counts per location vs the selected week's staging
   needs; anything short is flagged so you can order before staging day.
 - **Projects** *(hidden)* — active projects with client, address, value, status,
