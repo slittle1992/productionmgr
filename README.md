@@ -4,12 +4,12 @@ A phone-first web app that replaces the weekly production-report spreadsheet.
 It pulls everything Builder Prime can supply, does all the math, and leaves the
 manager with only the handful of fields a human actually has to enter.
 
-Two visible tabs, one per workflow: **Production** — the Friday meeting
-checklist with the scoreboard, labor rates, and the weekly inventory-count →
-material-cost section — and **Sales** — the sales manager's own cadence
-(leads reports, appointments & cancellations). The Schedule, Staging,
-Inventory, Pay, Roster, and Projects screens are built and fully wired but
-hidden from the tab bar for now (remove `hidden` from a button in
+Five visible tabs: **Production** — the Friday meeting checklist with the
+scoreboard, labor rates, and the weekly inventory-count → material-cost
+section — **Sales** — the sales manager's own cadence (leads, appointments,
+contracts, trends) — plus **Schedule**, **Staging**, and **Inventory**.
+The Pay, Roster, and Projects screens are built and fully wired but hidden
+from the tab bar for now (remove `hidden` from a button in
 `public/index.html` to bring one back).
 
 ---
@@ -50,11 +50,11 @@ Then `npm start` again — the banner disappears and real projects load.
 
 ## What the manager sees
 
-Two visible tabs — **Production** (the meeting, the default screen) and
-**Sales** (the sales manager's workflow). The Schedule, Staging, Inventory,
-Pay, Roster, and Projects tabs are hidden for now: their code is intact,
-remove `hidden` from a button in `public/index.html` to bring one back. All
-built for a thumb:
+Five visible tabs — **Production** (the meeting, the default screen),
+**Sales** (the sales manager's workflow), **Schedule**, **Staging**, and
+**Inventory**. The Pay, Roster, and Projects tabs are hidden for now: their
+code is intact, remove `hidden` from a button in `public/index.html` to
+bring one back. All built for a thumb:
 
 - **Production** *(default screen)* — the Friday Production
   Meeting checklist (below). The pipeline uploaded here feeds the Schedule.
@@ -64,16 +64,16 @@ built for a thumb:
   (steps coming) and the Weekly steps — leads reports and the Meetings
   export (appointments per rep + cancellation rate, saved week over week).
   See **Sales Management** below.
-- **Schedule** *(hidden)* — the weekly production schedule that
+- **Schedule** — the weekly production schedule that
   replaces the spreadsheet. Jobs are pulled from Builder Prime, grouped by
   **class**, each showing Customer, Job #, project type, scheduled day, SQFT,
   and Color — and the **material to use auto-populates from SQFT and color**.
   Assign a crew and fix any color/sqft inline; it saves as you type.
-- **Staging** *(hidden)* — per-location pull lists: what material to set out **this week**
+- **Staging** — per-location pull lists: what material to set out **this week**
   for the selected week's installs (defaults to next week). Aggregated from the
   schedule per flake blend / rubber color, plus basecoat, topcoat, binder, and
   primer totals; jobs missing SQFT or color are flagged. Exports to .xlsx.
-- **Inventory** *(hidden)* — on-hand counts per location vs the selected week's staging
+- **Inventory** — on-hand counts per location vs the selected week's staging
   needs; anything short is flagged so you can order before staging day.
 - **Projects** *(hidden)* — active projects with client, address, value, status,
   and who's assigned (PM / foreman / salesperson). Search and a "show
