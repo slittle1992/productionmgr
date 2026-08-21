@@ -55,7 +55,7 @@ describe("purchase orders", () => {
       ]).className;
     expect(at("89 Falon Lane; Liberty Hill, TX 78642")).toBe("Austin");
     expect(at("132 Windy Meadows; Schertz, Texas")).toBe("San Antonio");
-    expect(at("3838 Wow Rd; Corpus Christi, TX")).toBe("Corpus");
+    expect(at("3838 Wow Rd; Corpus Christi, TX")).toBe("Corpus Christi");
     expect(at("8028 Dowdell Road; Tomball, TX")).toBe("Houston");
     expect(at("916 S. Arcade Ave; Freeport, IL")).toBeNull();
   });

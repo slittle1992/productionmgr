@@ -106,12 +106,14 @@ export function toMs(v: unknown): number | undefined {
 /** Strip "Deluxe Garages - " / ", TX" to a short region label for grouping. */
 export function cleanClassName(raw: string | null): string {
   if (!raw) return "Unassigned";
-  return (
+  const out =
     raw
-      .replace(/^deluxe garages\s*-\s*/i, "")
+      .replace(/^deluxe garages\s*[-–—]?\s*/i, "")
       .replace(/,\s*[A-Z]{2}\s*$/i, "")
-      .trim() || raw
-  );
+      .trim() || raw;
+  // Canonicalise variants so counts, POs, goals, and revenue all join.
+  if (/^corpus( christi)?$/i.test(out)) return "Corpus Christi";
+  return out;
 }
 
 function findHeaderRow(grid: RawGrid): { index: number; map: ColumnMap } | null {

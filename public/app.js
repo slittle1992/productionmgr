@@ -1654,7 +1654,7 @@ function renderMeetingScore(v) {
   <div class="table-wrap score-wrap">
     <table class="inv-table score-table">
       <thead><tr>
-        <th>Location</th><th class="num">Completed rev</th><th class="num">Labor rate</th>
+        <th>Location</th><th class="num">Completed rev</th><th class="num">Labor %</th>
         <th class="num">Material $</th><th class="num">Mat %</th>
         <th class="num">Spec $</th><th class="num">Usage</th>
       </tr></thead>
@@ -1665,7 +1665,7 @@ function renderMeetingScore(v) {
           <tr>
             <td><b>${escapeHtml(r.name)}</b></td>
             <td class="num">${money0(r.revenue)}</td>
-            <td class="num">${r.laborRate !== null ? r.laborRate.toFixed(1) + "×" : "—"}</td>
+            <td class="num">${r.laborRate ? (100 / r.laborRate).toFixed(1) + "%" : "—"}</td>
             <td class="num">${money0(r.actual)}</td>
             <td class="num">${r.matPct !== null ? r.matPct.toFixed(1) + "%" : "—"}</td>
             <td class="num">${money0(r.specCost)}${r.exp && r.exp.completedJobs > r.exp.jobsWithSqft ? `<span class="inv-dim score-part"> ${r.exp.jobsWithSqft}/${r.exp.completedJobs} jobs</span>` : ""}</td>
@@ -1753,8 +1753,8 @@ function renderMeeting() {
       : "no pipeline loaded",
     labor: v.labor.rows.length
       ? v.labor.rows
-          .filter((r) => r.rate !== null)
-          .map((r) => `${r.className.slice(0, 3)} ${r.rate.toFixed(1)}×`)
+          .filter((r) => r.rate)
+          .map((r) => `${r.className.slice(0, 3)} ${(100 / r.rate).toFixed(0)}%`)
           .join(" · ") || "enter payroll"
       : "upload completed jobs",
     materials: invCountsSubtitle(),
@@ -2272,10 +2272,10 @@ function renderLaborSection(v) {
   for (const r of lab.rows) {
     const cls = escapeHtml(r.className);
     const rateHtml =
-      r.rate === null
+      !r.rate
         ? `<span class="hint">enter payroll</span>`
-        : `<b class="mtg-rate ${r.rate >= 4 ? "good" : r.rate >= 2.5 ? "mid" : "bad"}">${r.rate.toFixed(2)}×</b>
-           <span class="mtg-rate-pct">labor ${(100 / r.rate).toFixed(0)}% of revenue</span>`;
+        : `<b class="mtg-rate ${r.rate >= 4 ? "good" : r.rate >= 2.5 ? "mid" : "bad"}">${(100 / r.rate).toFixed(1)}%</b>
+           <span class="mtg-rate-pct">of revenue (burdened) · ${r.rate.toFixed(2)}× multiple</span>`;
     const pending = meeting.payroll[r.className];
     html += `
     <div class="mtg-labor-row">
@@ -5286,6 +5286,7 @@ function renderMaterialsSection(v) {
         <input id="inv-file" type="file" accept=".xlsx,.xls,.csv,.pdf" multiple hidden />
       </label>
       <button id="inv-paste" class="btn-export" type="button">Paste counts</button>
+      <button id="inv-po-purge" class="btn-export" type="button">🧹 Old POs</button>
     </span>
   </div>`;
 
@@ -5565,7 +5566,11 @@ async function postInvCounts(payload) {
     body: JSON.stringify(payload),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.message || "Upload failed.");
+  if (!res.ok) {
+    const err = new Error(data.message || "Upload failed.");
+    err.code = data.error;
+    throw err;
+  }
   if (data.kind === "po") {
     return `PO ${data.po.poNumber || ""} (${data.po.className || "pick location"}, ${data.po.total !== null ? fmtMoney(data.po.total) : "$?"}) — pending until Received`;
   }
@@ -5579,6 +5584,30 @@ function invSelectedClass() {
   return sel && sel.value ? { className: sel.value } : {};
 }
 
+async function fileToB64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function invCountsPayload(file) {
+  if (/\.pdf$/i.test(file.name)) {
+    return { filename: file.name, pdfBase64: await fileToB64(file) };
+  }
+  if (typeof XLSX === "undefined") {
+    throw new Error("Spreadsheet reader didn't load — check your connection.");
+  }
+  const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return {
+    filename: file.name,
+    rows: XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false }),
+  };
+}
+
 async function handleInvCountsFiles(files) {
   const list = [...(files || [])];
   if (!list.length) return;
@@ -5586,28 +5615,18 @@ async function handleInvCountsFiles(files) {
   const failed = [];
   for (const file of list) {
     try {
-      if (/\.pdf$/i.test(file.name)) {
-        const b64 = await new Promise((resolve, reject) => {
-          const r = new FileReader();
-          r.onload = () => resolve(String(r.result).split(",")[1] || "");
-          r.onerror = reject;
-          r.readAsDataURL(file);
-        });
-        saved.push(
-          await postInvCounts({ filename: file.name, pdfBase64: b64, ...invSelectedClass() })
+      const payload = await invCountsPayload(file);
+      try {
+        saved.push(await postInvCounts({ ...payload, ...invSelectedClass() }));
+      } catch (err) {
+        // Location not readable from the sheet — ask once and retry.
+        if (err.code !== "needs_class") throw err;
+        const cls = prompt(
+          `Which location is "${file.name}" for?\n(Austin, Corpus Christi, Dallas, Houston, San Antonio)`
         );
-        continue;
+        if (!cls || !cls.trim()) throw err;
+        saved.push(await postInvCounts({ ...payload, className: cls.trim() }));
       }
-      if (typeof XLSX === "undefined") {
-        throw new Error("Spreadsheet reader didn't load — check your connection.");
-      }
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
-      saved.push(
-        await postInvCounts({ filename: file.name, rows, ...invSelectedClass() })
-      );
     } catch (err) {
       failed.push(`${file.name}: ${err.message || "couldn't read it"}`);
     }
@@ -5714,7 +5733,7 @@ function initInvCounts() {
       if (t.value) poAction(t.dataset.po, { className: t.value });
     }
   });
-  root.addEventListener("click", (e) => {
+  root.addEventListener("click", async (e) => {
     // Selects/inputs inside a <summary> must not toggle the card open/shut.
     if (e.target.closest("summary") && e.target.closest("select, input, button")) {
       e.preventDefault();
@@ -5760,6 +5779,26 @@ function initInvCounts() {
     if (e.target.closest("#inv-paste")) {
       $("inv-text").value = "";
       $("inv-dialog").showModal();
+      return;
+    }
+    if (e.target.closest("#inv-po-purge")) {
+      const days = prompt(
+        "Delete IN-TRANSIT purchase orders older than how many days?\n(Received POs are never touched — their dollars are already booked.)",
+        "30"
+      );
+      if (days === null) return;
+      const n = Number(days);
+      if (!Number.isFinite(n) || n < 0) return toast("Enter a number of days.", "error");
+      try {
+        const data = await meetingApi("/api/inventory-counts/pos/purge", "POST", {
+          olderThanDays: Math.round(n),
+        });
+        toast(`Deleted ${data.deleted} old PO${data.deleted === 1 ? "" : "s"} ✓`, "success");
+        await loadInvCounts();
+        renderMeeting();
+      } catch (err) {
+        toast(err.message || "Couldn't purge.", "error");
+      }
     }
   });
   $("inv-cancel").addEventListener("click", () => $("inv-dialog").close());

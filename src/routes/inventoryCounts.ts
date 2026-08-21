@@ -13,7 +13,7 @@ import {
   isPurchaseOrderGrid,
   parsePurchaseOrder,
 } from "../domain/purchaseOrders.js";
-import { PipelineFormatError } from "../domain/pipeline.js";
+import { cleanClassName, PipelineFormatError } from "../domain/pipeline.js";
 import { getReportingWeek, getReportingWeekFromStart } from "../domain/week.js";
 import { DEFAULT_UNIT_COSTS } from "../data/materialPrices.js";
 import type {
@@ -56,10 +56,13 @@ export function inventoryCountsRouter(
     const starts = (await store.listWeekStarts())
       .filter((s) => s < weekStart)
       .reverse();
+    const want = classSlug(cleanClassName(className));
     for (const start of starts) {
-      const match = (await store.getWeek(start)).find(
-        (w) => classSlug(w.className) === classSlug(className)
-      );
+      // A week can hold the same location under two spellings ("Corpus" and
+      // "Corpus Christi") — take the latest upload among them.
+      const match = (await store.getWeek(start))
+        .filter((w) => classSlug(cleanClassName(w.className)) === want)
+        .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))[0];
       if (match) return match;
     }
     return null;
@@ -122,10 +125,24 @@ export function inventoryCountsRouter(
   const r2 = (n: number) => Math.round(n * 100) / 100;
 
   async function summarize(weekStart: string, weekEnd: string): Promise<Summary> {
-    const stored = await store.getWeek(weekStart);
+    // Normalise stored class names ("Corpus" → "Corpus Christi") and, when a
+    // week holds counts under both spellings, keep only the latest upload.
+    const byClass = new Map<string, StoredInventoryWeek>();
+    for (const w of await store.getWeek(weekStart)) {
+      const clean = { ...w, className: cleanClassName(w.className) };
+      const key = classSlug(clean.className);
+      const prev = byClass.get(key);
+      if (!prev || clean.uploadedAt >= prev.uploadedAt) byClass.set(key, clean);
+    }
+    const stored = [...byClass.values()];
     const prices = { ...DEFAULT_UNIT_COSTS, ...(await store.getPrices()) };
     const purchasesMap = await store.getPurchases(weekStart);
-    const allPos = await store.listPos();
+    // Normalise stored class names ("Corpus" → "Corpus Christi") so counts
+    // and POs land in the same location block.
+    const allPos = (await store.listPos()).map((p) => ({
+      ...p,
+      className: p.className ? cleanClassName(p.className) : null,
+    }));
     const pending = allPos.filter((p) => p.receivedWeek === null);
     const received = allPos.filter((p) => p.receivedWeek === weekStart);
     const poTotals = new Map<string, { total: number; count: number }>();
@@ -273,7 +290,8 @@ export function inventoryCountsRouter(
         parsed.submittedMs !== null
           ? getReportingWeek(parsed.submittedMs, weekStartDay)
           : resolveWeek(req.query.week);
-      const className = body.className?.trim() || parsed.className;
+      const rawClass = body.className?.trim() || parsed.className;
+      const className = rawClass ? cleanClassName(rawClass) : null;
       if (!className) {
         res.status(400).json({
           error: "needs_class",
@@ -341,6 +359,32 @@ export function inventoryCountsRouter(
     received: z.boolean().optional(),
   });
 
+  // POST /api/inventory-counts/pos/purge — mass-delete in-transit POs older
+  // than N days (received POs are never touched: their dollars are already
+  // booked into a week's material cost). Registered before /pos/:id so
+  // "purge" isn't swallowed as an id.
+  const purgeBody = z.object({
+    olderThanDays: z.number().int().min(0).max(3650),
+  });
+  router.post(
+    "/inventory-counts/pos/purge",
+    asyncHandler(async (req, res) => {
+      const body = purgeBody.parse(req.body);
+      const cutoff = now() - body.olderThanDays * 86400000;
+      const pos = await store.listPos();
+      let deleted = 0;
+      for (const po of pos) {
+        if (po.receivedWeek) continue;
+        const when = po.orderMs ?? Date.parse(po.uploadedAt);
+        if (Number.isFinite(when) && when < cutoff) {
+          await store.deletePo(po.id);
+          deleted++;
+        }
+      }
+      res.json({ ok: true, deleted });
+    })
+  );
+
   // POST /api/inventory-counts/pos/:id?week= — assign a location and/or mark
   // received (books the PO total into that week's purchases).
   router.post(
@@ -349,7 +393,7 @@ export function inventoryCountsRouter(
       const week = resolveWeek(req.query.week);
       const body = poBody.parse(req.body);
       const patch: Partial<StoredPo> = {};
-      if (body.className !== undefined) patch.className = body.className;
+      if (body.className !== undefined) patch.className = cleanClassName(body.className);
       if (body.received !== undefined) {
         patch.receivedWeek = body.received ? week.weekStart : null;
         patch.receivedAt = body.received ? new Date(now()).toISOString() : null;
@@ -385,7 +429,7 @@ export function inventoryCountsRouter(
     asyncHandler(async (req, res) => {
       const week = resolveWeek(req.query.week);
       const body = purchasesBody.parse(req.body);
-      await store.setPurchases(week.weekStart, body.className, body.amount);
+      await store.setPurchases(week.weekStart, cleanClassName(body.className), body.amount);
       res.json({ ok: true, ...(await summarize(week.weekStart, week.weekEnd)) });
     })
   );

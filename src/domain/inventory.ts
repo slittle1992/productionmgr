@@ -145,8 +145,9 @@ export function parseInventory(grid: RawGrid): InventoryParseResult {
       if (d) submittedMs = Date.UTC(Number(d[3]), Number(d[1]) - 1, Number(d[2]));
       continue;
     }
-    // Sheet title carries the location: "Deluxe Garages - Austin — Inventory Count".
-    const title = joined.match(/^(.+?)\s*[—-]{1,2}\s*Inventory Count\b/i);
+    // Sheet title carries the location: "Deluxe Garages - Austin — Inventory
+    // Count" (any dash style; "Counts" plural too).
+    const title = joined.match(/^(.+?)\s*[—–-]{0,2}\s*Inventory Counts?\b/i);
     if (title && !className) {
       className = cleanClassName(title[1]!) || null;
       continue;

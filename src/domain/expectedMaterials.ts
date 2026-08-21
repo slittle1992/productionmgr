@@ -115,7 +115,7 @@ export interface ExpectedMaterialsRow {
 // $ per unit at PO prices (see src/data/materialPrices.ts).
 const BASECOAT_PER_GAL = 125 / 5;
 const TOPCOAT_PER_GAL = 220 / 5;
-const RUBBER_BAG = 36.25;
+const RUBBER_BAG = 57;
 const BINDER_BUCKET = 175;
 const PRIMER_BUCKET = 158;
 const FLAKE_BOX_FALLBACK = 62;

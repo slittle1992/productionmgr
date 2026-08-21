@@ -32,7 +32,7 @@ const CITY_CLASSES: [RegExp, string][] = [
   [/grapevine/i, "Dallas"],
   [/liberty hill|leander|austin/i, "Austin"],
   [/schertz|san antonio/i, "San Antonio"],
-  [/corpus christi/i, "Corpus"],
+  [/corpus/i, "Corpus Christi"],
   [/tomball|houston/i, "Houston"],
 ];
 

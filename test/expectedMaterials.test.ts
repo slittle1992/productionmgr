@@ -18,10 +18,10 @@ describe("expectedJobCost", () => {
     expect(cost / 1000).toBeLessThan(0.8);
   });
 
-  it("prices a rubber job near ~$2.5/sqft", () => {
+  it("prices a rubber job near ~$3.2/sqft ($57 landed EPDM bags)", () => {
     const cost = expectedJobCost(435, "Rubber Overlay", "Sterling", coverage);
-    expect(cost / 435).toBeGreaterThan(2.2);
-    expect(cost / 435).toBeLessThan(2.9);
+    expect(cost / 435).toBeGreaterThan(2.9);
+    expect(cost / 435).toBeLessThan(3.6);
   });
 
   it("returns 0 for types that use no material", () => {
