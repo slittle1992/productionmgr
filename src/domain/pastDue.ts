@@ -154,15 +154,16 @@ export interface SyncResult {
   followUps: Record<string, FollowUp>;
   newCount: number;
   refreshedCount: number;
-  /** Open follow-ups that disappeared from the export (likely paid). */
+  /** Open follow-ups that disappeared from the export — auto-resolved as paid. */
   missingCount: number;
 }
 
 /**
  * Merge a fresh unpaid-invoices upload into the follow-up collection.
  * Snapshot fields (balance, status, age…) refresh; meeting fields (reason,
- * owner, updates) persist. Open items missing from the new export are flagged
- * so the meeting can confirm them resolved with one tap.
+ * owner, updates) persist. Open items missing from the new export are
+ * auto-resolved as paid (the meeting shows a per-location paid summary; an
+ * item that shows up unpaid again later re-opens itself).
  */
 export function syncFollowUps(
   existing: Record<string, FollowUp>,
@@ -179,8 +180,13 @@ export function syncFollowUps(
     seen.add(inv.invoiceNumber);
     const prior = followUps[inv.invoiceNumber];
     if (prior) {
-      const reappeared = prior.status === "resolved" && prior.resolvedWeek !== null &&
-        prior.resolvedWeek < meetingWeek;
+      // Re-open a resolved item that shows up unpaid again: any prior week's
+      // resolution, or a same-week AUTO-resolution (it wasn't in the previous
+      // export — a partial upload). A manual same-week resolve stays resolved.
+      const reappeared =
+        prior.status === "resolved" &&
+        prior.resolvedWeek !== null &&
+        (prior.resolvedWeek < meetingWeek || !prior.inLatestExport);
       followUps[inv.invoiceNumber] = {
         ...prior,
         client: inv.client,
@@ -236,7 +242,21 @@ export function syncFollowUps(
   for (const fu of Object.values(followUps)) {
     if (!seen.has(fu.invoiceNumber)) {
       fu.inLatestExport = false;
-      if (fu.status === "open") missingCount++;
+      if (fu.status === "open") {
+        missingCount++;
+        fu.status = "resolved";
+        fu.resolvedWeek = meetingWeek;
+        fu.updates = [
+          ...fu.updates,
+          {
+            week: meetingWeek,
+            note: "Paid — dropped off the unpaid invoices export.",
+            by: null,
+            at: nowIso,
+          },
+        ];
+        fu.updatedAt = nowIso;
+      }
     }
   }
 

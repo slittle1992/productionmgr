@@ -443,27 +443,37 @@ function renderSchedule() {
   else renderCards(list, groups);
 }
 
-const NO_CREW_LABEL = "(no crew assigned)";
+const NO_DATE_LABEL = "(no start date)";
 
-/** Market → crew → the crew's week, days in order; unassigned last. */
-function crewSubgroups(jobs) {
+/** "Tuesday 9/22" for weekday index `idx` of the schedule's week. */
+function dayBandLabel(idx, sample) {
+  const name = sample.scheduledDay || sample.dayLabel || "Scheduled";
+  if (!schedule.weekStart) return name;
+  const d = new Date(`${schedule.weekStart}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + idx);
+  return `${name} ${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+/** Market → the week in day order; undated jobs last. Crew stays a column. */
+function daySubgroups(jobs) {
   const map = new Map();
   for (const j of jobs) {
-    const key = j.crew || NO_CREW_LABEL;
+    const key = j.dayIndex ?? 9;
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(j);
   }
   return [...map.entries()]
-    .map(([crew, js]) => ({
-      crew,
+    .sort((a, b) => a[0] - b[0])
+    .map(([idx, js]) => ({
+      label: idx === 9 ? NO_DATE_LABEL : dayBandLabel(idx, js[0]),
+      undated: idx === 9,
       jobs: [...js].sort(
-        (a, b) => (a.dayIndex ?? 9) - (b.dayIndex ?? 9) || String(a.jobNumber).localeCompare(String(b.jobNumber))
+        (a, b) =>
+          (a.scheduledDate ?? 0) - (b.scheduledDate ?? 0) ||
+          String(a.jobNumber).localeCompare(String(b.jobNumber))
       ),
       sqft: js.reduce((s, j) => s + (j.sqft || 0), 0),
-    }))
-    .sort((a, b) =>
-      a.crew === NO_CREW_LABEL ? 1 : b.crew === NO_CREW_LABEL ? -1 : a.crew.localeCompare(b.crew)
-    );
+    }));
 }
 
 function renderTable(list, groups) {
@@ -473,9 +483,9 @@ function renderTable(list, groups) {
     if (showBands) {
       body += `<tr class="group-band"><td colspan="18">${escapeHtml(g.className)} · ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}</td></tr>`;
     }
-    for (const cg of crewSubgroups(g.jobs)) {
-      body += `<tr class="crew-band${cg.crew === NO_CREW_LABEL ? " warn" : ""}"><td colspan="18">🚚 ${escapeHtml(cg.crew)} · ${cg.jobs.length} job${cg.jobs.length === 1 ? "" : "s"} · ${fmtN(cg.sqft, 0)} sqft</td></tr>`;
-      body += cg.jobs.map(rowHtml).join("");
+    for (const dg of daySubgroups(g.jobs)) {
+      body += `<tr class="crew-band${dg.undated ? " warn" : ""}"><td colspan="18">📅 ${escapeHtml(dg.label)} · ${dg.jobs.length} job${dg.jobs.length === 1 ? "" : "s"} · ${fmtN(dg.sqft, 0)} sqft</td></tr>`;
+      body += dg.jobs.map(rowHtml).join("");
     }
     body += totalsRowHtml(`${g.className} totals`, g.jobs, g.className);
   }
@@ -736,12 +746,12 @@ function renderCards(list, groups) {
       (g) => `
       <section class="class-group">
         ${showHeaders ? `<h2>${escapeHtml(g.className)} <span class="count">${g.jobs.length}</span></h2>` : ""}
-        ${crewSubgroups(g.jobs)
+        ${daySubgroups(g.jobs)
           .map(
-            (cg) => `
-          <h3 class="crew-head${cg.crew === NO_CREW_LABEL ? " warn" : ""}">🚚 ${escapeHtml(cg.crew)}
-            <span class="count">${cg.jobs.length} · ${fmtN(cg.sqft, 0)} sqft</span></h3>
-          ${cg.jobs.map(jobCardHtml).join("")}`
+            (dg) => `
+          <h3 class="crew-head${dg.undated ? " warn" : ""}">📅 ${escapeHtml(dg.label)}
+            <span class="count">${dg.jobs.length} · ${fmtN(dg.sqft, 0)} sqft</span></h3>
+          ${dg.jobs.map(jobCardHtml).join("")}`
           )
           .join("")}
       </section>`
@@ -1831,14 +1841,15 @@ function renderPastDueSection(v) {
   Carried-over items need this week's update. Set an install/action date to put
   it on the owner's Google Calendar.</p>`;
 
-  if (pd.likelyResolved.length) {
+  if (pd.paidThisWeek && pd.paidThisWeek.length) {
+    const total = pd.paidThisWeek.reduce((s, r) => s + r.total, 0);
+    const count = pd.paidThisWeek.reduce((s, r) => s + r.count, 0);
     html += `<div class="mtg-resolved-hint">
-      <b>${pd.likelyResolved.length} item${pd.likelyResolved.length === 1 ? "" : "s"} no longer in the latest export</b> — probably paid. Confirm:
-      ${pd.likelyResolved
+      <b>✅ Paid this week — ${count} invoice${count === 1 ? "" : "s"} · ${fmtMoney0(total)}</b>
+      ${pd.paidThisWeek
         .map(
-          (f) => `<div class="mtg-resolve-row">
-            <span><b>${escapeHtml(f.className)}</b> · ${escapeHtml(f.client)} · ${fmtMoney0(f.balance)}</span>
-            <button type="button" class="btn-export" data-act="fu-resolve" data-fu="${escapeHtml(f.invoiceNumber)}">Mark resolved ✓</button>
+          (r) => `<div class="mtg-resolve-row">
+            <span><b>${escapeHtml(r.className)}</b> · ${r.count} invoice${r.count === 1 ? "" : "s"} paid for ${fmtMoney0(r.total)}</span>
           </div>`
         )
         .join("")}
@@ -1852,12 +1863,11 @@ function renderPastDueSection(v) {
 
   for (const group of pd.classes) {
     const openKey = `pdc:${group.className}`;
-    const openItems = group.items.filter((i) => i.status === "open");
     html += `
     <details class="mtg-class" data-open="${openKey}" ${meeting.open.has(openKey) ? "open" : ""}>
       <summary>
         <span class="mtg-class-name">${escapeHtml(group.className)}</span>
-        <span class="mtg-class-info">${openItems.length} open · ${fmtMoney0(group.totalBalance)}</span>
+        <span class="mtg-class-info">${group.items.length} open · ${fmtMoney0(group.totalBalance)}</span>
       </summary>
       ${group.items.map((f) => renderFollowUp(f, v.week.weekStart)).join("")}
     </details>`;
@@ -4055,7 +4065,7 @@ async function handleMeetingUpload(kind, file, className) {
     });
     toast(
       `${data.count} invoices loaded · ${data.newCount} new${
-        data.missingCount ? ` · ${data.missingCount} likely paid` : ""
+        data.missingCount ? ` · ${data.missingCount} paid` : ""
       } ✓`,
       "success"
     );

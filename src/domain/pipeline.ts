@@ -1,5 +1,5 @@
 import type { BuilderPrimeProject } from "../builderPrime/types.js";
-import { extractColorFromText } from "./colors.js";
+import { extractColorFromText, normalizeColor } from "./colors.js";
 
 /**
  * Parser for the Builder Prime "Production Pipeline Report" Excel export.
@@ -39,6 +39,11 @@ const HEADER_ALIASES: Record<keyof ColumnMap, string[]> = {
   contractPrice: ["total contract price", "contract price"],
   flakeColor: ["flake color"],
   revaColor: ["revaflex color", "reva flex color", "rubber color"],
+  projectName: ["project name"],
+  client: ["client", "client name", "customer"],
+  city: ["city"],
+  state: ["state"],
+  zip: ["zip", "zip code"],
 };
 
 interface ColumnMap {
@@ -57,6 +62,11 @@ interface ColumnMap {
   contractPrice: number;
   flakeColor: number;
   revaColor: number;
+  projectName: number;
+  client: number;
+  city: number;
+  state: number;
+  zip: number;
 }
 
 export interface PipelineParseResult {
@@ -166,21 +176,40 @@ export function parsePipeline(grid: RawGrid): PipelineParseResult {
     const rawClass = toText(cell(row, map.className));
     const className = cleanClassName(rawClass);
     const description = toText(cell(row, map.description));
+    // The job name ("RevaFlex - Pool Deck - 550 - Brownstone") carries the
+    // area, sqft, and color in newer exports where Description is blank.
+    const projectName = toText(cell(row, map.projectName));
     const type = toText(cell(row, map.type));
     const crew = toText(cell(row, map.projectManager));
-    // SQFT: the column, else the description's middle number
+    // SQFT: the column, else the middle number of the job name or description
     // ("Back Patio - 396 - Wombat").
+    const midNumber = (s: string | null) => {
+      const m = s?.match(/-\s*(\d{2,5})\s*-/);
+      return m ? Number(m[1]) : null;
+    };
     const sqft =
       toNumber(cell(row, map.sqft)) ??
-      (description?.match(/-\s*(\d{2,5})\s*-/)
-        ? Number(description.match(/-\s*(\d{2,5})\s*-/)![1])
-        : null);
-    // Color: the export's own color columns beat description mining. Skip
+      midNumber(projectName) ??
+      midNumber(description);
+    // Color: the export's own color columns beat name/description mining. Skip
     // placeholder values that aren't colors.
     const PLACEHOLDER_RE = /^(tbd|custom|revadrive|n\/?a)$/i;
     const colColor = [toText(cell(row, map.flakeColor)), toText(cell(row, map.revaColor))]
       .find((c) => c && !PLACEHOLDER_RE.test(c));
-    const color = colColor ?? extractColorFromText(description);
+    // The name's trailing "- <color>" segment resolves typos/aliases via the
+    // catalog ("Creek Bed" → Creekbed); free-text mining is the last resort.
+    const tailColor = (s: string | null) => {
+      const tail = s?.match(/-\s*([^-]+?)\s*$/)?.[1] ?? null;
+      const hit = normalizeColor(tail);
+      return hit?.recognized ? hit.name : null;
+    };
+    const color =
+      colColor ??
+      tailColor(projectName) ??
+      tailColor(description) ??
+      extractColorFromText(projectName) ??
+      extractColorFromText(description);
+    const client = toText(cell(row, map.client));
 
     classes[className] = (classes[className] ?? 0) + 1;
 
@@ -193,9 +222,13 @@ export function parsePipeline(grid: RawGrid): PipelineParseResult {
     projects.push({
       projectId: jobNumber,
       jobNumber,
-      // No customer name in the pipeline export — the schedule titles by Job #
-      // and shows the description separately, so don't use it as the name.
-      description: description ?? undefined,
+      // Newer exports carry the customer in a Client column; the job name
+      // ("RevaFlex - Pool Deck - 550 - Brownstone") shows as the description.
+      clientFirstName: client ?? undefined,
+      description: description ?? projectName ?? undefined,
+      city: toText(cell(row, map.city)) ?? undefined,
+      state: toText(cell(row, map.state)) ?? undefined,
+      zip: toText(cell(row, map.zip)) ?? undefined,
       className,
       estimatedValue: toNumber(cell(row, map.soldAmount)) ?? 0,
       laborCost: toNumber(cell(row, map.laborCost)) ?? 0,

@@ -27,6 +27,8 @@ export interface NormalizedColor {
   name: string;
   /** Flake product to pull from inventory. */
   flakeProduct: string;
+  /** Default polyurea basecoat for this blend ("Tan" | "Grey"), if known. */
+  base: string | null;
   /** True when the input matched the catalog. */
   recognized: boolean;
 }
@@ -44,11 +46,12 @@ export function normalizeColor(raw: string | null | undefined): NormalizedColor 
       return {
         name: hit.name,
         flakeProduct: hit.flakeProduct ?? hit.name,
+        base: hit.base ?? null,
         recognized: true,
       };
     }
   }
-  return { name: cleaned, flakeProduct: cleaned, recognized: false };
+  return { name: cleaned, flakeProduct: cleaned, base: null, recognized: false };
 }
 
 // Catalog names sorted longest-first so multi-word colors match before substrings.

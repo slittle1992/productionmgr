@@ -55,11 +55,18 @@ export interface PastDueClassGroup {
   items: FollowUpView[];
 }
 
+/** "Dallas · 4 invoices paid · $69,054" for this week's resolutions. */
+export interface PaidSummaryRow {
+  className: string;
+  count: number;
+  total: number;
+}
+
 export interface PastDueSection {
   meta: StoredUploadMeta | null;
   classes: PastDueClassGroup[];
-  /** Open items missing from the latest export — probably paid; confirm. */
-  likelyResolved: FollowUpView[];
+  /** Per-location summary of invoices resolved/paid this week. */
+  paidThisWeek: PaidSummaryRow[];
   openCount: number;
   carryoverCount: number;
   needsInfoCount: number;
@@ -401,54 +408,59 @@ export class MeetingService {
     week: ReportingWeek
   ): PastDueSection {
     const classes = new Map<string, PastDueClassGroup>();
-    const likelyResolved: FollowUpView[] = [];
+    const paid = new Map<string, PaidSummaryRow>();
     let openCount = 0;
     let carryoverCount = 0;
     let needsInfoCount = 0;
 
     for (const fu of Object.values(followUps)) {
-      // Resolved items disappear from the meeting once their week has passed.
-      if (fu.status === "resolved" && fu.resolvedWeek !== week.weekStart) continue;
+      const cls = fu.className || "Unassigned";
+      // Resolved items never clutter the lists — the ones cleared this week
+      // roll up into the per-location paid summary instead.
+      if (fu.status === "resolved") {
+        if (fu.resolvedWeek === week.weekStart) {
+          const row = paid.get(cls) ?? { className: cls, count: 0, total: 0 };
+          row.count++;
+          row.total += fu.balance ?? 0;
+          paid.set(cls, row);
+        }
+        continue;
+      }
 
-      const carriedOver = fu.status === "open" && fu.firstSeenWeek < week.weekStart;
+      const carriedOver = fu.firstSeenWeek < week.weekStart;
       const view: FollowUpView = {
         ...fu,
         carriedOver,
         updatedThisWeek: fu.updates.some((u) => u.week === week.weekStart),
       };
 
-      if (fu.status === "open" && !fu.inLatestExport) {
-        likelyResolved.push(view);
-        continue;
-      }
-      if (fu.status === "open") {
-        openCount++;
-        if (carriedOver) carryoverCount++;
-        if (!fu.reason || !fu.owner) needsInfoCount++;
-      }
+      openCount++;
+      if (carriedOver) carryoverCount++;
+      if (!fu.reason || !fu.owner) needsInfoCount++;
 
-      const cls = fu.className || "Unassigned";
       let group = classes.get(cls);
       if (!group) {
         group = { className: cls, totalBalance: 0, items: [] };
         classes.set(cls, group);
       }
       group.items.push(view);
-      if (fu.status === "open") group.totalBalance += fu.balance ?? 0;
+      group.totalBalance += fu.balance ?? 0;
     }
 
     for (const group of classes.values()) {
       group.totalBalance = Math.round(group.totalBalance * 100) / 100;
       group.items.sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
     }
-    likelyResolved.sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+    for (const row of paid.values()) {
+      row.total = Math.round(row.total * 100) / 100;
+    }
 
     return {
       meta,
       classes: [...classes.values()].sort((a, b) =>
         a.className.localeCompare(b.className)
       ),
-      likelyResolved,
+      paidThisWeek: [...paid.values()].sort((a, b) => b.total - a.total),
       openCount,
       carryoverCount,
       needsInfoCount,

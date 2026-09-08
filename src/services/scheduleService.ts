@@ -188,7 +188,11 @@ export class ScheduleService {
       sqft,
       color: normalized?.name ?? null,
       colorRecognized: normalized?.recognized ?? false,
-      baseColor: assignment.baseColor ?? null,
+      // A PM's pick wins; otherwise flake jobs default to the blend's
+      // standard basecoat from the color catalog.
+      baseColor:
+        assignment.baseColor ??
+        (material.kind === "flake" ? normalized?.base ?? null : null),
       crewMembers,
       crew: crewMembers.join(" / "),
       scheduledDate,
@@ -241,7 +245,9 @@ export class ScheduleService {
       sqft,
       color: normalized?.name ?? null,
       colorRecognized: normalized?.recognized ?? false,
-      baseColor: assignment.baseColor ?? null,
+      baseColor:
+        assignment.baseColor ??
+        (material.kind === "flake" ? normalized?.base ?? null : null),
       crewMembers,
       crew: crewMembers.join(" / "),
       scheduledDate: wo.startDate,
