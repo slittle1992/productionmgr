@@ -67,3 +67,34 @@ describe("parsePipeline (real export fixture)", () => {
     expect(() => parsePipeline([["nonsense"], ["a", "b"]])).toThrow(/header row/i);
   });
 });
+
+describe("POST /api/pipeline with another uploader's column layout", () => {
+  it("routes a WO#-keyed Export-data grid into work orders", async () => {
+    const request = (await import("supertest")).default;
+    const { buildApp } = await import("../src/app.js");
+    const { loadConfig } = await import("../src/config.js");
+    const { MemoryWorkOrderStore } = await import("../src/storage/workOrderStore.js");
+    const { MemoryPipelineStore } = await import("../src/storage/pipelineStore.js");
+    const workOrderStore = new MemoryWorkOrderStore();
+    const { app } = buildApp({
+      config: loadConfig({} as NodeJS.ProcessEnv),
+      workOrderStore,
+      pipelineStore: new MemoryPipelineStore(),
+    });
+
+    const rows = [
+      ["Export data"],
+      ["Date as of 9/8/26 @ 7:43 AM"],
+      ["WO#", "Client", "Address", "City", "Type", "Start", "Class", "Urgency", "Created", "Modified", "Status"],
+      [17066, "Julie Helland", "1925 Muhly Bush Bend", "Leander", "Warranty Repair", "2026-09-10 11:00", "Deluxe Garages - Austin, TX", "NORMAL", "2026-09-01 10:22", "2026-09-02 07:46", "OPEN"],
+    ];
+    const res = await request(app)
+      .post("/api/pipeline")
+      .send({ filename: "Export_data_7.xlsx", rows });
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("workorders");
+    expect(res.body.count).toBe(1);
+    const stored = await workOrderStore.get();
+    expect(stored.uploaded[0]).toMatchObject({ woNumber: "17066", className: "Austin" });
+  });
+});

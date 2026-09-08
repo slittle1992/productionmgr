@@ -1192,7 +1192,11 @@ async function handlePipelineFile(file) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "Upload failed.");
 
-    toast(`Loaded ${data.pipeline.rowCount} jobs ✓`, "success");
+    if (data.kind === "workorders") {
+      toast(`That file is a work-orders export — loaded ${data.count} work orders ✓`, "success");
+    } else {
+      toast(`Loaded ${data.pipeline.rowCount} jobs ✓`, "success");
+    }
     await refreshPipelineStatus();
     await loadSchedule();
   } catch (err) {
@@ -4086,7 +4090,12 @@ async function handleMeetingUpload(kind, file, className) {
       filename: file.name,
       rows: firstRows(),
     });
-    toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
+    // An uploader's Export-data view keyed by WO# lands in Work Orders.
+    if (data.kind === "workorders") {
+      toast(`That file is a work-orders export — loaded ${data.count} work orders ✓`, "success");
+    } else {
+      toast(`Loaded ${data.pipeline.rowCount} pipeline jobs ✓`, "success");
+    }
     refreshPipelineStatus(); // keep the Schedule tab's status bar in sync
   } else if (kind === "payroll") {
     // One payroll workbook per market. Each has one sheet per pay period —

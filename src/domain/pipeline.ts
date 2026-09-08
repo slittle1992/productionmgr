@@ -23,24 +23,28 @@ export class PipelineFormatError extends Error {
   }
 }
 
+// Every uploader configures their own columns in Builder Prime's Export data
+// view, so each field carries the spellings seen across the team's exports.
+// Only Job # is required — everything else is optional and matched by name,
+// in any order.
 const HEADER_ALIASES: Record<keyof ColumnMap, string[]> = {
-  jobNumber: ["job #", "job number", "job no"],
-  description: ["description"],
-  laborCost: ["labor cost"],
-  materialCost: ["material cost"],
-  soldAmount: ["sold amount"],
-  start: ["start"],
-  finish: ["finish"],
-  projectManager: ["project manager"],
-  salesPerson: ["sales person", "salesperson"],
-  type: ["type"],
-  className: ["class"],
-  sqft: ["project sq ft", "project sqft", "sq ft", "sqft"],
+  jobNumber: ["job #", "job number", "job no", "job#", "job id", "project #", "project number", "project id"],
+  description: ["description", "project description", "notes"],
+  laborCost: ["labor cost", "labor"],
+  materialCost: ["material cost", "materials cost"],
+  soldAmount: ["sold amount", "sold", "contract amount"],
+  start: ["start", "start date", "scheduled start"],
+  finish: ["finish", "finish date", "end", "end date"],
+  projectManager: ["project manager", "project mgr", "pm"],
+  salesPerson: ["sales person", "salesperson", "sales"],
+  type: ["type", "project type"],
+  className: ["class", "location"],
+  sqft: ["project sq ft", "project sqft", "sq ft", "sqft", "square feet", "square footage"],
   contractPrice: ["total contract price", "contract price"],
   flakeColor: ["flake color"],
   revaColor: ["revaflex color", "reva flex color", "rubber color"],
-  projectName: ["project name"],
-  client: ["client", "client name", "customer"],
+  projectName: ["project name", "job name"],
+  client: ["client", "client name", "customer", "customer name"],
   city: ["city"],
   state: ["state"],
   zip: ["zip", "zip code"],

@@ -2,7 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import { extractJobFacts, parseSqftBackfill } from "../domain/expectedMaterials.js";
 import { parsePipeline, PipelineFormatError } from "../domain/pipeline.js";
+import { parseWorkOrders } from "../domain/workOrders.js";
 import { toMeta, type PipelineStore, type StoredPipeline } from "../storage/pipelineStore.js";
+import type { WorkOrderStore } from "../storage/workOrderStore.js";
 import type { CustomFieldNames } from "../config.js";
 import { asyncHandler } from "./asyncHandler.js";
 
@@ -10,7 +12,8 @@ import { asyncHandler } from "./asyncHandler.js";
 export function pipelineRouter(
   store: PipelineStore,
   now: () => number = () => Date.now(),
-  customFields?: CustomFieldNames
+  customFields?: CustomFieldNames,
+  workOrderStore?: WorkOrderStore
 ): Router {
   const router = Router();
 
@@ -30,6 +33,25 @@ export function pipelineRouter(
         parsed = parsePipeline(body.rows);
       } catch (err) {
         if (err instanceof PipelineFormatError) {
+          // Uploaders configure their own Export-data columns: a grid keyed
+          // by WO# instead of Job # is the work-orders flavor — store it
+          // there instead of rejecting the file.
+          if (workOrderStore) {
+            try {
+              const wos = parseWorkOrders(body.rows);
+              if (wos.workOrders.length) {
+                await workOrderStore.setUploaded(wos.workOrders, {
+                  uploadedAt: new Date(now()).toISOString(),
+                  filename: body.filename ?? null,
+                  sourceLabel: wos.sourceLabel,
+                });
+                res.json({ ok: true, kind: "workorders", count: wos.workOrders.length });
+                return;
+              }
+            } catch {
+              /* not work orders either — report the pipeline error below */
+            }
+          }
           res.status(400).json({ error: "invalid_pipeline", message: err.message });
           return;
         }
